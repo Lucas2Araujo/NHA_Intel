@@ -1,0 +1,25 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+
+actor "Usuário" as User
+
+rectangle "Módulo: Leitura e Mídia" {
+  
+  usecase "Visualizar Letra do Hino" as UC_Visualizar
+  
+  usecase "Alternar Acessibilidade\n(Tamanho e Fonte Dislexia)" as UC_Acessibilidade
+  usecase "Adicionar aos Favoritos" as UC_Favoritar
+  usecase "Reproduzir Mídia\n(Áudio/Vídeo YouTube)" as UC_Play
+  usecase "Baixar Mídia Local\n(MP3/MP4)" as UC_Download
+  usecase "Consultar Informações\n(Autores e Textos)" as UC_Info
+  
+  User --> UC_Visualizar
+  
+  UC_Acessibilidade .up.> UC_Visualizar : <<extend>>
+  UC_Favoritar .up.> UC_Visualizar : <<extend>>
+  UC_Play .left.> UC_Visualizar : <<extend>>
+  UC_Download .right.> UC_Visualizar : <<extend>>
+  UC_Info .down.> UC_Visualizar : <<extend>>
+}
+@enduml

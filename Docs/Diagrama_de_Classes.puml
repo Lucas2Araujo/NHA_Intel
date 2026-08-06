@@ -1,0 +1,51 @@
+@startuml
+skinparam classAttributeIconSize 0
+
+class Hino {
+  - numeroIndice: Integer
+  - titulo: String
+  - letra: String
+  - autorLetra: String
+  - autorMusica: String
+  - textoBaseRef: String
+  - textoBaseConteudo: String
+  + favoritar()
+}
+
+class Tema {
+  - nome: String
+}
+
+class TextoRelacionado {
+  - referencia: String
+}
+
+class Midia {
+  - tipo: TipoMidia <<Enum: Audio, Video>>
+  - urlYouTube: String
+  - caminhoLocal: String
+  - isBaixado: Boolean
+  + baixarMidia()
+  + reproduzir()
+}
+
+class ListaCulto {
+  - id: Integer
+  - temaBuscado: String
+  - quantidadeSelecionada: Integer
+  - dataCriacao: DateTime
+}
+
+class PreferenciasApp {
+  - usarFonteDislexia: Boolean
+  - tamanhoFonte: Integer
+  - temaEscuro: Boolean
+}
+
+' Relacionamentos
+Hino "1" *-- "0..2" Midia : possui >
+Hino "1..*" -- "1..*" Tema : classificado por >
+Hino "1" -- "0..*" TextoRelacionado : inspira-se em >
+ListaCulto "1" o-- "1..*" Hino : agrupa >
+
+@enduml

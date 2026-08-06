@@ -1,0 +1,5 @@
+flet>=0.85.0
+aiosqlite>=0.20.0
+yt-dlp>=2024.0.0
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

@@ -1,0 +1,23 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+
+actor "Usuário" as User
+
+package "Navegação e Pesquisa" {
+  usecase "Explorar Hinário\n(Busca, Favoritos, Lote)" as Mod1
+}
+
+package "Agente Organizador" {
+  usecase "Planejar Culto\n(Busca Semântica)" as Mod2
+}
+
+package "Leitura e Mídia" {
+  usecase "Visualizar e Interagir\ncom Hino" as Mod3
+}
+
+User --> Mod1 : " Pesquisa e filtra"
+User --> Mod2 : " Gera listas"
+User --> Mod3 : " Lê, ouve e baixa"
+
+@enduml

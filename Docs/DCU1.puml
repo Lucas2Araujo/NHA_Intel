@@ -1,0 +1,25 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+
+actor "Usuário" as User
+
+rectangle "Módulo: Navegação e Agente Organizador" {
+  
+  ' Ações de Navegação
+  usecase "Pesquisar Hino\n(Nº, Nome, Letra)" as UC_Pesquisa
+  usecase "Acessar Favoritos e Recentes" as UC_Listas
+  usecase "Baixar Hinos em Lote" as UC_Lote
+  
+  ' Ações do Agente
+  usecase "Gerar Lista para Culto" as UC_GerarCulto
+  usecase "Definir Parâmetros\n(Tema e Qtd. Hinos)" as UC_Parametros
+  
+  User --> UC_Pesquisa
+  User --> UC_Listas
+  User --> UC_Lote
+  User --> UC_GerarCulto
+  
+  UC_GerarCulto ..> UC_Parametros : <<include>>
+}
+@enduml

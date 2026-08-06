@@ -1,0 +1,72 @@
+@startuml
+' Esconde o ícone de classe para ficar com cara de BD
+hide circle
+skinparam linetype ortho
+skinparam EntityBackgroundColor #F9F9F9
+skinparam EntityBorderColor #333333
+
+title Diagrama Entidade-Relacionamento (SQLite - Hinário App)
+
+entity "hinos" as hino {
+  * id_hino : INTEGER <<PK>>
+  --
+  titulo : TEXT
+  letra : TEXT
+  autor_letra : TEXT
+  autor_musica : TEXT
+  texto_base : TEXT
+  link_video : TEXT
+  caminho_audio_local : TEXT
+}
+
+entity "temas" as tema {
+  * id_tema : INTEGER <<PK>>
+  --
+  nome_tema : TEXT
+}
+
+entity "hinos_temas" as hino_tema {
+  * id_hino : INTEGER <<FK>>
+  * id_tema : INTEGER <<FK>>
+  --
+  <<Tabela de Junção (N:N)>>
+}
+
+entity "favoritos" as favorito {
+  * id_hino : INTEGER <<PK, FK>>
+  --
+  data_favoritado : DATETIME
+}
+
+entity "historico" as historico {
+  * id_historico : INTEGER <<PK>>
+  --
+  id_hino : INTEGER <<FK>>
+  data_acesso : DATETIME
+}
+
+entity "listas_culto" as listaculto {
+  * id_lista : INTEGER <<PK>>
+  --
+  tema_gerador : TEXT
+  data_criacao : DATETIME
+}
+
+entity "itens_lista_culto" as itemlista {
+  * id_lista : INTEGER <<PK, FK>>
+  * id_hino : INTEGER <<PK, FK>>
+  --
+  ordem_execucao : INTEGER
+}
+
+' Relacionamentos
+hino ||--o{ hino_tema : "tem"
+tema ||--o{ hino_tema : "classifica"
+
+hino ||--o{ favorito : "marcado como"
+hino ||--o{ historico : "acessado em"
+
+listaculto ||--o{ itemlista : "contém"
+hino ||--o{ itemlista : "pertence a"
+
+@enduml

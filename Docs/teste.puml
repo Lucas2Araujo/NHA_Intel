@@ -1,0 +1,58 @@
+@startuml
+left to right direction
+skinparam packageStyle rectangle
+skinparam usecase {
+  BackgroundColor LightYellow
+  BorderColor DarkSlateGray
+}
+
+actor "Usuário" as U
+
+rectangle "Aplicativo Hinário (Mobile)" {
+  
+  ' =====================================
+  ' NÍVEL 1: AÇÕES PRIMÁRIAS
+  ' =====================================
+  usecase "Navegar na Home\n(Lista de Hinos)" as UC_Home
+  usecase "Acessar Agente Organizador\n(Criador de Cultos)" as UC_Agente
+  usecase "Acessar Favoritos" as UC_Fav
+  usecase "Acessar Histórico (Recentes)" as UC_Recentes
+  usecase "Visualizar Hino" as UC_Hino
+  
+  ' Ligações Diretas com o Usuário
+  U --> UC_Home
+  U --> UC_Agente
+  U --> UC_Fav
+  U --> UC_Recentes
+  U --> UC_Hino
+
+  ' =====================================
+  ' NÍVEL 2: INCLUSÕES E EXTENSÕES
+  ' =====================================
+  
+  ' Extensões da Home
+  usecase "Pesquisar\n(Nome/Nº/Letra)" as UC_Search
+  usecase "Baixar Hinos em Lote" as UC_Lote
+  UC_Search .u.> UC_Home : <<extend>>
+  UC_Lote .u.> UC_Home : <<extend>>
+  
+  ' Inclusões/Extensões do Agente Organizador
+  usecase "Definir Tema e Qtd.\n(Busca Semântica)" as UC_Params
+  usecase "Gerar Lista do Culto" as UC_Gerar
+  UC_Params .u.> UC_Agente : <<include>>
+  UC_Gerar .u.> UC_Agente : <<extend>>
+  
+  ' Extensões da Visualização do Hino
+  usecase "Tocar Áudio/Vídeo" as UC_Play
+  usecase "Ajustar Fonte/Acessibilidade" as UC_Acess
+  usecase "Baixar Mídia Local" as UC_Down
+  usecase "Ver Info (Autores/Textos)" as UC_Info
+  usecase "Favoritar Hino" as UC_AddFav
+
+  UC_Play .l.> UC_Hino : <<extend>>
+  UC_Acess .r.> UC_Hino : <<extend>>
+  UC_Down .d.> UC_Hino : <<extend>>
+  UC_Info .d.> UC_Hino : <<extend>>
+  UC_AddFav .d.> UC_Hino : <<extend>>
+}
+@enduml

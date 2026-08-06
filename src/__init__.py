@@ -1,0 +1,3 @@
+"""
+Hinário App - Pacote Principal
+"""

@@ -1,0 +1,41 @@
+# Byte-compiled / Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Caches and testing
+.pytest_cache/
+.coverage
+htmlcov/
+.nox/
+.tox/
+.hypothesis/
+
+# Virtual Environments
+.venv/
+venv/
+env/
+ENV/
+
+# Downloads / Media generated at runtime
+downloads/
+tmp_downloads/
+*.mp3
+*.mp4
+*.m4a
+*.webm
+
+# IDEs & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs & Database temporary files
+*.log
+*.sqlite-journal
+*.db-journal
+*.sqlite-wal
