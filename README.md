@@ -116,8 +116,8 @@ Hinário_App/
 
 ### 1. Clonar o repositório
 ```bash
-git clone https://github.com/SEU_USUARIO/Hinario_App.git
-cd Hinario_App
+git clone https://github.com/Lucas2Araujo/NHA_Intel.git
+cd NHA_Intel
 ```
 
 ### 2. Criar e ativar um ambiente virtual
@@ -161,36 +161,6 @@ Verificar a formatação sem alterar os arquivos:
 ```bash
 black --check .
 ```
-
----
-
-## 🐙 Como Subir para o GitHub
-
-Para publicar o projeto em um novo repositório no GitHub:
-
-1. **Inicializar o Git na pasta do projeto:**
-   ```bash
-   git init
-   git branch -M main
-   ```
-
-2. **Adicionar o repositório remoto:**
-   ```bash
-   git remote add origin https://github.com/SEU_USUARIO/Hinario_App.git
-   ```
-
-3. **Adicionar os arquivos e realizar o commit inicial:**
-   ```bash
-   git add .
-   git commit -m "feat: initial commit - Hinário Inteligente v1.0"
-   ```
-
-4. **Enviar para o GitHub:**
-   ```bash
-   git push -u origin main
-   ```
-
----
 
 ## 📄 Licença
 Este projeto é de uso educacional e comunitário. Sinta-se à vontade para contribuir!
