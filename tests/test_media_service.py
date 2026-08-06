@@ -69,7 +69,7 @@ async def test_play_and_stop_audio_process():
 
     assert service.play_audio("") is False
 
-    with patch("subprocess.Popen") as MockPopen:
+    with patch("shutil.which", return_value="/usr/bin/ffplay"), patch("subprocess.Popen") as MockPopen:
         mock_proc = MagicMock()
         mock_proc.poll.return_value = None
         MockPopen.return_value = mock_proc
@@ -80,6 +80,11 @@ async def test_play_and_stop_audio_process():
 
         service.stop_audio()
         assert service.is_audio_playing() is False
+
+    # Testa quando nenhum player de mídia está instalado no sistema (ex: CI Linux headless)
+    with patch("shutil.which", return_value=None):
+        assert service.play_audio("tmp_downloads/dummy.mp3") is False
+
 
 
 @pytest.mark.asyncio
