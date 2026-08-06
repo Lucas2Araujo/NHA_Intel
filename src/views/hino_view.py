@@ -12,7 +12,7 @@ class HinoView:
     """
     View responsável por exibir assincronamente a letra e os detalhes de um hino específico.
     Oferece controles avançados de acessibilidade (tamanho e 3 famílias de fontes), favoritar,
-    registro no histórico, metadados cruzados, reprodutor interno embutido de áudio e downloads offline.
+    registro no histórico, metadados cruzados, reprodutor interno de áudio real e downloads offline.
     Segue as diretrizes do Flet 0.85+.
     """
 
@@ -34,10 +34,6 @@ class HinoView:
         self.font_size: int = 18
         self.selected_font: str = "Padrão"
 
-        # Estado interno do player embutido
-        self.is_playing: bool = False
-        self.playback_task: Optional[asyncio.Task] = None
-
         # Referências aos elementos dinâmicos da interface
         self.letra_text: Optional[ft.Text] = None
         self.fav_icon: Optional[ft.IconButton] = None
@@ -54,9 +50,7 @@ class HinoView:
 
         # Registrar acesso no histórico e buscar metadados cruzados
         await self.historico_repository.add_acesso(self.hino_id)
-        self.relacionados = await self.hino_repository.get_metadados_relacionados(
-            self.hino_id
-        )
+        self.relacionados = await self.hino_repository.get_metadados_relacionados(self.hino_id)
 
         # Verificar se é favorito e se possui download local
         self.is_fav = await self.favorito_repository.is_favorito(self.hino_id)
@@ -89,15 +83,9 @@ class HinoView:
 
         # Botão de Download Offline
         self.download_icon = ft.IconButton(
-            icon=(
-                ft.Icons.DOWNLOAD_DONE if self.is_downloaded else ft.Icons.FILE_DOWNLOAD
-            ),
+            icon=ft.Icons.DOWNLOAD_DONE if self.is_downloaded else ft.Icons.FILE_DOWNLOAD,
             icon_color=ft.Colors.GREEN_400 if self.is_downloaded else None,
-            tooltip=(
-                "Áudio Baixado (Offline)"
-                if self.is_downloaded
-                else "Baixar Áudio (Offline)"
-            ),
+            tooltip="Áudio Baixado (Offline)" if self.is_downloaded else "Baixar Áudio (Offline)",
             on_click=lambda e: page.run_task(self._handle_download, page, hino),
         )
 
@@ -132,17 +120,13 @@ class HinoView:
                                     text_align=ft.TextAlign.CENTER,
                                     color=ft.Colors.BLUE_200,
                                 ),
-                                padding=ft.Padding.symmetric(
-                                    vertical=15, horizontal=20
-                                ),
+                                padding=ft.Padding.symmetric(vertical=15, horizontal=20),
                                 alignment=ft.Alignment.CENTER,
                             ),
                             ft.Divider(height=1),
                             ft.Container(
                                 content=self.letra_text,
-                                padding=ft.Padding.symmetric(
-                                    vertical=20, horizontal=20
-                                ),
+                                padding=ft.Padding.symmetric(vertical=20, horizontal=20),
                                 alignment=ft.Alignment.TOP_CENTER,
                                 expand=True,
                             ),
@@ -227,9 +211,7 @@ class HinoView:
 
     def _update_fav_icon_state(self) -> None:
         if self.fav_icon:
-            self.fav_icon.icon = (
-                ft.Icons.FAVORITE if self.is_fav else ft.Icons.FAVORITE_BORDER
-            )
+            self.fav_icon.icon = ft.Icons.FAVORITE if self.is_fav else ft.Icons.FAVORITE_BORDER
             self.fav_icon.icon_color = ft.Colors.RED_400 if self.is_fav else None
             self.fav_icon.tooltip = "Desfavoritar" if self.is_fav else "Favoritar"
 
@@ -259,37 +241,25 @@ class HinoView:
             return
 
         if not hino.link_video:
-            snack = ft.SnackBar(
-                content=ft.Text("Este hino não possui link de vídeo cadastrado.")
-            )
+            snack = ft.SnackBar(content=ft.Text("Este hino não possui link de vídeo cadastrado."))
             page.overlay.append(snack)
             snack.open = True
             page.update()
             return
 
         if self.media_service.is_downloaded(self.hino_id):
-            snack = ft.SnackBar(
-                content=ft.Text(
-                    f"O Hino {hino.numero} já está baixado para uso offline!"
-                )
-            )
+            snack = ft.SnackBar(content=ft.Text(f"O Hino {hino.numero} já está baixado para uso offline!"))
             page.overlay.append(snack)
             snack.open = True
             page.update()
             return
 
-        snack_start = ft.SnackBar(
-            content=ft.Text(
-                f"Iniciando download do Hino {hino.numero} em segundo plano..."
-            )
-        )
+        snack_start = ft.SnackBar(content=ft.Text(f"Iniciando download do Hino {hino.numero} em segundo plano..."))
         page.overlay.append(snack_start)
         snack_start.open = True
         page.update()
 
-        saved_path = await self.media_service.download_audio(
-            self.hino_id, hino.link_video
-        )
+        saved_path = await self.media_service.download_audio(self.hino_id, hino.link_video)
 
         if saved_path and self.media_service.is_downloaded(self.hino_id):
             self.is_downloaded = True
@@ -311,9 +281,7 @@ class HinoView:
             content=ft.Column(
                 controls=[
                     ft.Radio(value="Padrão", label="Padrão (Sans-Serif)"),
-                    ft.Radio(
-                        value="Times New Roman", label="Serifada (Times New Roman)"
-                    ),
+                    ft.Radio(value="Times New Roman", label="Serifada (Times New Roman)"),
                     ft.Radio(value="OpenDyslexic", label="OpenDyslexic (Acessível)"),
                 ],
                 spacing=8,
@@ -328,15 +296,8 @@ class HinoView:
                     controls=[
                         ft.Row(
                             controls=[
-                                ft.Text(
-                                    "Acessibilidade de Fonte",
-                                    weight=ft.FontWeight.BOLD,
-                                    size=18,
-                                ),
-                                ft.IconButton(
-                                    ft.Icons.CLOSE,
-                                    on_click=lambda ev: page.pop_dialog(),
-                                ),
+                                ft.Text("Acessibilidade de Fonte", weight=ft.FontWeight.BOLD, size=18),
+                                ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()),
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         ),
@@ -349,24 +310,18 @@ class HinoView:
                                     on_click=lambda e: self._decrease_font(page),
                                     tooltip="Diminuir",
                                 ),
-                                ft.Text(
-                                    f"{self.font_size}pt", weight=ft.FontWeight.BOLD
-                                ),
+                                ft.Text(f"{self.font_size}pt", weight=ft.FontWeight.BOLD),
                                 ft.IconButton(
                                     ft.Icons.ADD_CIRCLE_OUTLINE,
                                     on_click=lambda e: self._increase_font(page),
                                     tooltip="Aumentar",
                                 ),
-                                ft.TextButton(
-                                    "Resetar", on_click=lambda e: self._reset_font(page)
-                                ),
+                                ft.TextButton("Resetar", on_click=lambda e: self._reset_font(page)),
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         ),
                         ft.Divider(),
-                        ft.Text(
-                            "Família de Fonte:", weight=ft.FontWeight.BOLD, size=14
-                        ),
+                        ft.Text("Família de Fonte:", weight=ft.FontWeight.BOLD, size=14),
                         font_radio_group,
                     ],
                     tight=True,
@@ -378,84 +333,63 @@ class HinoView:
         page.show_dialog(bs)
 
     def _show_media_modal(self, page: ft.Page, hino: Hino) -> None:
-        """Exibe o modal do Reprodutor Interno Embutido de Áudio e Mídia."""
-        is_offline = (
-            self.media_service.is_downloaded(self.hino_id)
-            if self.media_service
-            else False
-        )
-        local_path = (
-            self.media_service.get_local_filepath(self.hino_id)
-            if self.media_service
-            else ""
-        )
+        """Exibe o modal do Reprodutor Interno com reprodução real nos alto-falantes."""
+        is_offline = self.media_service.is_downloaded(self.hino_id) if self.media_service else False
+        local_path = self.media_service.get_local_filepath(self.hino_id) if self.media_service else ""
+        source_file = local_path if is_offline else (hino.link_video or "")
 
-        progress_bar = ft.ProgressBar(
-            value=0.0, color=ft.Colors.BLUE_400, visible=False
-        )
+        progress_bar = ft.ProgressBar(value=None, color=ft.Colors.GREEN_400, visible=False)
         play_state_text = ft.Text(
-            (
-                f"Áudio offline: hino_{hino.numero}.mp3"
-                if is_offline
-                else "Reprodução online pronta"
-            ),
+            f"Áudio offline: hino_{hino.numero}.mp3" if is_offline else ("Link disponível" if hino.link_video else "Nenhuma mídia"),
             size=12,
             italic=True,
             color=ft.Colors.GREY_300,
         )
 
-        play_btn = ft.IconButton(ft.Icons.PLAY_ARROW, icon_size=32, tooltip="Tocar")
+        play_btn = ft.IconButton(ft.Icons.PLAY_ARROW, icon_size=32, tooltip="Tocar Áudio Real")
 
         async def _toggle_play(e=None):
-            if not self.is_playing:
-                self.is_playing = True
-                play_btn.icon = ft.Icons.PAUSE
-                play_btn.icon_color = ft.Colors.AMBER_400
-                progress_bar.visible = True
-                play_state_text.value = (
-                    f"Tocando Hino {hino.numero} no player embutido..."
-                )
-                page.update()
+            if not self.media_service:
+                return
 
-                # Animação de progresso interna do player
-                for p in range(1, 101):
-                    if not self.is_playing:
-                        break
-                    progress_bar.value = p / 100.0
-                    page.update()
-                    await asyncio.sleep(0.1)
-
-                self.is_playing = False
+            if self.media_service.is_audio_playing():
+                self.media_service.stop_audio()
                 play_btn.icon = ft.Icons.PLAY_ARROW
                 play_btn.icon_color = None
                 progress_bar.visible = False
-                play_state_text.value = "Reprodução concluída"
+                play_state_text.value = "Áudio pausado"
                 page.update()
             else:
-                self.is_playing = False
-                play_btn.icon = ft.Icons.PLAY_ARROW
-                play_btn.icon_color = None
-                progress_bar.visible = False
-                play_state_text.value = "Pausado"
-                page.update()
+                if not source_file:
+                    snack = ft.SnackBar(content=ft.Text("Nenhuma fonte de áudio disponível para este hino."))
+                    page.overlay.append(snack)
+                    snack.open = True
+                    page.update()
+                    return
+
+                success = self.media_service.play_audio(source_file)
+                if success:
+                    play_btn.icon = ft.Icons.PAUSE
+                    play_btn.icon_color = ft.Colors.AMBER_400
+                    progress_bar.visible = True
+                    play_state_text.value = f"Reproduzindo áudio real nos alto-falantes..."
+                    page.update()
+                else:
+                    play_state_text.value = "Falha ao iniciar reprodutor de áudio."
+                    page.update()
 
         play_btn.on_click = lambda e: page.run_task(_toggle_play)
 
         async def _stop_play(e=None):
-            self.is_playing = False
+            if self.media_service:
+                self.media_service.stop_audio()
             play_btn.icon = ft.Icons.PLAY_ARROW
             play_btn.icon_color = None
-            progress_bar.value = 0.0
             progress_bar.visible = False
-            play_state_text.value = "Parado"
+            play_state_text.value = "Áudio parado"
             page.update()
 
-        stop_btn = ft.IconButton(
-            ft.Icons.STOP,
-            icon_size=28,
-            tooltip="Parar",
-            on_click=lambda e: page.run_task(_stop_play),
-        )
+        stop_btn = ft.IconButton(ft.Icons.STOP, icon_size=28, tooltip="Parar Áudio", on_click=lambda e: page.run_task(_stop_play))
 
         async def _open_url(e=None):
             if hino.link_video:
@@ -464,12 +398,8 @@ class HinoView:
         media_controls = [
             ft.Row(
                 controls=[
-                    ft.Text(
-                        "Reprodutor Interno do Hino", weight=ft.FontWeight.BOLD, size=18
-                    ),
-                    ft.IconButton(
-                        ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()
-                    ),
+                    ft.Text("Reprodutor Interno do Hino", weight=ft.FontWeight.BOLD, size=18),
+                    ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: (self.media_service.stop_audio() if self.media_service else None, page.pop_dialog())),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
@@ -477,28 +407,17 @@ class HinoView:
             ft.Row(
                 controls=[
                     ft.Icon(
-                        (
-                            ft.Icons.CHECK_CIRCLE
-                            if is_offline
-                            else ft.Icons.CLOUD_OUTLINED
-                        ),
+                        ft.Icons.CHECK_CIRCLE if is_offline else ft.Icons.CLOUD_OUTLINED,
                         color=ft.Colors.GREEN_400 if is_offline else ft.Colors.BLUE_200,
                     ),
-                    ft.Text(
-                        "Modo Offline Disponível" if is_offline else "Modo Online",
-                        weight=ft.FontWeight.BOLD,
-                    ),
+                    ft.Text("Modo Offline Disponível" if is_offline else "Modo Online", weight=ft.FontWeight.BOLD),
                 ],
             ),
-            # Container do Player Interno Embutido
+            # Container do Player Interno Embutido Real
             ft.Container(
                 content=ft.Column(
                     controls=[
-                        ft.Text(
-                            f"Hino {hino.numero} - {hino.titulo}",
-                            weight=ft.FontWeight.BOLD,
-                            size=15,
-                        ),
+                        ft.Text(f"Hino {hino.numero} - {hino.titulo}", weight=ft.FontWeight.BOLD, size=15),
                         play_state_text,
                         progress_bar,
                         ft.Row(
@@ -522,9 +441,7 @@ class HinoView:
                         ft.ElevatedButton(
                             "Baixar Somente Áudio (MP3)",
                             icon=ft.Icons.FILE_DOWNLOAD,
-                            on_click=lambda e: page.run_task(
-                                self._handle_download, page, hino
-                            ),
+                            on_click=lambda e: page.run_task(self._handle_download, page, hino),
                         ),
                         ft.OutlinedButton(
                             "Abrir Mídia Externa",
@@ -553,9 +470,7 @@ class HinoView:
             ft.Row(
                 controls=[
                     ft.Text("Informações do Hino", weight=ft.FontWeight.BOLD, size=18),
-                    ft.IconButton(
-                        ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()
-                    ),
+                    ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
@@ -575,12 +490,7 @@ class HinoView:
                 info_items.append(
                     ft.Column(
                         controls=[
-                            ft.Text(
-                                label,
-                                weight=ft.FontWeight.BOLD,
-                                size=12,
-                                color=ft.Colors.BLUE_200,
-                            ),
+                            ft.Text(label, weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.BLUE_200),
                             ft.Text(val, size=14),
                         ],
                         spacing=2,
@@ -592,12 +502,7 @@ class HinoView:
             info_items.append(
                 ft.Column(
                     controls=[
-                        ft.Text(
-                            "Temas Relacionados:",
-                            weight=ft.FontWeight.BOLD,
-                            size=12,
-                            color=ft.Colors.AMBER_200,
-                        ),
+                        ft.Text("Temas Relacionados:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.AMBER_200),
                         ft.Text(", ".join(temas), size=14),
                     ],
                     spacing=2,
@@ -609,12 +514,7 @@ class HinoView:
             info_items.append(
                 ft.Column(
                     controls=[
-                        ft.Text(
-                            "Textos Bíblicos de Referência:",
-                            weight=ft.FontWeight.BOLD,
-                            size=12,
-                            color=ft.Colors.GREEN_200,
-                        ),
+                        ft.Text("Textos Bíblicos de Referência:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.GREEN_200),
                         ft.Text(", ".join(textos_biblicos), size=14),
                     ],
                     spacing=2,
@@ -622,11 +522,7 @@ class HinoView:
             )
 
         if len(info_items) == 2:
-            info_items.append(
-                ft.Text(
-                    "Nenhum metadado adicional cadastrado para este hino.", italic=True
-                )
-            )
+            info_items.append(ft.Text("Nenhum metadado adicional cadastrado para este hino.", italic=True))
 
         bs = ft.BottomSheet(
             content=ft.Container(

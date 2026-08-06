@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from src.services.media_service import MediaService
 
 
@@ -32,6 +32,26 @@ async def test_extract_youtube_id_and_embed():
 
     embed_url = service.get_embed_url(url1)
     assert embed_url == "https://www.youtube.com/embed/dQw4w9WgXcQ?autoplay=1"
+
+
+@pytest.mark.asyncio
+async def test_play_and_stop_audio_process():
+    """
+    Testa a inicialização e interrupção do processo de áudio.
+    """
+    service = MediaService(download_dir="tmp_downloads")
+
+    with patch("subprocess.Popen") as MockPopen:
+        mock_proc = MagicMock()
+        mock_proc.poll.return_value = None
+        MockPopen.return_value = mock_proc
+
+        started = service.play_audio("tmp_downloads/dummy.mp3")
+        assert started is True
+        assert service.is_audio_playing() is True
+
+        service.stop_audio()
+        assert service.is_audio_playing() is False
 
 
 @pytest.mark.asyncio
