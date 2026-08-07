@@ -1,7 +1,10 @@
 [project]
 name = "hinario-inteligente"
-version = "1.0.0"
+version = "0.2"
 description = "Hinário Adventista Inteligente — App completo com busca, favoritos, áudio e Agente Organizador de Cultos"
 
 [tool.flet]
 app.assets_dir = "assets"
+
+[tool.flet.app]
+icon = "icon.ico"

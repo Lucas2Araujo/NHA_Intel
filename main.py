@@ -1,4 +1,7 @@
+import os
+import shutil
 import asyncio
+from pathlib import Path
 from collections import OrderedDict
 import flet as ft
 from typing import Dict, List
@@ -15,6 +18,7 @@ from src.views.agente_view import AgenteView
 
 # Tamanho máximo do cache LRU para views de hinos
 _HINO_VIEW_CACHE_MAX = 10
+APP_VERSION = "0.2"
 
 
 async def main(page: ft.Page):
@@ -22,6 +26,27 @@ async def main(page: ft.Page):
     Ponto de entrada assíncrono do aplicativo Hinário Inteligente em Flet (0.85+).
     Inicializa a conexão aiosqlite, repositórios, serviços de mídia, Agente Organizador e roteamento.
     """
+    page.title = f"Hinário Inteligente v{APP_VERSION}"
+
+    # Garantir cópia do ícone para a pasta assets/ se necessário
+    root_dir = Path(__file__).resolve().parent
+    assets_dir = root_dir / "assets"
+    assets_dir.mkdir(exist_ok=True)
+
+    root_icon = root_dir / "icon.ico"
+    asset_icon = assets_dir / "icon.ico"
+    if root_icon.exists() and not asset_icon.exists():
+        try:
+            shutil.copy2(root_icon, asset_icon)
+        except Exception:
+            pass
+
+    if asset_icon.exists():
+        try:
+            page.window_icon = str(asset_icon)
+        except Exception:
+            pass
+
     # Registrar fontes personalizadas (OpenDyslexic e Times New Roman)
     page.fonts = {
         "OpenDyslexic": "https://cdn.jsdelivr.net/gh/antijingoist/open-dyslexic@master/otf/OpenDyslexic-Regular.otf",
@@ -65,10 +90,25 @@ async def main(page: ft.Page):
     async def route_change(e=None):
         page.views.clear()
 
-        # Rota Principal (Home) — invalida cache se vindo de /hino/* para refletir favoritos/recentes
-        coming_from_hino = page.route and not page.route.startswith("/hino/")
-        if "/" not in view_cache or coming_from_hino:
-            view_cache["/"] = await home_view_instance.build(page)
+        # Extrair query string de busca (ex: /?q=amor)
+        route = page.route or "/"
+        initial_search = ""
+        if "?" in route:
+            parts = route.split("?", 1)
+            route_base = parts[0]
+            query_str = parts[1]
+            for param in query_str.split("&"):
+                if param.startswith("q="):
+                    initial_search = param[2:].replace("%20", " ")
+            # Limpa a rota para o roteamento funcionar
+            page.route = route_base or "/"
+        else:
+            route_base = route
+
+        # Rota Principal (Home) — invalida cache quando vindo de /hino/*, quando tem busca ou para refletir favoritos/recentes
+        coming_from_hino = route_base and not route_base.startswith("/hino/")
+        if "/" not in view_cache or coming_from_hino or initial_search:
+            view_cache["/"] = await home_view_instance.build(page, initial_search=initial_search)
 
         page.views.append(view_cache["/"])
 

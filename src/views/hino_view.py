@@ -1,4 +1,5 @@
 import asyncio
+import json
 import flet as ft
 from typing import Optional, Dict, List
 from src.repositories.hino_repository import HinoRepository
@@ -32,9 +33,10 @@ class HinoView:
         self.media_service = media_service
         self.hino_ids_list = hino_ids_list or []
 
-        # Estado interno de acessibilidade de fonte
+        # Estado interno de acessibilidade de fonte (carregado do banco se existir)
         self.font_size: int = 18
         self.selected_font: str = "Padrão"
+        self._prefs_loaded: bool = False
 
         # Referências aos elementos dinâmicos da interface
         self.letra_text: Optional[ft.Text] = None
@@ -57,11 +59,45 @@ class HinoView:
         self._snackbar.open = True
         page.update()
 
+    async def _load_preferences(self) -> None:
+        """Carrega preferências de fonte do banco de dados (uma vez)."""
+        if self._prefs_loaded:
+            return
+        try:
+            conn = await self.hino_repository.db_connection.get_connection()
+            async with conn.execute(
+                "SELECT valor FROM preferencias WHERE chave = ?", ("font_prefs",)
+            ) as cursor:
+                row = await cursor.fetchone()
+            if row and row[0]:
+                prefs = json.loads(row[0])
+                self.font_size = prefs.get("font_size", 18)
+                self.selected_font = prefs.get("font_family", "Padrão")
+        except Exception:
+            pass
+        self._prefs_loaded = True
+
+    async def _save_preferences(self) -> None:
+        """Salva preferências de fonte no banco de dados."""
+        try:
+            prefs = json.dumps({"font_size": self.font_size, "font_family": self.selected_font})
+            conn = await self.hino_repository.db_connection.get_connection()
+            await conn.execute(
+                "INSERT OR REPLACE INTO preferencias (chave, valor) VALUES (?, ?)",
+                ("font_prefs", prefs),
+            )
+            await conn.commit()
+        except Exception:
+            pass
+
     async def build(self, page: ft.Page) -> ft.View:
         hino: Optional[Hino] = await self.hino_repository.get_by_id(self.hino_id)
 
         if hino is None:
             return self._build_not_found_view(page)
+
+        # Carrega preferências de fonte persistidas
+        await self._load_preferences()
 
         # Executa queries em paralelo para reduzir latência de abertura
         historico_task = self.historico_repository.add_acesso(self.hino_id)
@@ -174,17 +210,38 @@ class HinoView:
             bottom_appbar=ft.BottomAppBar(
                 content=ft.Row(
                     controls=[
-                        ft.IconButton(
-                            ft.Icons.TEXT_FIELDS,
-                            tooltip="Tamanho e Família de Fonte",
-                            on_click=lambda e: self._show_accessibility_modal(page),
+                        ft.Column(
+                            controls=[
+                                ft.IconButton(
+                                    ft.Icons.TEXT_FIELDS,
+                                    tooltip="Tamanho e Família de Fonte",
+                                    on_click=lambda e: self._show_accessibility_modal(page),
+                                ),
+                                ft.Text("Fonte", size=10, text_align=ft.TextAlign.CENTER),
+                            ],
+                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            spacing=0,
                         ),
-                        ft.IconButton(
-                            ft.Icons.PLAY_CIRCLE_OUTLINE,
-                            tooltip="Reprodutor Interno de Mídia",
-                            on_click=lambda e: self._show_media_modal(page, hino),
+                        ft.Column(
+                            controls=[
+                                ft.IconButton(
+                                    ft.Icons.PLAY_CIRCLE_OUTLINE,
+                                    tooltip="Reprodutor Interno de Mídia",
+                                    on_click=lambda e: self._show_media_modal(page, hino),
+                                ),
+                                ft.Text("Mídia", size=10, text_align=ft.TextAlign.CENTER),
+                            ],
+                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            spacing=0,
                         ),
-                        self.download_icon,
+                        ft.Column(
+                            controls=[
+                                self.download_icon,
+                                ft.Text("Download", size=10, text_align=ft.TextAlign.CENTER),
+                            ],
+                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            spacing=0,
+                        ),
                     ],
                     alignment=ft.MainAxisAlignment.SPACE_AROUND,
                 ),
@@ -263,6 +320,8 @@ class HinoView:
             self.letra_text.size = self.font_size
             self.letra_text.font_family = font_family_map.get(self.selected_font)
             page.update()
+            # Persiste preferências de forma assíncrona (fire-and-forget)
+            asyncio.create_task(self._save_preferences())
 
     def _increase_font(self, page: ft.Page) -> None:
         if self.font_size < 36:
@@ -516,6 +575,11 @@ class HinoView:
         page.show_dialog(bs)
 
     def _show_info_modal(self, page: ft.Page, hino: Hino) -> None:
+        def _navigate_search(term: str):
+            """Fecha o modal e navega para Home com busca FTS pelo termo."""
+            page.pop_dialog()
+            page.go(f"/?q={term}")
+
         info_items = [
             ft.Row(
                 controls=[
@@ -531,8 +595,6 @@ class HinoView:
             ("Autor da Letra:", hino.autor_letra),
             ("Autor da Música:", hino.autor_musica),
             ("Texto Base Bíblico:", hino.texto_base),
-            ("Categoria:", hino.categoria),
-            ("Subcategoria:", hino.subcategoria),
         ]
 
         for label, val in metadata:
@@ -547,27 +609,74 @@ class HinoView:
                     )
                 )
 
+        # Categoria e Subcategoria como chips clicáveis
+        cat_chips = []
+        if hino.categoria and hino.categoria.strip():
+            cat_chips.append(
+                ft.Chip(
+                    label=ft.Text(hino.categoria, size=12),
+                    bgcolor=ft.Colors.BLUE_900,
+                    on_click=lambda e, c=hino.categoria: _navigate_search(c),
+                )
+            )
+        if hino.subcategoria and hino.subcategoria.strip():
+            cat_chips.append(
+                ft.Chip(
+                    label=ft.Text(hino.subcategoria, size=12),
+                    bgcolor=ft.Colors.BLUE_800,
+                    on_click=lambda e, sc=hino.subcategoria: _navigate_search(sc),
+                )
+            )
+        if cat_chips:
+            info_items.append(
+                ft.Column(
+                    controls=[
+                        ft.Text("Categoria:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.BLUE_200),
+                        ft.Row(controls=cat_chips, wrap=True, spacing=6, run_spacing=6),
+                    ],
+                    spacing=4,
+                )
+            )
+
+        # Temas como chips clicáveis que filtram busca
         temas = self.relacionados.get("temas", [])
         if temas:
+            tema_chips = [
+                ft.Chip(
+                    label=ft.Text(t, size=11),
+                    bgcolor=ft.Colors.AMBER_900,
+                    on_click=lambda e, tema=t: _navigate_search(tema),
+                )
+                for t in temas
+            ]
             info_items.append(
                 ft.Column(
                     controls=[
                         ft.Text("Temas Relacionados:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.AMBER_200),
-                        ft.Text(", ".join(temas), size=14),
+                        ft.Row(controls=tema_chips, wrap=True, spacing=6, run_spacing=6),
                     ],
-                    spacing=2,
+                    spacing=4,
                 )
             )
 
+        # Textos Bíblicos como chips clicáveis
         textos_biblicos = self.relacionados.get("textos_biblicos", [])
         if textos_biblicos:
+            texto_chips = [
+                ft.Chip(
+                    label=ft.Text(tb, size=11),
+                    bgcolor=ft.Colors.GREEN_900,
+                    on_click=lambda e, ref=tb: _navigate_search(ref),
+                )
+                for tb in textos_biblicos
+            ]
             info_items.append(
                 ft.Column(
                     controls=[
-                        ft.Text("Textos Bíblicos de Referência:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.GREEN_200),
-                        ft.Text(", ".join(textos_biblicos), size=14),
+                        ft.Text("Textos Bíblicos:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.GREEN_200),
+                        ft.Row(controls=texto_chips, wrap=True, spacing=6, run_spacing=6),
                     ],
-                    spacing=2,
+                    spacing=4,
                 )
             )
 
@@ -580,6 +689,7 @@ class HinoView:
                     controls=info_items,
                     tight=True,
                     spacing=10,
+                    scroll=ft.ScrollMode.AUTO,
                 ),
                 padding=ft.Padding.all(20),
             )

@@ -187,11 +187,79 @@ class DatabaseConnection:
         """
         Retorna/abre uma conexão assíncrona ativa com o SQLite.
         Configura o row_factory para aiosqlite.Row para acesso amigável às colunas.
+        Na primeira conexão, executa otimizações (índices, FTS5, limpeza).
         """
         if self._connection is None:
             self._connection = await aiosqlite.connect(self.db_path)
             self._connection.row_factory = aiosqlite.Row
+            await self._initialize_db(self._connection)
         return self._connection
+
+    @staticmethod
+    async def _initialize_db(conn: aiosqlite.Connection) -> None:
+        """
+        Executa otimizações e manutenção no banco na primeira conexão:
+        1. Cria índices de performance (IF NOT EXISTS)
+        2. Cria tabela FTS5 para busca full-text
+        3. Cria tabela de preferências do usuário
+        4. Limpa histórico antigo (> 90 dias)
+        """
+        # Índices de performance
+        index_statements = [
+            "CREATE INDEX IF NOT EXISTS idx_historico_hino_data ON historico(hino_id, data_acesso DESC);",
+            "CREATE INDEX IF NOT EXISTS idx_favorito_data ON favorito(data_favoritado DESC);",
+            "CREATE INDEX IF NOT EXISTS idx_hino_numero ON hino(numero);",
+            "CREATE INDEX IF NOT EXISTS idx_hino_titulo ON hino(titulo);",
+            "CREATE INDEX IF NOT EXISTS idx_hino_tema_hino ON hino_tema(hino_id);",
+            "CREATE INDEX IF NOT EXISTS idx_hino_tema_tema ON hino_tema(tema_id);",
+            "CREATE INDEX IF NOT EXISTS idx_hino_texto_hino ON hino_texto(hino_id);",
+        ]
+        for stmt in index_statements:
+            try:
+                await conn.execute(stmt)
+            except Exception:
+                pass
+
+        # Tabela FTS5 para busca full-text (letra, categoria, subcategoria)
+        try:
+            await conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS hino_fts USING fts5(
+                    numero, titulo, letra, categoria, subcategoria, texto_base,
+                    content='hino', content_rowid='id',
+                    tokenize='unicode61 remove_diacritics 2'
+                );
+            """)
+            # Verifica se o FTS está vazio e precisa ser populado
+            async with conn.execute("SELECT COUNT(*) FROM hino_fts;") as cursor:
+                count = (await cursor.fetchone())[0]
+            if count == 0:
+                await conn.execute("""
+                    INSERT INTO hino_fts(rowid, numero, titulo, letra, categoria, subcategoria, texto_base)
+                    SELECT id, numero, titulo, letra, categoria, subcategoria, texto_base FROM hino;
+                """)
+        except Exception:
+            pass
+
+        # Tabela de preferências do usuário
+        try:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS preferencias (
+                    chave TEXT PRIMARY KEY,
+                    valor TEXT
+                );
+            """)
+        except Exception:
+            pass
+
+        # Limpeza automática de histórico antigo (> 90 dias)
+        try:
+            await conn.execute(
+                "DELETE FROM historico WHERE data_acesso < datetime('now', '-90 days');"
+            )
+        except Exception:
+            pass
+
+        await conn.commit()
 
     async def close(self) -> None:
         """Encerra a conexão assíncrona ativa se existir."""

@@ -18,6 +18,12 @@ else
     exit 1
 fi
 
+# Copiar ícone do aplicativo
+if [ -f "icon.ico" ]; then
+    cp icon.ico assets/
+    echo "✅ Ícone do aplicativo (icon.ico) copiado para assets/"
+fi
+
 echo "=== Setup concluído ==="
 echo ""
 echo "Para rodar os testes:"

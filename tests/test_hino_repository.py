@@ -54,3 +54,30 @@ async def test_get_metadados_relacionados(in_memory_db):
     assert isinstance(relacionados, dict)
     assert "temas" in relacionados
     assert "textos_biblicos" in relacionados
+
+
+@pytest.mark.asyncio
+async def test_get_categorias_e_temas(in_memory_db):
+    repository = HinoRepository(in_memory_db)
+
+    categorias = await repository.get_categorias()
+    assert "Adoração" in categorias
+
+    temas = await repository.get_temas()
+    assert "Adoração" in temas
+    assert "Santidade" in temas
+
+
+@pytest.mark.asyncio
+async def test_search_by_categoria_e_tema(in_memory_db):
+    repository = HinoRepository(in_memory_db)
+
+    # Busca por categoria
+    hinos_cat = await repository.search_by_categoria("Adoração")
+    assert len(hinos_cat) == 3
+
+    # Busca por tema
+    hinos_tema = await repository.search_by_tema("Santidade")
+    assert len(hinos_tema) == 1
+    assert hinos_tema[0].id == 1
+

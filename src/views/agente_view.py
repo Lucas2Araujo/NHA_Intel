@@ -7,6 +7,7 @@ from src.repositories.culto_repository import CultoRepository
 class AgenteView:
     """
     View responsável pela interface do Agente Organizador de Cultos.
+    Totalmente responsiva em retrato e paisagem (landscape).
     Oferece duas abas:
     1. 'Novo Culto': Sugestão semântica inteligente e montagem de playlist por blocos litúrgicos.
     2. 'Cultos Salvos': Consulta e navegação em listas de cultos salvas anteriormente no banco.
@@ -21,7 +22,7 @@ class AgenteView:
         self.current_tab: str = "novo"  # "novo" ou "salvos"
 
     async def build(self, page: ft.Page) -> ft.View:
-        page.title = "Agente Organizador de Cultos"
+        page.title = "Agente Organizador de Cultos - v0.2"
 
         # Slider de quantidade de hinos
         num_hinos_value = 6  # valor padrão
@@ -47,7 +48,7 @@ class AgenteView:
         prompt_input = ft.TextField(
             hint_text="Digite o tema pastoral do culto (ex: 'Fé e Perseverança nas Provações')...",
             multiline=True,
-            min_lines=2,
+            min_lines=1,
             max_lines=3,
             border_radius=12,
             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
@@ -57,8 +58,6 @@ class AgenteView:
         results_container = ft.Column(
             controls=[],
             spacing=12,
-            scroll=ft.ScrollMode.AUTO,
-            expand=True,
         )
 
         save_button = ft.ElevatedButton(
@@ -276,11 +275,11 @@ class AgenteView:
             selected = e.control.selected
             if "salvos" in selected:
                 self.current_tab = "salvos"
-                prompt_container.visible = False
+                prompt_card.visible = False
                 await _carregar_cultos_salvos()
             else:
                 self.current_tab = "novo"
-                prompt_container.visible = True
+                prompt_card.visible = True
                 results_container.controls = []
                 save_button.visible = False
 
@@ -304,37 +303,40 @@ class AgenteView:
             expand=True,
         )
 
-        prompt_container = ft.Container(
-            content=ft.Column(
-                controls=[
-                    ft.Text(
-                        "Defina o Tema Pastoral do Culto:",
-                        weight=ft.FontWeight.BOLD,
-                        size=15,
-                    ),
-                    ft.Text(
-                        "Clique em um tema de exemplo ou escreva o seu:",
-                        size=12,
-                        italic=True,
-                        color=ft.Colors.GREY_400,
-                    ),
-                    example_chips,
-                    prompt_input,
-                    ft.Row(
-                        controls=[
-                            num_hinos_label,
-                            num_hinos_slider,
-                        ],
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    ft.Row(
-                        controls=[generate_button, save_button],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                    ),
-                ],
-                spacing=10,
-            ),
-            padding=ft.Padding.all(16),
+        prompt_card = ft.Card(
+            content=ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Text(
+                            "Defina o Tema Pastoral do Culto:",
+                            weight=ft.FontWeight.BOLD,
+                            size=15,
+                        ),
+                        ft.Text(
+                            "Clique em um tema de exemplo ou escreva o seu:",
+                            size=12,
+                            italic=True,
+                            color=ft.Colors.GREY_400,
+                        ),
+                        example_chips,
+                        prompt_input,
+                        ft.Row(
+                            controls=[
+                                num_hinos_label,
+                                num_hinos_slider,
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Row(
+                            controls=[generate_button, save_button],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            wrap=True,
+                        ),
+                    ],
+                    spacing=10,
+                ),
+                padding=ft.Padding.all(14),
+            )
         )
 
         # Botão voltar usa stack de views
@@ -346,6 +348,18 @@ class AgenteView:
             else:
                 page.go("/")
 
+        # Coluna principal com SCROLL=AUTO para garantir responsividade total em retrato/paisagem
+        scrollable_content = ft.Column(
+            controls=[
+                prompt_card,
+                ft.Divider(height=1),
+                results_container,
+            ],
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            spacing=10,
+        )
+
         return ft.View(
             route="/agente",
             appbar=ft.AppBar(
@@ -353,8 +367,16 @@ class AgenteView:
                     ft.Icons.ARROW_BACK,
                     on_click=_go_back,
                 ),
-                title=ft.Text(
-                    "Agente Organizador de Cultos", weight=ft.FontWeight.BOLD
+                title=ft.Row(
+                    controls=[
+                        ft.Text("Agente de Cultos", weight=ft.FontWeight.BOLD),
+                        ft.Container(
+                            content=ft.Text("v0.2", size=11, color=ft.Colors.AMBER_200, weight=ft.FontWeight.BOLD),
+                            padding=ft.Padding.only(left=4),
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    tight=True,
                 ),
                 center_title=True,
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
@@ -365,14 +387,12 @@ class AgenteView:
             controls=[
                 ft.Container(
                     content=tab_bar,
-                    padding=ft.Padding.symmetric(horizontal=16, vertical=8),
+                    padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                 ),
-                prompt_container,
-                ft.Divider(height=1),
                 ft.Container(
-                    content=results_container,
+                    content=scrollable_content,
                     expand=True,
-                    padding=ft.Padding.symmetric(horizontal=16, vertical=8),
+                    padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                 ),
             ],
         )
