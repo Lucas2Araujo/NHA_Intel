@@ -15,8 +15,17 @@ class MediaService:
     """
 
     def __init__(self, download_dir: str = "downloads"):
+        if not os.path.isabs(download_dir):
+            base = os.environ.get("FLET_APP_STORAGE_DATA") or os.environ.get("FILES_DIR")
+            if base:
+                download_dir = os.path.join(base, download_dir)
         self.download_dir = download_dir
-        os.makedirs(self.download_dir, exist_ok=True)
+        try:
+            os.makedirs(self.download_dir, exist_ok=True)
+        except Exception:
+            import tempfile
+            self.download_dir = os.path.join(tempfile.gettempdir(), "hinario_downloads")
+            os.makedirs(self.download_dir, exist_ok=True)
         self.player_process: Optional[subprocess.Popen] = None
 
     def _sanitize_url(self, url: str) -> str:

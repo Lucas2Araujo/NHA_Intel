@@ -72,18 +72,31 @@ class DatabaseConnection:
         except Exception:
             pass
 
-        # Variáveis de ambiente com diretórios no Android
-        for env_var in ["FILES_DIR", "ANDROID_PRIVATE", "PYTHON_SERVICE_ARGUMENT", "ANDROID_ARGUMENT"]:
+        # Variáveis de ambiente com diretórios no Android / Serious Python
+        for env_var in ["FLET_APP_STORAGE_DATA", "FILES_DIR", "ANDROID_PRIVATE", "PYTHON_SERVICE_ARGUMENT", "ANDROID_ARGUMENT"]:
             val = os.environ.get(env_var)
             if val:
                 candidates.append(Path(val) / filename)
+                candidates.append(Path(val) / "assets" / filename)
+
+        # Procura em sys.path (onde o Serious Python descompacta os scripts/assets)
+        for p in sys.path:
+            if p:
+                try:
+                    candidates.append(Path(p) / filename)
+                    candidates.append(Path(p) / "assets" / filename)
+                except Exception:
+                    pass
 
         # Encontra o primeiro candidato que realmente existe
         seed_path: Optional[Path] = None
         for cand in candidates:
-            if cand and cand.exists() and cand.is_file():
-                seed_path = cand.resolve()
-                break
+            try:
+                if cand and cand.exists() and cand.is_file():
+                    seed_path = cand.resolve()
+                    break
+            except Exception:
+                pass
 
         # 3. Detectar ambiente Android ou diretório read-only
         is_android = (
@@ -91,32 +104,59 @@ class DatabaseConnection:
             or "ANDROID_PRIVATE" in os.environ
             or "FILES_DIR" in os.environ
             or "PYTHON_SERVICE_ARGUMENT" in os.environ
+            or "FLET_APP_STORAGE_DATA" in os.environ
             or hasattr(sys, "getandroidapilevel")
+            or "android" in sys.platform.lower()
         )
 
         def is_writable(p: Path) -> bool:
-            if p.exists():
-                return os.access(p, os.W_OK)
-            parent = p.parent
-            return parent.exists() and os.access(parent, os.W_OK)
+            try:
+                if p.exists():
+                    return os.access(p, os.W_OK)
+                parent = p.parent
+                return parent.exists() and os.access(parent, os.W_OK)
+            except Exception:
+                return False
 
         def get_user_data_dir() -> Path:
-            for env_var in ["FILES_DIR", "ANDROID_PRIVATE"]:
+            import tempfile
+
+            # 1. Variáveis de ambiente específicas do Flet / Serious Python no Android e Mobile
+            for env_var in ["FLET_APP_STORAGE_DATA", "FILES_DIR", "ANDROID_PRIVATE"]:
                 val = os.environ.get(env_var)
                 if val:
                     p = Path(val)
-                    p.mkdir(parents=True, exist_ok=True)
+                    try:
+                        p.mkdir(parents=True, exist_ok=True)
+                        if os.access(p, os.W_OK):
+                            return p
+                    except Exception:
+                        pass
+
+            # 2. Padrões por plataforma de SO
+            try:
+                if sys.platform.startswith("win"):
+                    base = Path(os.environ.get("APPDATA", Path.home()))
+                    p = base / "HinarioApp"
+                elif sys.platform == "darwin":
+                    p = Path.home() / "Library" / "Application Support" / "HinarioApp"
+                else:
+                    home = Path.home()
+                    # Evita o PermissionError em '/data/.local' se Path.home() for '/data' ou não for gravável
+                    if str(home) == "/data" or not os.access(home, os.W_OK):
+                        base = Path(tempfile.gettempdir())
+                    else:
+                        base = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share"))
+                    p = base / "hinario_app"
+
+                p.mkdir(parents=True, exist_ok=True)
+                if os.access(p, os.W_OK):
                     return p
+            except Exception:
+                pass
 
-            if sys.platform.startswith("win"):
-                base = Path(os.environ.get("APPDATA", Path.home()))
-                p = base / "HinarioApp"
-            elif sys.platform == "darwin":
-                p = Path.home() / "Library" / "Application Support" / "HinarioApp"
-            else:
-                base = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
-                p = base / "hinario_app"
-
+            # 3. Fallback universal em diretório temporário (sempre gravável no sandbox Android!)
+            p = Path(tempfile.gettempdir()) / "hinario_app"
             p.mkdir(parents=True, exist_ok=True)
             return p
 
