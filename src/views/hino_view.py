@@ -23,12 +23,14 @@ class HinoView:
         favorito_repository: FavoritoRepository,
         historico_repository: HistoricoRepository,
         media_service: Optional[MediaService] = None,
+        hino_ids_list: Optional[List[int]] = None,
     ):
         self.hino_id = hino_id
         self.hino_repository = hino_repository
         self.favorito_repository = favorito_repository
         self.historico_repository = historico_repository
         self.media_service = media_service
+        self.hino_ids_list = hino_ids_list or []
 
         # Estado interno de acessibilidade de fonte
         self.font_size: int = 18
@@ -42,18 +44,34 @@ class HinoView:
         self.is_downloaded: bool = False
         self.relacionados: Dict[str, List[str]] = {"temas": [], "textos_biblicos": []}
 
+        # SnackBar singleton reutilizável (evita acúmulo no overlay)
+        self._snackbar: Optional[ft.SnackBar] = None
+
+    def _show_snackbar(self, page: ft.Page, msg: str) -> None:
+        """Exibe um SnackBar reutilizável, evitando acúmulo no overlay."""
+        if self._snackbar is None:
+            self._snackbar = ft.SnackBar(content=ft.Text(msg))
+            page.overlay.append(self._snackbar)
+        else:
+            self._snackbar.content = ft.Text(msg)
+        self._snackbar.open = True
+        page.update()
+
     async def build(self, page: ft.Page) -> ft.View:
         hino: Optional[Hino] = await self.hino_repository.get_by_id(self.hino_id)
 
         if hino is None:
             return self._build_not_found_view(page)
 
-        # Registrar acesso no histórico e buscar metadados cruzados
-        await self.historico_repository.add_acesso(self.hino_id)
-        self.relacionados = await self.hino_repository.get_metadados_relacionados(self.hino_id)
+        # Executa queries em paralelo para reduzir latência de abertura
+        historico_task = self.historico_repository.add_acesso(self.hino_id)
+        metadados_task = self.hino_repository.get_metadados_relacionados(self.hino_id)
+        favorito_task = self.favorito_repository.is_favorito(self.hino_id)
 
-        # Verificar se é favorito e se possui download local
-        self.is_fav = await self.favorito_repository.is_favorito(self.hino_id)
+        _, self.relacionados, self.is_fav = await asyncio.gather(
+            historico_task, metadados_task, favorito_task
+        )
+
         if self.media_service:
             self.is_downloaded = self.media_service.is_downloaded(self.hino_id)
 
@@ -89,17 +107,31 @@ class HinoView:
             on_click=lambda e: page.run_task(self._handle_download, page, hino),
         )
 
+        # Navegação anterior/próximo
+        prev_btn, next_btn = self._build_nav_buttons(page)
+
+        # Botão voltar usa stack de views em vez de hardcoded "/"
+        def _go_back(e):
+            if len(page.views) > 1:
+                page.views.pop()
+                top_view = page.views[-1]
+                page.go(top_view.route)
+            else:
+                page.go("/")
+
         return ft.View(
             route=f"/hino/{self.hino_id}",
             appbar=ft.AppBar(
                 leading=ft.IconButton(
                     ft.Icons.ARROW_BACK,
-                    on_click=lambda e: page.go("/"),
+                    on_click=_go_back,
                 ),
                 title=ft.Text(f"Hino {hino.numero}", weight=ft.FontWeight.BOLD),
                 center_title=True,
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 actions=[
+                    prev_btn,
+                    next_btn,
                     self.fav_icon,
                     ft.IconButton(
                         ft.Icons.INFO_OUTLINED,
@@ -160,13 +192,55 @@ class HinoView:
             ),
         )
 
+    def _build_nav_buttons(self, page: ft.Page) -> tuple:
+        """Constrói botões de navegação anterior/próximo baseados na lista de IDs."""
+        current_idx = -1
+        if self.hino_ids_list and self.hino_id in self.hino_ids_list:
+            current_idx = self.hino_ids_list.index(self.hino_id)
+
+        has_prev = current_idx > 0
+        has_next = current_idx >= 0 and current_idx < len(self.hino_ids_list) - 1
+
+        def _go_prev(e):
+            if has_prev:
+                prev_id = self.hino_ids_list[current_idx - 1]
+                page.go(f"/hino/{prev_id}")
+
+        def _go_next(e):
+            if has_next:
+                next_id = self.hino_ids_list[current_idx + 1]
+                page.go(f"/hino/{next_id}")
+
+        prev_btn = ft.IconButton(
+            ft.Icons.NAVIGATE_BEFORE,
+            tooltip="Hino Anterior",
+            on_click=_go_prev,
+            disabled=not has_prev,
+        )
+        next_btn = ft.IconButton(
+            ft.Icons.NAVIGATE_NEXT,
+            tooltip="Próximo Hino",
+            on_click=_go_next,
+            disabled=not has_next,
+        )
+
+        return prev_btn, next_btn
+
     def _build_not_found_view(self, page: ft.Page) -> ft.View:
+        def _go_back(e):
+            if len(page.views) > 1:
+                page.views.pop()
+                top_view = page.views[-1]
+                page.go(top_view.route)
+            else:
+                page.go("/")
+
         return ft.View(
             route=f"/hino/{self.hino_id}",
             appbar=ft.AppBar(
                 leading=ft.IconButton(
                     ft.Icons.ARROW_BACK,
-                    on_click=lambda e: page.go("/"),
+                    on_click=_go_back,
                 ),
                 title=ft.Text("Hino não encontrado"),
             ),
@@ -226,38 +300,22 @@ class HinoView:
             msg = f"Hino {hino.numero} adicionado aos favoritos!"
 
         self._update_fav_icon_state()
-
-        snack = ft.SnackBar(content=ft.Text(msg))
-        page.overlay.append(snack)
-        snack.open = True
-        page.update()
+        self._show_snackbar(page, msg)
 
     async def _handle_download(self, page: ft.Page, hino: Hino) -> None:
         if not self.media_service:
-            snack = ft.SnackBar(content=ft.Text("Serviço de download indisponível."))
-            page.overlay.append(snack)
-            snack.open = True
-            page.update()
+            self._show_snackbar(page, "Serviço de download indisponível.")
             return
 
         if not hino.link_video:
-            snack = ft.SnackBar(content=ft.Text("Este hino não possui link de vídeo cadastrado."))
-            page.overlay.append(snack)
-            snack.open = True
-            page.update()
+            self._show_snackbar(page, "Este hino não possui link de vídeo cadastrado.")
             return
 
         if self.media_service.is_downloaded(self.hino_id):
-            snack = ft.SnackBar(content=ft.Text(f"O Hino {hino.numero} já está baixado para uso offline!"))
-            page.overlay.append(snack)
-            snack.open = True
-            page.update()
+            self._show_snackbar(page, f"O Hino {hino.numero} já está baixado para uso offline!")
             return
 
-        snack_start = ft.SnackBar(content=ft.Text(f"Iniciando download do Hino {hino.numero} em segundo plano..."))
-        page.overlay.append(snack_start)
-        snack_start.open = True
-        page.update()
+        self._show_snackbar(page, f"Iniciando download do Hino {hino.numero} em segundo plano...")
 
         saved_path = await self.media_service.download_audio(self.hino_id, hino.link_video)
 
@@ -267,14 +325,9 @@ class HinoView:
                 self.download_icon.icon = ft.Icons.DOWNLOAD_DONE
                 self.download_icon.icon_color = ft.Colors.GREEN_400
                 self.download_icon.tooltip = "Áudio Baixado (Offline)"
-            msg = f"Download do Hino {hino.numero} concluído com sucesso!"
+            self._show_snackbar(page, f"Download do Hino {hino.numero} concluído com sucesso!")
         else:
-            msg = f"Falha no download do Hino {hino.numero}."
-
-        snack_end = ft.SnackBar(content=ft.Text(msg))
-        page.overlay.append(snack_end)
-        snack_end.open = True
-        page.update()
+            self._show_snackbar(page, f"Falha no download do Hino {hino.numero}.")
 
     def _show_accessibility_modal(self, page: ft.Page) -> None:
         font_radio_group = ft.RadioGroup(
@@ -361,10 +414,7 @@ class HinoView:
                 page.update()
             else:
                 if not source_file:
-                    snack = ft.SnackBar(content=ft.Text("Nenhuma fonte de áudio disponível para este hino."))
-                    page.overlay.append(snack)
-                    snack.open = True
-                    page.update()
+                    self._show_snackbar(page, "Nenhuma fonte de áudio disponível para este hino.")
                     return
 
                 success = self.media_service.play_audio(source_file)

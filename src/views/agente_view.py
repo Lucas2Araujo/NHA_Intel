@@ -22,10 +22,30 @@ class AgenteView:
 
     async def build(self, page: ft.Page) -> ft.View:
         page.title = "Agente Organizador de Cultos"
-        page.theme_mode = ft.ThemeMode.DARK
+
+        # Slider de quantidade de hinos
+        num_hinos_value = 6  # valor padrão
+
+        num_hinos_label = ft.Text(f"Hinos: {num_hinos_value}", weight=ft.FontWeight.BOLD, size=13)
+
+        def _on_slider_change(e):
+            nonlocal num_hinos_value
+            num_hinos_value = int(e.control.value)
+            num_hinos_label.value = f"Hinos: {num_hinos_value}"
+            page.update()
+
+        num_hinos_slider = ft.Slider(
+            min=4,
+            max=10,
+            divisions=6,
+            value=num_hinos_value,
+            label="{value} hinos",
+            on_change=_on_slider_change,
+            expand=True,
+        )
 
         prompt_input = ft.TextField(
-            hint_text="Digite o tema pastoral do culto (ex: 'Fé e Perseverança nas Provações', 'Gratidão em Família')...",
+            hint_text="Digite o tema pastoral do culto (ex: 'Fé e Perseverança nas Provações')...",
             multiline=True,
             min_lines=2,
             max_lines=3,
@@ -92,7 +112,7 @@ class AgenteView:
             page.update()
 
             self.playlist_gerada = await self.agente_service.sugerir_playlist_culto(
-                tema
+                tema, num_hinos=num_hinos_value
             )
             blocos = self.playlist_gerada.get("blocos", [])
 
@@ -117,11 +137,6 @@ class AgenteView:
                                     ),
                                     title=ft.Text(
                                         hino.titulo, weight=ft.FontWeight.W_500, size=16
-                                    ),
-                                    subtitle=ft.Text(
-                                        f"Hino {hino.numero}",
-                                        size=12,
-                                        color=ft.Colors.GREY_400,
                                     ),
                                     trailing=ft.IconButton(
                                         ft.Icons.ARROW_FORWARD_IOS,
@@ -149,6 +164,27 @@ class AgenteView:
             on_click=lambda e: page.run_task(_gerar_playlist),
             bgcolor=ft.Colors.BLUE_700,
             color=ft.Colors.WHITE,
+        )
+
+        # Chips de exemplo clicáveis para orientar o usuário
+        example_themes = ["Gratidão", "Batismo", "Páscoa", "Fé", "Família", "Esperança", "Louvor", "Natal"]
+
+        def _on_chip_click(e, theme_text: str):
+            prompt_input.value = theme_text
+            page.update()
+
+        example_chips = ft.Row(
+            controls=[
+                ft.Chip(
+                    label=ft.Text(t, size=12),
+                    on_click=lambda e, t=t: _on_chip_click(e, t),
+                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                )
+                for t in example_themes
+            ],
+            wrap=True,
+            spacing=6,
+            run_spacing=6,
         )
 
         async def _carregar_cultos_salvos():
@@ -276,7 +312,21 @@ class AgenteView:
                         weight=ft.FontWeight.BOLD,
                         size=15,
                     ),
+                    ft.Text(
+                        "Clique em um tema de exemplo ou escreva o seu:",
+                        size=12,
+                        italic=True,
+                        color=ft.Colors.GREY_400,
+                    ),
+                    example_chips,
                     prompt_input,
+                    ft.Row(
+                        controls=[
+                            num_hinos_label,
+                            num_hinos_slider,
+                        ],
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
                     ft.Row(
                         controls=[generate_button, save_button],
                         alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -287,12 +337,21 @@ class AgenteView:
             padding=ft.Padding.all(16),
         )
 
+        # Botão voltar usa stack de views
+        def _go_back(e):
+            if len(page.views) > 1:
+                page.views.pop()
+                top_view = page.views[-1]
+                page.go(top_view.route)
+            else:
+                page.go("/")
+
         return ft.View(
             route="/agente",
             appbar=ft.AppBar(
                 leading=ft.IconButton(
                     ft.Icons.ARROW_BACK,
-                    on_click=lambda e: page.go("/"),
+                    on_click=_go_back,
                 ),
                 title=ft.Text(
                     "Agente Organizador de Cultos", weight=ft.FontWeight.BOLD

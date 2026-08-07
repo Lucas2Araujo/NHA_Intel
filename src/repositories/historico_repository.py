@@ -24,10 +24,14 @@ class HistoricoRepository:
     async def get_recentes(self, limit: int = 50) -> List[Hino]:
         """Retorna os hinos mais recentemente acessados (sem duplicatas consecutivas)."""
         query = """
-            SELECT DISTINCT h.id, h.numero, h.titulo 
+            SELECT h.id, h.numero, h.titulo
             FROM hino h
-            INNER JOIN historico hist ON h.id = hist.hino_id
-            ORDER BY hist.data_acesso DESC, hist.id DESC
+            INNER JOIN (
+                SELECT hino_id, MAX(data_acesso) AS ultimo_acesso, MAX(id) AS ultimo_id
+                FROM historico
+                GROUP BY hino_id
+            ) latest ON h.id = latest.hino_id
+            ORDER BY latest.ultimo_acesso DESC, latest.ultimo_id DESC
             LIMIT ?
         """
         conn = await self.db_connection.get_connection()

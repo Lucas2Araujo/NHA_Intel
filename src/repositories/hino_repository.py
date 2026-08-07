@@ -18,7 +18,7 @@ class HinoRepository:
         Retorna todos os hinos do banco de dados contendo id, numero e titulo,
         ordenados numericamente.
         """
-        query = "SELECT id, numero, titulo, letra FROM hino ORDER BY CAST(numero AS INTEGER) ASC, numero ASC;"
+        query = "SELECT id, numero, titulo FROM hino ORDER BY CAST(numero AS INTEGER) ASC, numero ASC;"
         conn = await self.db_connection.get_connection()
 
         async with conn.execute(query) as cursor:
@@ -31,7 +31,6 @@ class HinoRepository:
                     id=row["id"],
                     numero=str(row["numero"]),
                     titulo=str(row["titulo"]),
-                    letra=row["letra"] if "letra" in row.keys() else None,
                 )
             )
 
@@ -76,7 +75,7 @@ class HinoRepository:
             return await self.get_all()
 
         query = """
-            SELECT id, numero, titulo, letra 
+            SELECT id, numero, titulo 
             FROM hino 
             WHERE numero LIKE ? OR titulo LIKE ?
             ORDER BY CAST(numero AS INTEGER) ASC, numero ASC;
@@ -94,7 +93,6 @@ class HinoRepository:
                     id=row["id"],
                     numero=str(row["numero"]),
                     titulo=str(row["titulo"]),
-                    letra=row["letra"] if "letra" in row.keys() else None,
                 )
             )
 

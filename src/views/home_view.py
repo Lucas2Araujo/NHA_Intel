@@ -30,7 +30,6 @@ class HomeView:
 
     async def build(self, page: ft.Page) -> ft.View:
         page.title = "Hinário Inteligente"
-        page.theme_mode = ft.ThemeMode.DARK
 
         def _navigate(route_path: str):
             page.go(route_path)
@@ -61,11 +60,7 @@ class HomeView:
                         weight=ft.FontWeight.W_500,
                         size=16,
                     ),
-                    subtitle=ft.Text(
-                        f"Hino {hino.numero}",
-                        size=12,
-                        color=ft.Colors.GREY_400,
-                    ),
+
                     on_click=lambda e, h_id=hino.id: _navigate(f"/hino/{h_id}"),
                 )
                 tiles.append(tile)
