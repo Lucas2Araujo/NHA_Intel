@@ -1,3 +1,4 @@
+import re
 from typing import List, Optional, Dict
 import aiosqlite
 from src.database.connection import DatabaseConnection
@@ -18,36 +19,31 @@ class HinoRepository:
         Retorna todos os hinos do banco de dados contendo id, numero e titulo,
         ordenados numericamente.
         """
-        query = "SELECT id, numero, titulo FROM hino ORDER BY CAST(numero AS INTEGER) ASC, numero ASC;"
         conn = await self.db_connection.get_connection()
-
+        query = """
+            SELECT id, numero, titulo 
+            FROM hino 
+            ORDER BY CAST(numero AS INTEGER) ASC, numero ASC;
+        """
         async with conn.execute(query) as cursor:
             rows = await cursor.fetchall()
 
-        hinos: List[Hino] = []
-        for row in rows:
-            hinos.append(
-                Hino(
-                    id=row["id"],
-                    numero=str(row["numero"]),
-                    titulo=str(row["titulo"]),
-                )
-            )
-
-        return hinos
+        return [
+            Hino(id=row["id"], numero=str(row["numero"]), titulo=str(row["titulo"]))
+            for row in rows
+        ]
 
     async def get_by_id(self, hino_id: int) -> Optional[Hino]:
         """
-        Busca um hino específico pelo seu ID (Primary Key) com suporte a todos os metadados.
-        Usa query parametrizada (?).
+        Retorna um hino completo pelo ID único.
         """
+        conn = await self.db_connection.get_connection()
         query = """
-            SELECT id, numero, titulo, letra, autor_letra, autor_musica, texto_base, categoria, subcategoria, link_video 
+            SELECT id, numero, titulo, letra, autor_letra, autor_musica, 
+                   texto_base, categoria, subcategoria, link_video 
             FROM hino 
             WHERE id = ?;
         """
-        conn = await self.db_connection.get_connection()
-
         async with conn.execute(query, (hino_id,)) as cursor:
             row = await cursor.fetchone()
 
@@ -69,8 +65,9 @@ class HinoRepository:
 
     async def search(self, term: str) -> List[Hino]:
         """
-        Busca hinos por número, título ou conteúdo usando FTS5 (full-text search).
-        Fallback para LIKE se FTS5 não estiver disponível.
+        Busca inteligente de hinos com relevância ponderada:
+        1. Se for número: busca por número exato ou prefixo do número (ex: '1' -> Hino 1 em 1º lugar, depois 10, 11...).
+        2. Se for texto: prioriza correspondências no título, categoria e tema, depois na letra e textos bíblicos via FTS5 / LIKE.
         """
         if not term or not term.strip():
             return await self.get_all()
@@ -78,45 +75,127 @@ class HinoRepository:
         conn = await self.db_connection.get_connection()
         clean_term = term.strip()
 
-        # Tenta busca FTS5 primeiro (busca na letra, categoria, texto_base etc.)
-        try:
-            fts_query = """
-                SELECT h.id, h.numero, h.titulo
-                FROM hino h
-                INNER JOIN hino_fts ON h.id = hino_fts.rowid
-                WHERE hino_fts MATCH ?
-                ORDER BY rank
+        # 1. Busca por Número (prioridade total quando o termo é puramente numérico)
+        if clean_term.isdigit():
+            query_num = """
+                SELECT id, numero, titulo 
+                FROM hino 
+                WHERE numero = ? OR numero LIKE ?
+                ORDER BY 
+                    CASE WHEN numero = ? THEN 0 ELSE 1 END,
+                    CAST(numero AS INTEGER) ASC,
+                    numero ASC
                 LIMIT 100;
             """
-            # Prepara o termo: adiciona * para busca por prefixo
-            fts_term = f'"{clean_term}"*'
-            async with conn.execute(fts_query, (fts_term,)) as cursor:
+            num_pattern = f"{clean_term}%"
+            async with conn.execute(query_num, (clean_term, num_pattern, clean_term)) as cursor:
                 rows = await cursor.fetchall()
-
             if rows:
                 return [
                     Hino(id=row["id"], numero=str(row["numero"]), titulo=str(row["titulo"]))
                     for row in rows
                 ]
+
+        # Lista de hinos encontrados por id para evitar duplicatas mantendo a ordem de relevância
+        seen_ids = set()
+        results: List[Hino] = []
+
+        def _add_rows(rows_to_add):
+            for row in rows_to_add:
+                h_id = int(row["id"])
+                if h_id not in seen_ids:
+                    seen_ids.add(h_id)
+                    results.append(Hino(id=h_id, numero=str(row["numero"]), titulo=str(row["titulo"])))
+
+        # 2. Busca direta por Título, Categoria e Tema (Alta relevância)
+        query_meta = """
+            SELECT h.id, h.numero, h.titulo,
+                   MIN(CASE 
+                       WHEN LOWER(h.titulo) = LOWER(?) THEN 1
+                       WHEN LOWER(h.titulo) LIKE LOWER(?) THEN 2
+                       WHEN LOWER(h.categoria) = LOWER(?) THEN 3
+                       WHEN LOWER(h.categoria) LIKE LOWER(?) THEN 4
+                       WHEN LOWER(t.nome) = LOWER(?) THEN 5
+                       WHEN LOWER(t.nome) LIKE LOWER(?) THEN 6
+                       ELSE 7
+                   END) AS rel
+            FROM hino h
+            LEFT JOIN hino_tema ht ON h.id = ht.hino_id
+            LEFT JOIN tema t ON t.id = ht.tema_id
+            WHERE LOWER(h.titulo) LIKE LOWER(?)
+               OR LOWER(h.categoria) LIKE LOWER(?)
+               OR LOWER(h.subcategoria) LIKE LOWER(?)
+               OR LOWER(t.nome) LIKE LOWER(?)
+            GROUP BY h.id, h.numero, h.titulo
+            ORDER BY rel, CAST(h.numero AS INTEGER) ASC
+            LIMIT 100;
+        """
+        exact_term = clean_term
+        like_pattern = f"%{clean_term}%"
+        try:
+            async with conn.execute(
+                query_meta, 
+                (exact_term, like_pattern, exact_term, like_pattern, exact_term, like_pattern,
+                 like_pattern, like_pattern, like_pattern, like_pattern)
+            ) as cursor:
+                rows_meta = await cursor.fetchall()
+                _add_rows(rows_meta)
         except Exception:
             pass
 
-        # Fallback: busca LIKE por número e título
-        query = """
-            SELECT id, numero, titulo 
-            FROM hino 
-            WHERE numero LIKE ? OR titulo LIKE ?
-            ORDER BY CAST(numero AS INTEGER) ASC, numero ASC;
-        """
-        search_pattern = f"%{clean_term}%"
+        # 3. Busca por FTS5 (Letra, textos bíblicos, conteúdo geral)
+        stopwords = {"de", "da", "do", "das", "dos", "e", "o", "a", "os", "as", "em", "no", "na", "nos", "nas", "um", "uma", "com", "por", "para"}
+        sanitized = re.sub(r'[^\w\s]', ' ', clean_term)
+        significant_words = [w for w in sanitized.split() if len(w) >= 2 and w.lower() not in stopwords]
 
-        async with conn.execute(query, (search_pattern, search_pattern)) as cursor:
-            rows = await cursor.fetchall()
+        if significant_words:
+            fts_term = " ".join(f"{w}*" for w in significant_words)
+            try:
+                fts_query = """
+                    SELECT h.id, h.numero, h.titulo
+                    FROM hino h
+                    INNER JOIN hino_fts ON h.id = hino_fts.rowid
+                    WHERE hino_fts MATCH ?
+                    ORDER BY rank
+                    LIMIT 100;
+                """
+                async with conn.execute(fts_query, (fts_term,)) as cursor:
+                    rows_fts = await cursor.fetchall()
+                    _add_rows(rows_fts)
+            except Exception:
+                pass
 
-        return [
-            Hino(id=row["id"], numero=str(row["numero"]), titulo=str(row["titulo"]))
-            for row in rows
-        ]
+        # 4. Fallback com LIKE na letra e referências se ainda não encontrou nada
+        if not results:
+            query_fallback = """
+                SELECT DISTINCT h.id, h.numero, h.titulo 
+                FROM hino h
+                LEFT JOIN hino_tema ht ON h.id = ht.hino_id
+                LEFT JOIN tema t ON t.id = ht.tema_id
+                LEFT JOIN hino_texto htx ON h.id = htx.hino_id
+                LEFT JOIN texto_biblico tb ON tb.id = htx.texto_id
+                WHERE h.numero LIKE ? 
+                   OR h.titulo LIKE ? 
+                   OR h.letra LIKE ? 
+                   OR h.categoria LIKE ? 
+                   OR h.subcategoria LIKE ? 
+                   OR h.texto_base LIKE ? 
+                   OR h.autor_letra LIKE ? 
+                   OR h.autor_musica LIKE ? 
+                   OR t.nome LIKE ?
+                   OR tb.referencia LIKE ?
+                ORDER BY CAST(h.numero AS INTEGER) ASC, h.numero ASC
+                LIMIT 100;
+            """
+            params = (like_pattern,) * 10
+            try:
+                async with conn.execute(query_fallback, params) as cursor:
+                    rows_fb = await cursor.fetchall()
+                    _add_rows(rows_fb)
+            except Exception:
+                pass
+
+        return results
 
     async def get_categorias(self) -> List[str]:
         """Retorna todas as categorias únicas de hinos, ordenadas alfabeticamente."""
@@ -147,15 +226,16 @@ class HinoRepository:
             return []
 
     async def search_by_categoria(self, categoria: str) -> List[Hino]:
-        """Retorna todos os hinos de uma categoria específica."""
+        """Retorna todos os hinos de uma categoria específica (case-insensitive)."""
         conn = await self.db_connection.get_connection()
         query = """
             SELECT id, numero, titulo
             FROM hino
-            WHERE categoria = ?
+            WHERE LOWER(categoria) = LOWER(?) OR categoria LIKE ?
             ORDER BY CAST(numero AS INTEGER) ASC, numero ASC;
         """
-        async with conn.execute(query, (categoria,)) as cursor:
+        cat_pattern = f"%{categoria}%"
+        async with conn.execute(query, (categoria, cat_pattern)) as cursor:
             rows = await cursor.fetchall()
         return [
             Hino(id=row["id"], numero=str(row["numero"]), titulo=str(row["titulo"]))
@@ -163,18 +243,19 @@ class HinoRepository:
         ]
 
     async def search_by_tema(self, tema: str) -> List[Hino]:
-        """Retorna todos os hinos associados a um tema específico."""
+        """Retorna todos os hinos associados a um tema específico (case-insensitive)."""
         conn = await self.db_connection.get_connection()
         query = """
-            SELECT h.id, h.numero, h.titulo
+            SELECT DISTINCT h.id, h.numero, h.titulo
             FROM hino h
             INNER JOIN hino_tema ht ON h.id = ht.hino_id
             INNER JOIN tema t ON t.id = ht.tema_id
-            WHERE t.nome = ?
+            WHERE LOWER(t.nome) = LOWER(?) OR t.nome LIKE ?
             ORDER BY CAST(h.numero AS INTEGER) ASC, h.numero ASC;
         """
+        tema_pattern = f"%{tema}%"
         try:
-            async with conn.execute(query, (tema,)) as cursor:
+            async with conn.execute(query, (tema, tema_pattern)) as cursor:
                 rows = await cursor.fetchall()
             return [
                 Hino(id=row["id"], numero=str(row["numero"]), titulo=str(row["titulo"]))

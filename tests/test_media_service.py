@@ -1,7 +1,12 @@
 import os
 import pytest
 from unittest.mock import patch, MagicMock
-from src.services.media_service import MediaService
+from src.services.media_service import (
+    MediaService,
+    QUALITY_SD,
+    QUALITY_HD,
+    path_to_file_uri,
+)
 
 
 @pytest.mark.asyncio
@@ -49,15 +54,51 @@ async def test_download_filepath_and_status(tmp_path):
     download_dir = str(tmp_path)
     service = MediaService(download_dir=download_dir)
 
-    filepath = service.get_local_filepath(1)
-    assert filepath == os.path.join(download_dir, "hino_1.mp3")
+    # Verifica caminhos de áudio
+    audio_path = service.get_local_audio_path(1)
+    assert service.AUDIO_SUBDIR in audio_path
+    assert service.is_audio_downloaded(1) is False
     assert service.is_downloaded(1) is False
 
-    # Cria arquivo dummy
-    with open(filepath, "w") as f:
+    # Cria arquivo dummy de áudio
+    os.makedirs(os.path.dirname(audio_path), exist_ok=True)
+    with open(audio_path, "w") as f:
         f.write("audio data")
 
+    assert service.is_audio_downloaded(1) is True
     assert service.is_downloaded(1) is True
+
+    # Verifica caminhos de vídeo
+    video_sd_path = service.get_local_video_path(1, QUALITY_SD)
+    video_hd_path = service.get_local_video_path(1, QUALITY_HD)
+    assert service.VIDEO_SD_SUBDIR in video_sd_path
+    assert service.VIDEO_HD_SUBDIR in video_hd_path
+    assert service.is_video_downloaded(1, QUALITY_SD) is False
+    assert service.is_video_downloaded(1, QUALITY_HD) is False
+
+    # Cria arquivo dummy de vídeo SD
+    os.makedirs(os.path.dirname(video_sd_path), exist_ok=True)
+    with open(video_sd_path, "w") as f:
+        f.write("video data")
+
+    assert service.is_video_downloaded(1, QUALITY_SD) is True
+    assert service.is_video_downloaded(1, QUALITY_HD) is False
+
+    # Verifica status completo
+    status = service.get_download_status(1)
+    assert status["audio"] is True
+    assert status["video_sd"] is True
+    assert status["video_hd"] is False
+
+
+@pytest.mark.asyncio
+async def test_file_uri_conversion():
+    """
+    Testa a conversão de caminhos para URIs file://.
+    """
+    uri = path_to_file_uri("/data/user/0/app/files/downloads/audio/hino_1.mp3")
+    assert uri.startswith("file://")
+    assert "hino_1.mp3" in uri
 
 
 @pytest.mark.asyncio
@@ -84,7 +125,6 @@ async def test_play_and_stop_audio_process():
     # Testa quando nenhum player de mídia está instalado no sistema (ex: CI Linux headless)
     with patch("shutil.which", return_value=None):
         assert service.play_audio("tmp_downloads/dummy.mp3") is False
-
 
 
 @pytest.mark.asyncio
@@ -124,9 +164,110 @@ async def test_download_audio_mocked(tmp_path):
 
     assert await service.download_audio(1, "") is None
 
+    # Simula download criando o arquivo esperado
+    audio_path = service.get_local_audio_path(1)
+    os.makedirs(os.path.dirname(audio_path), exist_ok=True)
+
     with patch("yt_dlp.YoutubeDL") as MockYDL:
         instance = MockYDL.return_value.__enter__.return_value
-        instance.download.return_value = None
+
+        def _fake_download(urls):
+            with open(audio_path, "w") as f:
+                f.write("fake audio")
+
+        instance.download.side_effect = _fake_download
 
         filepath = await service.download_audio(1, "https://www.youtube.com/watch?v=123")
-        assert filepath == os.path.join(download_dir, "hino_1.mp3")
+        assert filepath is not None
+        assert os.path.isfile(filepath)
+
+
+@pytest.mark.asyncio
+async def test_download_video_mocked(tmp_path):
+    """
+    Testa o download de vídeo SD e HD com mock do yt_dlp.
+    """
+    download_dir = str(tmp_path)
+    service = MediaService(download_dir=download_dir)
+
+    assert await service.download_video(1, "") is None
+
+    # Testa download de vídeo SD
+    video_sd_path = service.get_local_video_path(1, QUALITY_SD)
+    os.makedirs(os.path.dirname(video_sd_path), exist_ok=True)
+
+    with patch("yt_dlp.YoutubeDL") as MockYDL:
+        instance = MockYDL.return_value.__enter__.return_value
+
+        def _fake_download_sd(urls):
+            with open(video_sd_path, "w") as f:
+                f.write("fake video sd")
+
+        instance.download.side_effect = _fake_download_sd
+
+        filepath = await service.download_video(
+            1, "https://www.youtube.com/watch?v=123", QUALITY_SD
+        )
+        assert filepath is not None
+        assert os.path.isfile(filepath)
+
+    assert service.is_video_downloaded(1, QUALITY_SD) is True
+
+
+@pytest.mark.asyncio
+async def test_storage_usage_and_cleanup(tmp_path):
+    """
+    Testa o cálculo de uso de armazenamento e limpeza de downloads.
+    """
+    download_dir = str(tmp_path)
+    service = MediaService(download_dir=download_dir)
+
+    # Cria arquivos dummy
+    audio_path = service.get_local_audio_path(1)
+    os.makedirs(os.path.dirname(audio_path), exist_ok=True)
+    with open(audio_path, "w") as f:
+        f.write("x" * 1024)
+
+    video_path = service.get_local_video_path(1, QUALITY_SD)
+    os.makedirs(os.path.dirname(video_path), exist_ok=True)
+    with open(video_path, "w") as f:
+        f.write("y" * 2048)
+
+    usage = service.get_storage_usage()
+    assert usage["audio"] > 0
+    assert usage["video_sd"] > 0
+    assert usage["video_hd"] == 0
+
+    # Limpa apenas áudios
+    count = service.clear_downloads("audio")
+    assert count == 1
+    assert service.is_audio_downloaded(1) is False
+    assert service.is_video_downloaded(1, QUALITY_SD) is True
+
+    # Limpa tudo
+    count = service.clear_downloads()
+    assert count == 1  # Sobrou apenas o vídeo SD
+    assert service.is_video_downloaded(1, QUALITY_SD) is False
+
+
+@pytest.mark.asyncio
+async def test_audio_file_uri(tmp_path):
+    """
+    Testa a geração de URIs file:// para arquivos de áudio.
+    """
+    download_dir = str(tmp_path)
+    service = MediaService(download_dir=download_dir)
+
+    # Sem arquivo, retorna None
+    assert service.get_audio_file_uri(1) is None
+
+    # Com arquivo, retorna URI
+    audio_path = service.get_local_audio_path(1)
+    os.makedirs(os.path.dirname(audio_path), exist_ok=True)
+    with open(audio_path, "w") as f:
+        f.write("audio")
+
+    uri = service.get_audio_file_uri(1)
+    assert uri is not None
+    assert uri.startswith("file://")
+    assert "hino_1" in uri

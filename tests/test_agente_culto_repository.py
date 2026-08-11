@@ -42,3 +42,21 @@ async def test_agente_service_sugestao_culto(in_memory_db: DatabaseConnection):
     assert resultado["tema"] == "Santo e Adoração"
     assert len(resultado["blocos"]) > 0
     assert "Abertura" in resultado["blocos"][0]["bloco"]
+
+
+@pytest.mark.asyncio
+async def test_culto_repository_add_hino_a_lista(in_memory_db: DatabaseConnection):
+    """
+    Testa a adição de hino a uma lista de culto em CultoRepository.
+    """
+    repo = CultoRepository(in_memory_db)
+    lista_id = await repo.create_lista_culto("Culto Jovem", [1])
+    assert lista_id is not None
+
+    sucesso = await repo.add_hino_a_lista(lista_id, 2)
+    assert sucesso is True
+
+    hinos = await repo.get_hinos_da_lista(lista_id)
+    assert len(hinos) == 2
+    assert hinos[1].id == 2
+

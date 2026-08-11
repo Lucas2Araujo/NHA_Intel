@@ -81,3 +81,27 @@ async def test_search_by_categoria_e_tema(in_memory_db):
     assert len(hinos_tema) == 1
     assert hinos_tema[0].id == 1
 
+
+@pytest.mark.asyncio
+async def test_search_by_tema_lyrics_text_base(in_memory_db):
+    repository = HinoRepository(in_memory_db)
+
+    # Busca por letra
+    results_letra = await repository.search("Omnipotente")
+    assert len(results_letra) == 1
+    assert results_letra[0].id == 1
+
+    # Busca por tema
+    results_tema = await repository.search("Santidade")
+    assert len(results_tema) >= 1
+    assert any(h.id == 1 for h in results_tema)
+
+@pytest.mark.asyncio
+async def test_search_no_duplicates(in_memory_db):
+    repository = HinoRepository(in_memory_db)
+    results = await repository.search("Adoração")
+    ids = [h.id for h in results]
+    assert len(ids) == len(set(ids))
+
+
+

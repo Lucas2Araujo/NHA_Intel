@@ -3,8 +3,12 @@ name = "hinario-inteligente"
 version = "0.2"
 description = "Hinário Adventista Inteligente — App completo com busca, favoritos, áudio e Agente Organizador de Cultos"
 
-[tool.flet]
-app.assets_dir = "assets"
-
 [tool.flet.app]
+assets_dir = "assets"
 icon = "icon.ico"
+
+[tool.pyright]
+extraPaths = ["."]
+venvPath = "."
+venv = ".venv"
+
