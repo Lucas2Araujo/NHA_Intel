@@ -39,8 +39,7 @@ class HinoRepository:
         """
         conn = await self.db_connection.get_connection()
         query = """
-            SELECT id, numero, titulo, letra, autor_letra, autor_musica, 
-                   texto_base, categoria, subcategoria, link_video 
+            SELECT * 
             FROM hino 
             WHERE id = ?;
         """
@@ -50,17 +49,20 @@ class HinoRepository:
         if row is None:
             return None
 
+        keys = row.keys()
         return Hino(
             id=row["id"],
             numero=str(row["numero"]),
             titulo=str(row["titulo"]),
-            letra=row["letra"],
-            autor_letra=row["autor_letra"],
-            autor_musica=row["autor_musica"],
-            texto_base=row["texto_base"],
-            categoria=row["categoria"],
-            subcategoria=row["subcategoria"],
-            link_video=row["link_video"],
+            letra=row["letra"] if "letra" in keys else None,
+            autor_letra=row["autor_letra"] if "autor_letra" in keys else None,
+            autor_musica=row["autor_musica"] if "autor_musica" in keys else None,
+            texto_base=row["texto_base"] if "texto_base" in keys else None,
+            categoria=row["categoria"] if "categoria" in keys else None,
+            subcategoria=row["subcategoria"] if "subcategoria" in keys else None,
+            link_video=row["link_video"] if "link_video" in keys else None,
+            letra_json=row["letra_json"] if "letra_json" in keys else None,
+            autores=row["autores"] if "autores" in keys else None,
         )
 
     async def search(self, term: str) -> List[Hino]:

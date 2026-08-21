@@ -8,7 +8,7 @@ from src.services.media_service import MediaService, QUALITY_SD, QUALITY_HD
 class DownloadManagerView:
     """
     View do Gerenciador de Downloads em Lote.
-    Permite baixar toda a biblioteca de 601 hinos em Áudio, Vídeo SD ou Vídeo HD.
+    Permite baixar toda a biblioteca de 601 hinos em Vídeo SD ou Vídeo HD.
     Exibe progresso em tempo real, estatísticas de armazenamento e suporte a cancelamento.
     """
 
@@ -45,16 +45,6 @@ class DownloadManagerView:
         self._refresh_storage_info()
 
         # ── Cartões de Download ──────────────────────────────────────
-
-        audio_card = self._build_download_card(
-            page,
-            title="🎵 Áudios (MP3/M4A)",
-            subtitle="Baixar todos os áudios de 601 hinos",
-            icon=ft.Icons.MUSIC_NOTE,
-            color=ft.Colors.BLUE_400,
-            media_type="audio",
-            quality=QUALITY_SD,
-        )
 
         video_sd_card = self._build_download_card(
             page,
@@ -107,11 +97,6 @@ class DownloadManagerView:
                     ft.Row(
                         controls=[
                             ft.OutlinedButton(
-                                "Limpar Áudios",
-                                icon=ft.Icons.DELETE_OUTLINE,
-                                on_click=lambda e: self._clear_downloads(page, "audio"),
-                            ),
-                            ft.OutlinedButton(
                                 "Limpar Vídeos SD",
                                 icon=ft.Icons.DELETE_OUTLINE,
                                 on_click=lambda e: self._clear_downloads(page, "video_sd"),
@@ -158,7 +143,6 @@ class DownloadManagerView:
                         controls=[
                             progress_panel,
                             ft.Divider(height=1),
-                            audio_card,
                             video_sd_card,
                             video_hd_card,
                             ft.Divider(height=1),
@@ -207,11 +191,9 @@ class DownloadManagerView:
         """Atualiza texto de uso de armazenamento."""
         usage = self.media_service.get_storage_usage()
         total_mb = sum(usage.values()) / (1024 * 1024)
-        audio_mb = usage["audio"] / (1024 * 1024)
-        video_sd_mb = usage["video_sd"] / (1024 * 1024)
-        video_hd_mb = usage["video_hd"] / (1024 * 1024)
+        video_sd_mb = usage.get("video_sd", 0) / (1024 * 1024)
+        video_hd_mb = usage.get("video_hd", 0) / (1024 * 1024)
         self.storage_text.value = (
-            f"Áudios: {audio_mb:.1f} MB  •  "
             f"Vídeos SD: {video_sd_mb:.1f} MB  •  "
             f"Vídeos HD: {video_hd_mb:.1f} MB  •  "
             f"Total: {total_mb:.1f} MB"
@@ -227,7 +209,7 @@ class DownloadManagerView:
         count = self.media_service.clear_downloads(media_type)
         self._refresh_storage_info()
         self.storage_text.update()
-        label = {"audio": "Áudios", "video_sd": "Vídeos SD", "video_hd": "Vídeos HD"}.get(
+        label = {"video_sd": "Vídeos SD", "video_hd": "Vídeos HD"}.get(
             media_type, media_type
         )
         # Mostra feedback via snackbar simples

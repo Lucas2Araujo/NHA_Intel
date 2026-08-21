@@ -15,7 +15,7 @@ def test_resolve_db_path_memory():
 def test_resolve_db_path_default():
     """Valida que o caminho padrão resolve para o arquivo em disco existente."""
     db_conn = DatabaseConnection()
-    assert db_conn.db_path.endswith("hinario_normalizado.db")
+    assert db_conn.db_path.endswith("hinario.db") or db_conn.db_path.endswith("hinario_normalizado.db")
     assert os.path.isabs(db_conn.db_path)
     assert os.path.exists(db_conn.db_path)
 

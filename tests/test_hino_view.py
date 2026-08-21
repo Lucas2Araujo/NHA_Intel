@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch, AsyncMock
 import flet as ft
 from src.repositories.hino_repository import HinoRepository
 from src.repositories.favorito_repository import FavoritoRepository
@@ -96,5 +96,34 @@ def test_responsive_font_size_calculation(in_memory_db):
     # Desktop / Monitor 4K (altura 1200px) -> ~31pt
     mock_page.height = 1200
     assert view_obj._calculate_responsive_font_size(mock_page) == 31
+
+
+@pytest.mark.asyncio
+async def test_hino_view_open_youtube_link(in_memory_db):
+    import dataclasses
+
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    view_obj = HinoView(1, hino_repo, fav_repo, hist_repo)
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.overlay = []
+
+    hino = await hino_repo.get_by_id(1)
+    assert hino is not None
+    hino_with_video = dataclasses.replace(hino, link_video="https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+    with patch("flet.UrlLauncher.launch_url", new_callable=AsyncMock) as mock_launch:
+        await view_obj._open_youtube_link(mock_page, hino_with_video)
+        mock_launch.assert_called_once_with("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+
+    # Test empty link_video
+    hino_empty = dataclasses.replace(hino, link_video="")
+    await view_obj._open_youtube_link(mock_page, hino_empty)
+    assert view_obj._snackbar is not None
+    assert "indisponível" in view_obj._snackbar.content.value or "não possui link" in view_obj._snackbar.content.value
+
+
 
 

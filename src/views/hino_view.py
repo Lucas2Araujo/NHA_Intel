@@ -5,42 +5,8 @@ from typing import Optional, Dict, List
 from src.repositories.hino_repository import HinoRepository
 from src.repositories.favorito_repository import FavoritoRepository
 from src.repositories.historico_repository import HistoricoRepository
-from src.services.media_service import MediaService, QUALITY_SD, QUALITY_HD, path_to_file_uri
+from src.services.media_service import MediaService
 from src.models.hino import Hino
-
-# Reprodutores de Mídia Globais (flet 0.23+)
-try:
-    import flet_audio as ftaudio  # type: ignore
-    _Audio = ftaudio.Audio
-except ImportError:
-    try:
-        import flet.audio as ftaudio  # type: ignore
-        _Audio = ftaudio.Audio
-    except ImportError:
-        _Audio = getattr(ft, "Audio", None)
-
-try:
-    import flet_video as ftvideo  # type: ignore
-    _Video = ftvideo.Video
-    _VideoMedia = ftvideo.VideoMedia
-except ImportError:
-    try:
-        import flet.video as ftvideo  # type: ignore
-        _Video = ftvideo.Video
-        _VideoMedia = ftvideo.VideoMedia
-    except ImportError:
-        _Video = getattr(ft, "Video", None)
-        _VideoMedia = getattr(ft, "VideoMedia", None)
-
-try:
-    import flet_webview as ftwebview  # type: ignore
-    _WebView = getattr(ftwebview, "WebView", None)
-except ImportError:
-    try:
-        import flet.webview as ftwebview  # type: ignore
-        _WebView = getattr(ftwebview, "WebView", None)
-    except ImportError:
-        _WebView = getattr(ft, "WebView", None)
 
 DEFAULT_FONT_FAMILY = "Padrão"
 TIMES_NEW_ROMAN_FONT_FAMILY = "Times New Roman"
@@ -58,7 +24,7 @@ class HinoView:
     """
     View responsável por exibir assincronamente a letra e os detalhes de um hino específico.
     Oferece controles avançados de acessibilidade (tamanho e 3 famílias de fontes), favoritar,
-    registro no histórico, metadados cruzados, reprodutor interno de áudio real e downloads offline.
+    registro no histórico, metadados cruzados e atalho para o YouTube com link externo.
     Segue as diretrizes do Flet 0.85+.
     """
 
@@ -90,26 +56,12 @@ class HinoView:
         self.letra_text: Optional[ft.Text] = None
         self.font_size_text: Optional[ft.Text] = None
         self.fav_icon: Optional[ft.IconButton] = None
-        self.download_icon: Optional[ft.IconButton] = None
+        self.youtube_btn: Optional[ft.IconButton] = None
         self.is_fav: bool = False
-        self.is_downloaded: bool = False
-        self.download_status: Dict[str, bool] = {"audio": False, "video_sd": False, "video_hd": False}
         self.relacionados: Dict[str, List[str]] = {"temas": [], "textos_biblicos": []}
 
         # SnackBar singleton reutilizável (evita acúmulo no overlay)
         self._snackbar: Optional[ft.SnackBar] = None
-        
-        # Reprodutores nativos
-        self.audio_player = None
-        self.video_player = None
-        self.audio_progress: int = 0
-        self.audio_duration: int = 1
-        self.is_playing: bool = False
-        self.is_dragging_slider: bool = False
-        
-        self.Audio = _Audio
-        self.Video = _Video
-        self.VideoMedia = _VideoMedia
 
     def _calculate_responsive_font_size(self, page: ft.Page) -> int:
         """Calcula o tamanho de fonte responsivo padrão proporcional à altura útil da tela."""
@@ -174,16 +126,6 @@ class HinoView:
     async def build(self, page: ft.Page) -> ft.View:
         self.page = page
         self.page.on_resize = self._on_page_resize
-        
-        # Remove reprodutores de áudio antigos do overlay para evitar "Unknown Control" e artefatos
-        if self.Audio:
-            for ctrl in page.overlay[:]:
-                if isinstance(ctrl, self.Audio):
-                    try:
-                        page.overlay.remove(ctrl)
-                    except Exception:
-                        pass
-        self.audio_player = None
 
         hino: Optional[Hino] = await self.hino_repository.get_by_id(self.hino_id)
 
@@ -205,10 +147,6 @@ class HinoView:
             historico_task, metadados_task, favorito_task
         )
 
-        if self.media_service:
-            self.is_downloaded = self.media_service.is_downloaded(self.hino_id)
-            self.download_status = self.media_service.get_download_status(self.hino_id)
-
         # Texto da letra do hino
         self.letra_text = ft.Text(
             hino.letra if hino.letra else "Letra não disponível para este hino.",
@@ -227,19 +165,20 @@ class HinoView:
             on_click=lambda e: page.run_task(self._toggle_favorito, page, hino),
         )
 
-        # Botão de Download Offline (abre modal com opções SD/HD/Áudio)
-        has_any_download = any(self.download_status.values())
-        self.download_icon = ft.IconButton(
-            icon=ft.Icons.DOWNLOAD_DONE if has_any_download else ft.Icons.FILE_DOWNLOAD,
-            icon_color=ft.Colors.GREEN_400 if has_any_download else None,
-            tooltip="Downloads Disponíveis" if has_any_download else "Baixar Mídia (Offline)",
-            on_click=lambda e: self._show_download_modal(page, hino),
+        # Botão de Link Externo do YouTube
+        has_youtube = bool(hino.link_video and hino.link_video.strip())
+        self.youtube_btn = ft.IconButton(
+            icon=ft.Icons.PLAY_CIRCLE_OUTLINE if hasattr(ft.Icons, "PLAY_CIRCLE_OUTLINE") else ft.Icons.PLAY_ARROW,
+            icon_color=ft.Colors.RED_400 if has_youtube else None,
+            tooltip="Assistir no YouTube (Link Externo)" if has_youtube else "Link do YouTube indisponível",
+            disabled=not has_youtube,
+            on_click=lambda e: page.run_task(self._open_youtube_link, page, hino),
         )
 
         # Navegação anterior/próximo
         prev_btn, next_btn = self._build_nav_buttons(page)
 
-        # Botão voltar usa stack de views em vez de hardcoded "/"
+        # Botão voltar usa stack de views
         async def _go_back(e):
             if len(page.views) > 1:
                 page.views.pop()
@@ -317,20 +256,8 @@ class HinoView:
                         ),
                         ft.Column(
                             controls=[
-                                ft.IconButton(
-                                    ft.Icons.PLAY_CIRCLE_OUTLINE,
-                                    tooltip="Reprodutor Interno de Mídia",
-                                    on_click=lambda e: self._show_media_modal(page, hino),
-                                ),
-                                ft.Text("Mídia", size=10, text_align=ft.TextAlign.CENTER),
-                            ],
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                            spacing=0,
-                        ),
-                        ft.Column(
-                            controls=[
-                                self.download_icon,
-                                ft.Text("Download", size=10, text_align=ft.TextAlign.CENTER),
+                                self.youtube_btn,
+                                ft.Text("YouTube", size=10, text_align=ft.TextAlign.CENTER),
                             ],
                             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                             spacing=0,
@@ -455,111 +382,21 @@ class HinoView:
         self._update_fav_icon_state()
         self._show_snackbar(page, msg)
 
-    async def _handle_download_item(
-        self, page: ft.Page, hino: Hino, media_type: str, quality: str = QUALITY_SD
-    ) -> None:
-        """Executa download de áudio ou vídeo com feedback ao usuário."""
-        if not self.media_service:
-            self._show_snackbar(page, "Serviço de download indisponível.")
-            return
-        if not hino.link_video:
-            self._show_snackbar(page, "Este hino não possui link de mídia cadastrado.")
+    async def _open_youtube_link(self, page: ft.Page, hino: Hino) -> None:
+        """Abre o link externo do YouTube no navegador ou app nativo."""
+        if not hino.link_video or not hino.link_video.strip():
+            self._show_snackbar(page, "Este hino não possui link do YouTube cadastrado.")
             return
 
-        label = "Áudio" if media_type == "audio" else f"Vídeo {'HD' if quality == QUALITY_HD else 'SD'}"
-
-        # Verifica se já baixado
-        if media_type == "audio" and self.media_service.is_audio_downloaded(self.hino_id):
-            self._show_snackbar(page, f"{label} do Hino {hino.numero} já está baixado!")
-            return
-        if media_type == "video" and self.media_service.is_video_downloaded(self.hino_id, quality):
-            self._show_snackbar(page, f"{label} do Hino {hino.numero} já está baixado!")
-            return
-
-        self._show_snackbar(page, f"Baixando {label} do Hino {hino.numero}...")
-
+        url = hino.link_video.strip()
         try:
-            if media_type == "audio":
-                result = await self.media_service.download_audio(self.hino_id, hino.link_video)
-            else:
-                result = await self.media_service.download_video(self.hino_id, hino.link_video, quality)
-
-            if result:
-                self.download_status = self.media_service.get_download_status(self.hino_id)
-                self.is_downloaded = self.download_status.get("audio", False)
-                self._update_download_icon_state()
-                self._show_snackbar(page, f"{label} do Hino {hino.numero} concluído!")
-            else:
-                self._show_snackbar(page, f"Falha no download de {label} do Hino {hino.numero}.")
+            await ft.UrlLauncher().launch_url(url)
         except Exception:
-            self._show_snackbar(page, f"Erro no download de {label} do Hino {hino.numero}.")
+            try:
+                await page.launch_url(url)
+            except Exception:
+                self._show_snackbar(page, "Não foi possível abrir o link do YouTube.")
 
-    def _update_download_icon_state(self) -> None:
-        """Atualiza o ícone de download na BottomAppBar."""
-        if self.download_icon:
-            has_any = any(self.download_status.values())
-            self.download_icon.icon = ft.Icons.DOWNLOAD_DONE if has_any else ft.Icons.FILE_DOWNLOAD
-            self.download_icon.icon_color = ft.Colors.GREEN_400 if has_any else None
-            self.download_icon.tooltip = "Downloads Disponíveis" if has_any else "Baixar Mídia (Offline)"
-
-    def _show_download_modal(self, page: ft.Page, hino: Hino) -> None:
-        """Exibe modal com opções de download: Áudio, Vídeo SD e Vídeo HD."""
-        if not self.media_service:
-            self._show_snackbar(page, "Serviço de download indisponível.")
-            return
-        if not hino.link_video:
-            self._show_snackbar(page, "Este hino não possui link de mídia cadastrado.")
-            return
-
-        status = self.media_service.get_download_status(self.hino_id)
-
-        def _make_download_tile(label, icon, media_type, quality, is_done):
-            return ft.ListTile(
-                leading=ft.Icon(
-                    ft.Icons.CHECK_CIRCLE if is_done else icon,
-                    color=ft.Colors.GREEN_400 if is_done else ft.Colors.BLUE_200,
-                ),
-                title=ft.Text(label),
-                subtitle=ft.Text("Baixado ✓" if is_done else "Toque para baixar", size=11),
-                on_click=lambda e: page.run_task(
-                    self._handle_download_item, page, hino, media_type, quality
-                ) if not is_done else None,
-            )
-
-        tiles = [
-            _make_download_tile(
-                "🎵 Áudio (MP3/M4A)", ft.Icons.MUSIC_NOTE, "audio", QUALITY_SD, status["audio"]
-            ),
-            _make_download_tile(
-                "📹 Vídeo SD (480p)", ft.Icons.SD, "video", QUALITY_SD, status["video_sd"]
-            ),
-            _make_download_tile(
-                "🎬 Vídeo HD (720p)", ft.Icons.HD, "video", QUALITY_HD, status["video_hd"]
-            ),
-        ]
-
-        bs = ft.BottomSheet(
-            content=ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Row(
-                            controls=[
-                                ft.Text(f"Downloads — Hino {hino.numero}", weight=ft.FontWeight.BOLD, size=18),
-                                ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()),
-                            ],
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        ),
-                        ft.Divider(),
-                        *tiles,
-                    ],
-                    tight=True,
-                    spacing=4,
-                    scroll=ft.ScrollMode.AUTO,
-                ),
-                padding=ft.Padding.all(16),
-            )
-        )
-        page.show_dialog(bs)
 
     def _show_accessibility_modal(self, page: ft.Page) -> None:
         self.font_size_text = ft.Text(f"{self.font_size}pt", weight=ft.FontWeight.BOLD)
@@ -629,466 +466,7 @@ class HinoView:
         )
         page.show_dialog(bs)
 
-    def _get_media_source_info(self, hino: Hino) -> tuple[bool, str, str]:
-        """Retorna (is_offline, source_uri, initial_state_text)."""
-        if not self.media_service:
-            text = "Link disponível" if hino.link_video else "Nenhuma mídia"
-            return False, hino.link_video or "", text
 
-        is_offline = self.media_service.is_audio_downloaded(self.hino_id)
-
-        if is_offline:
-            # Converte caminho local para URI file:// compatível com Flutter
-            source_uri = self.media_service.get_audio_file_uri(self.hino_id) or ""
-            text = f"Áudio offline: hino_{hino.numero}"
-        elif hino.link_video:
-            source_uri = hino.link_video
-            text = "Streaming online disponível"
-        else:
-            source_uri = ""
-            text = "Nenhuma mídia"
-
-        return is_offline, source_uri, text
-
-    def _ensure_audio_player(self, page: ft.Page):
-        """Instancia o player de áudio nativo sob demanda ao invés de pré-carregar no overlay."""
-        if self.audio_player is None and self.Audio:
-            try:
-                self.audio_player = self.Audio(
-                    autoplay=False,
-                    on_position_change=self._on_audio_pos,
-                    on_duration_change=self._on_audio_dur,
-                    on_state_change=self._on_audio_state,
-                )
-                if self.audio_player not in page.overlay:
-                    page.overlay.append(self.audio_player)
-                    page.update()
-            except Exception:
-                self.audio_player = None
-        return self.audio_player
-
-    async def _safe_seek(self, position_ms: int) -> None:
-        """Realiza busca (seek) de forma segura capturando eventuais erros ou timeouts."""
-        if self.audio_player:
-            try:
-                res = self.audio_player.seek(int(position_ms))
-                if asyncio.iscoroutine(res):
-                    await res
-            except Exception:
-                pass
-
-    def _on_audio_pos(self, e):
-        try:
-            self.audio_progress = int(e.data)
-            if hasattr(self, 'slider_progress') and self.slider_progress and not self.is_dragging_slider:
-                self.slider_progress.value = self.audio_progress
-                self.slider_progress.update()
-        except Exception:
-            pass
-
-    def _on_audio_dur(self, e):
-        try:
-            self.audio_duration = int(e.data)
-            if hasattr(self, 'slider_progress') and self.slider_progress:
-                self.slider_progress.max = self.audio_duration
-                self.slider_progress.update()
-        except: pass
-
-    def _on_audio_state(self, e):
-        if e.data == "playing":
-            self.is_playing = True
-        else:
-            self.is_playing = False
-
-    async def _close_media_modal(self, page: ft.Page) -> None:
-        if self.audio_player:
-            try:
-                res = self.audio_player.pause()
-                if asyncio.iscoroutine(res):
-                    await res
-            except Exception:
-                pass
-            try:
-                if self.audio_player in page.overlay:
-                    page.overlay.remove(self.audio_player)
-            except Exception:
-                pass
-            self.audio_player = None
-        if self.media_service:
-            self.media_service.stop_audio()
-        page.pop_dialog()
-
-    async def _handle_toggle_play_native(
-        self,
-        page: ft.Page,
-        hino: Hino,
-        is_offline: bool,
-        local_path: str,
-        play_btn: ft.IconButton,
-        play_state_text: ft.Text,
-    ) -> None:
-        player = self._ensure_audio_player(page)
-        if not player:
-            play_state_text.value = "Player nativo indisponível. Use o reprodutor do sistema."
-            page.update()
-            return
-
-        if self.is_playing:
-            try:
-                res = player.pause()
-                if asyncio.iscoroutine(res):
-                    await res
-            except Exception:
-                pass
-            play_btn.icon = ft.Icons.PLAY_ARROW
-            play_btn.icon_color = None
-            play_state_text.value = "Áudio pausado"
-            page.update()
-            return
-
-        play_btn.icon = ft.Icons.PAUSE
-        play_btn.icon_color = ft.Colors.AMBER_400
-        play_state_text.value = "Carregando áudio..."
-        page.update()
-
-        try:
-            if is_offline and local_path:
-                player.src = local_path
-            else:
-                stream_url = None
-                if self.media_service and hino.link_video:
-                    stream_url = await self.media_service.get_stream_url(hino.link_video, is_video=False)
-                if not stream_url:
-                    play_state_text.value = "Falha ao obter streaming. Tente baixar o áudio."
-                    play_btn.icon = ft.Icons.PLAY_ARROW
-                    page.update()
-                    return
-                player.src = stream_url
-
-            player.update()
-            res = player.play()
-            if asyncio.iscoroutine(res):
-                await res
-            play_state_text.value = "Reproduzindo áudio..."
-        except Exception:
-            play_state_text.value = "Erro ao reproduzir. Tente baixar o áudio."
-            play_btn.icon = ft.Icons.PLAY_ARROW
-        page.update()
-
-    async def _handle_stop_play_native(self, page: ft.Page, play_btn: ft.IconButton, play_state_text: ft.Text):
-        if self.audio_player:
-            try:
-                await self.audio_player.pause()
-                await self._safe_seek(0)
-            except Exception:
-                pass
-        play_btn.icon = ft.Icons.PLAY_ARROW
-        play_btn.icon_color = None
-        play_state_text.value = "Áudio parado"
-        page.update()
-
-    async def _handle_show_video_online(self, page: ft.Page, hino: Hino):
-        """Reproduz vídeo online via YouTube Embed em WebView ou UrlLauncher."""
-        page.pop_dialog()
-
-        if not self.media_service:
-            self._show_snackbar(page, "Serviço de mídia indisponível.")
-            return
-
-        embed_url = self.media_service.get_embed_url(hino.link_video)
-        if not embed_url:
-            self._show_snackbar(page, "Link de vídeo inválido ou não suportado.")
-            return
-
-        if _WebView is not None:
-            try:
-                webview = _WebView(
-                    url=embed_url,
-                    expand=True,
-                    javascript_enabled=True,
-                )
-                video_view = ft.View(
-                    route=f"/hino/{hino.id}/video",
-                    appbar=ft.AppBar(
-                        leading=ft.IconButton(
-                            ft.Icons.ARROW_BACK,
-                            on_click=lambda e: page.run_task(self._close_video_view, page)
-                        ),
-                        title=ft.Text(f"Vídeo: {hino.titulo}"),
-                        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    ),
-                    bgcolor=ft.Colors.BLACK,
-                    controls=[
-                        ft.Container(
-                            content=webview,
-                            expand=True,
-                            alignment=ft.Alignment.CENTER,
-                            bgcolor=ft.Colors.BLACK,
-                        )
-                    ]
-                )
-                page.views.append(video_view)
-                page.update()
-                return
-            except Exception:
-                pass
-
-        # Fallback gracioso se WebView não for suportado/disponível
-        self._show_snackbar(page, "Abrindo vídeo no navegador...")
-        await ft.UrlLauncher().launch_url(embed_url)
-
-    async def _handle_show_video_offline(self, page: ft.Page, hino: Hino, quality: str):
-        """Reproduz vídeo offline local via flet_video com URI file://."""
-        page.pop_dialog()
-
-        video_cls = self.Video
-        video_media_cls = self.VideoMedia
-
-        if not video_cls or not video_media_cls:
-            self._show_snackbar(page, "O plugin 'flet-video' não está instalado.")
-            return
-
-        if not self.media_service:
-            self._show_snackbar(page, "Serviço de mídia indisponível.")
-            return
-
-        video_uri = self.media_service.get_video_file_uri(self.hino_id, quality)
-        if not video_uri:
-            self._show_snackbar(page, f"Vídeo {'HD' if quality == QUALITY_HD else 'SD'} não encontrado. Baixe primeiro.")
-            return
-
-        self.video_player = video_cls(
-            expand=True,
-            playlist=[video_media_cls(video_uri)],
-            autoplay=True,
-        )
-
-        video_view = ft.View(
-            route=f"/hino/{hino.id}/video",
-            appbar=ft.AppBar(
-                leading=ft.IconButton(
-                    ft.Icons.ARROW_BACK,
-                    on_click=lambda e: page.run_task(self._close_video_view, page)
-                ),
-                title=ft.Text(f"Vídeo: {hino.titulo}"),
-                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            ),
-            bgcolor=ft.Colors.BLACK,
-            controls=[
-                ft.Container(
-                    content=self.video_player,
-                    expand=True,
-                    alignment=ft.Alignment.CENTER,
-                    bgcolor=ft.Colors.BLACK,
-                )
-            ]
-        )
-        page.views.append(video_view)
-        page.update()
-
-    async def _close_video_view(self, page: ft.Page):
-        if hasattr(self, 'video_player') and self.video_player:
-            try:
-                res = self.video_player.pause()
-                if asyncio.iscoroutine(res):
-                    await res
-            except Exception:
-                pass
-        if len(page.views) > 1:
-            page.views.pop()
-        page.update()
-
-    def _build_media_status_row(self, is_offline: bool) -> ft.Column:
-        """Constrói indicadores de status de mídia disponível."""
-        status_items = []
-
-        # Status principal
-        icon = ft.Icons.CHECK_CIRCLE if is_offline else ft.Icons.CLOUD_OUTLINED
-        color = ft.Colors.GREEN_400 if is_offline else ft.Colors.BLUE_200
-        text = "Áudio Offline Disponível" if is_offline else "Modo Online"
-        status_items.append(
-            ft.Row(
-                controls=[
-                    ft.Icon(icon, color=color, size=18),
-                    ft.Text(text, weight=ft.FontWeight.BOLD, size=13),
-                ],
-                spacing=6,
-            )
-        )
-
-        # Chips de vídeo offline disponível
-        if self.media_service:
-            video_chips = []
-            if self.download_status.get("video_sd"):
-                video_chips.append(
-                    ft.Chip(
-                        label=ft.Text("Vídeo SD", size=10),
-                        leading=ft.Icon(ft.Icons.SD, size=14, color=ft.Colors.GREEN_400),
-                        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    )
-                )
-            if self.download_status.get("video_hd"):
-                video_chips.append(
-                    ft.Chip(
-                        label=ft.Text("Vídeo HD", size=10),
-                        leading=ft.Icon(ft.Icons.HD, size=14, color=ft.Colors.GREEN_400),
-                        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    )
-                )
-            if video_chips:
-                status_items.append(
-                    ft.Row(controls=video_chips, spacing=6, wrap=True, run_spacing=4)
-                )
-
-        return ft.Column(controls=status_items, spacing=4, tight=True)
-
-    def _show_media_modal(self, page: ft.Page, hino: Hino) -> None:
-        """Exibe o modal do Reprodutor Interno com reprodução nativa Flet e Seek bar."""
-        is_offline, source_file, state_text = self._get_media_source_info(hino)
-
-        play_state_text = ft.Text(
-            state_text,
-            size=12,
-            italic=True,
-            color=ft.Colors.GREY_300,
-            text_align=ft.TextAlign.CENTER,
-        )
-
-        def _on_slider_change(e):
-            self.is_dragging_slider = True
-
-        def _on_slider_change_end(e):
-            self.is_dragging_slider = False
-            if self.audio_player:
-                page.run_task(self._safe_seek, int(e.control.value))
-
-        self.slider_progress = ft.Slider(
-            min=0,
-            max=self.audio_duration or 1,
-            value=self.audio_progress or 0,
-            on_change=_on_slider_change,
-            on_change_end=_on_slider_change_end,
-            expand=True,
-            active_color=ft.Colors.GREEN_400,
-        )
-
-        play_btn = ft.IconButton(
-            ft.Icons.PAUSE if self.is_playing else ft.Icons.PLAY_ARROW,
-            icon_color=ft.Colors.AMBER_400 if self.is_playing else None,
-            icon_size=32,
-            tooltip="Tocar/Pausar Áudio",
-            on_click=lambda e: page.run_task(
-                self._handle_toggle_play_native, page, hino, is_offline, source_file, play_btn, play_state_text
-            ),
-        )
-
-        stop_btn = ft.IconButton(
-            ft.Icons.STOP,
-            icon_size=28,
-            tooltip="Parar Áudio",
-            on_click=lambda e: page.run_task(self._handle_stop_play_native, page, play_btn, play_state_text),
-        )
-
-        media_controls: list[ft.Control] = [
-            ft.Row(
-                controls=[
-                    ft.Text("Reprodutor Interno do Hino", weight=ft.FontWeight.BOLD, size=18),
-                    ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: page.run_task(self._close_media_modal, page)),
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            ),
-            ft.Divider(),
-            self._build_media_status_row(is_offline),
-            ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Text(f"Hino {hino.numero} - {hino.titulo}", weight=ft.FontWeight.BOLD, size=15, text_align=ft.TextAlign.CENTER),
-                        play_state_text,
-                        ft.Row([self.slider_progress], alignment=ft.MainAxisAlignment.CENTER),
-                        ft.Row(
-                            controls=[play_btn, stop_btn],
-                            alignment=ft.MainAxisAlignment.CENTER,
-                        ),
-                    ],
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    spacing=8,
-                ),
-                padding=ft.Padding.all(12),
-                border_radius=12,
-                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            ),
-        ]
-
-        # Botões de vídeo
-        video_buttons: list[ft.Control] = []
-
-        if hino.link_video:
-            link_video = hino.link_video
-            # Vídeo Online (YouTube Embed)
-            video_buttons.append(
-                ft.Button(
-                    "Assistir Online (YouTube)",
-                    icon=ft.Icons.PLAY_CIRCLE_FILL,
-                    on_click=lambda e: page.run_task(self._handle_show_video_online, page, hino),
-                )
-            )
-
-        # Vídeo Offline SD
-        if self.download_status.get("video_sd"):
-            video_buttons.append(
-                ft.OutlinedButton(
-                    "Vídeo SD (Offline)",
-                    icon=ft.Icons.SD,
-                    on_click=lambda e: page.run_task(
-                        self._handle_show_video_offline, page, hino, QUALITY_SD
-                    ),
-                )
-            )
-
-        # Vídeo Offline HD
-        if self.download_status.get("video_hd"):
-            video_buttons.append(
-                ft.OutlinedButton(
-                    "Vídeo HD (Offline)",
-                    icon=ft.Icons.HD,
-                    on_click=lambda e: page.run_task(
-                        self._handle_show_video_offline, page, hino, QUALITY_HD
-                    ),
-                )
-            )
-
-        if hino.link_video:
-            video_buttons.append(
-                ft.OutlinedButton(
-                    "Abrir Mídia Externa",
-                    icon=ft.Icons.OPEN_IN_NEW,
-                    on_click=lambda e: page.run_task(lambda: ft.UrlLauncher().launch_url(link_video)),
-                )
-            )
-
-        if video_buttons:
-            media_controls.append(
-                ft.Row(
-                    controls=video_buttons,
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    wrap=True,
-                    spacing=10,
-                    run_spacing=10,
-                )
-            )
-
-        bs = ft.BottomSheet(
-            content=ft.Container(
-                content=ft.Column(
-                    controls=media_controls,
-                    tight=True,
-                    spacing=12,
-                    scroll=ft.ScrollMode.AUTO,
-                ),
-                padding=ft.Padding.all(20),
-            )
-        )
-        page.show_dialog(bs)
 
     def _show_info_modal(self, page: ft.Page, hino: Hino) -> None:
         async def _navigate_search(term: str):
@@ -1107,11 +485,18 @@ class HinoView:
             ft.Divider(),
         ]
 
-        metadata = [
-            ("Autor da Letra:", hino.autor_letra),
-            ("Autor da Música:", hino.autor_musica),
-            ("Texto Base Bíblico:", hino.texto_base),
-        ]
+        metadata = []
+        if hino.autor_letra and hino.autor_musica and hino.autor_letra == hino.autor_musica:
+            metadata.append(("Letra e Música:", hino.autor_letra))
+        else:
+            if hino.autor_letra:
+                metadata.append(("Autor da Letra:", hino.autor_letra))
+            if hino.autor_musica:
+                metadata.append(("Autor da Música:", hino.autor_musica))
+            if not hino.autor_letra and not hino.autor_musica and hino.autores:
+                metadata.append(("Autores:", hino.autores))
+        if hino.texto_base:
+            metadata.append(("Texto Base Bíblico:", hino.texto_base))
 
         for label, val in metadata:
             if val and val.strip():

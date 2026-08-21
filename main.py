@@ -7,11 +7,6 @@ import flet as ft
 
 # Registrar plugins do Flet 0.23+ globalmente na raiz
 try:
-    import flet_audio
-except ImportError:
-    pass
-
-try:
     import flet_video
 except ImportError:
     pass
@@ -188,7 +183,7 @@ async def main(page: ft.Page):
     """
     _setup_assets_and_theme(page)
 
-    db_connection = DatabaseConnection(db_path="hinario_normalizado.db")
+    db_connection = DatabaseConnection(db_path="hinario.db")
     hino_repository = HinoRepository(db_connection)
     favorito_repository = FavoritoRepository(db_connection)
     historico_repository = HistoricoRepository(db_connection)

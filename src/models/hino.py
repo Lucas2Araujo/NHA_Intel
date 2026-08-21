@@ -19,3 +19,5 @@ class Hino:
     categoria: Optional[str] = None
     subcategoria: Optional[str] = None
     link_video: Optional[str] = None
+    letra_json: Optional[str] = None
+    autores: Optional[str] = None
