@@ -1,4 +1,4 @@
-name: CD Pipeline - Multi-Platform Build & Release (Windows & Android)
+name: CD Pipeline - Build & Release Android Split APKs
 
 on:
   push:
@@ -11,13 +11,9 @@ permissions:
   contents: write
 
 jobs:
-  version:
-    name: Calculate SemVer & Create Tag
+  build-and-release-android:
+    name: Build & Release Android Split APKs
     runs-on: ubuntu-latest
-    outputs:
-      new_tag: ${{ steps.tag_version.outputs.new_tag }}
-      new_version: ${{ steps.tag_version.outputs.new_version }}
-      changelog: ${{ steps.tag_version.outputs.changelog }}
 
     steps:
       - name: Checkout Repository Code
@@ -25,7 +21,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Bump version and create Git Tag
+      - name: Calculate SemVer & Create Git Tag
         id: tag_version
         uses: mathieudutour/github-tag-action@v6.2
         with:
@@ -34,15 +30,6 @@ jobs:
           tag_prefix: v
           release_branches: main,master
           fetch_all_tags: true
-
-  build-android:
-    name: Build Android APK
-    needs: version
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout Repository Code
-        uses: actions/checkout@v4
 
       - name: Set up Java 17 (JDK)
         uses: actions/setup-java@v4
@@ -64,10 +51,10 @@ jobs:
 
       - name: Inject Version into src/version.py
         run: |
-          echo "Injetando versão calculada: ${{ needs.version.outputs.new_version }}"
+          echo "Injetando versão calculada: ${{ steps.tag_version.outputs.new_version }}"
           python -c "
           with open('src/version.py', 'w', encoding='utf-8') as f:
-              f.write('\"\"\"Módulo gerado automaticamente pelo pipeline de CD.\"\"\"\n\n__version__ = \"${{ needs.version.outputs.new_version }}\"\n')
+              f.write('\"\"\"Módulo gerado automaticamente pelo pipeline de CD.\"\"\"\n\n__version__ = \"${{ steps.tag_version.outputs.new_version }}\"\n')
           "
           echo "Conteúdo de src/version.py:"
           cat src/version.py
@@ -81,116 +68,75 @@ jobs:
         run: |
           pytest -v
 
-      - name: Build Android APK via Flet
+      - name: Clean Temporary Asset Files
         run: |
-          flet build apk -v
+          rm -f assets/*.db-wal assets/*.db-shm
 
-      - name: Prepare APK File for Distribution
+      - name: Build Android Split APKs via Flet
         run: |
-          APK_FILE=$(find build/apk -name "*.apk" | head -n 1)
-          if [ -n "$APK_FILE" ]; then
-            cp "$APK_FILE" "Hinario_Inteligente_Android_${{ needs.version.outputs.new_tag }}.apk"
-          else
-            echo "Nenhum APK encontrado em build/apk!"
-            exit 1
+          flet build apk --split-per-abi -v
+
+      - name: Organize and Rename Split APKs
+        id: organize_apks
+        run: |
+          mkdir -p release_apks
+          TAG="${{ steps.tag_version.outputs.new_tag }}"
+
+          echo "APKs brutos encontrados em build/apk:"
+          ls -la build/apk/
+
+          # Mapeamento do APK Normal (64-bit moderno)
+          ARM64_APK=$(find build/apk -name "*arm64-v8a*.apk" | head -n 1)
+          if [ -n "$ARM64_APK" ]; then
+            cp "$ARM64_APK" "release_apks/Hinario_Inteligente_${TAG}_Android_Normal_arm64.apk"
+            echo "Criado: Hinario_Inteligente_${TAG}_Android_Normal_arm64.apk"
           fi
 
-      - name: Upload Android APK Artifact
+          # Mapeamento do APK Legado (32-bit aparelhos antigos)
+          ARMV7_APK=$(find build/apk -name "*armeabi-v7a*.apk" | head -n 1)
+          if [ -n "$ARMV7_APK" ]; then
+            cp "$ARMV7_APK" "release_apks/Hinario_Inteligente_${TAG}_Android_Legado_armv7.apk"
+            echo "Criado: Hinario_Inteligente_${TAG}_Android_Legado_armv7.apk"
+          fi
+
+          # Mapeamento do APK para Emuladores / x86_64
+          X86_64_APK=$(find build/apk -name "*x86_64*.apk" | head -n 1)
+          if [ -n "$X86_64_APK" ]; then
+            cp "$X86_64_APK" "release_apks/Hinario_Inteligente_${TAG}_Android_x86_64.apk"
+            echo "Criado: Hinario_Inteligente_${TAG}_Android_x86_64.apk"
+          fi
+
+          # Fallback de segurança se os nomes variarem
+          if [ -z "$(ls -A release_apks)" ]; then
+            echo "Fallback: Copiando todos os APKs encontrados..."
+            for f in $(find build/apk -name "*.apk"); do
+              BASE=$(basename "$f")
+              cp "$f" "release_apks/Hinario_Inteligente_${TAG}_Android_${BASE}"
+            done
+          fi
+
+          echo "Arquivos finais preparados para a Release:"
+          ls -la release_apks/
+
+      - name: Upload Android APK Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Hinario_Inteligente_Android_APK_${{ needs.version.outputs.new_tag }}
-          path: Hinario_Inteligente_Android_${{ needs.version.outputs.new_tag }}.apk
-
-  build-windows:
-    name: Build Windows Executable
-    needs: version
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout Repository Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Set up Flutter SDK
-        uses: subosito/flutter-action@v2
-        with:
-          flutter-version: '3.44.8'
-          cache: true
-
-      - name: Inject Version into src/version.py
-        shell: bash
-        run: |
-          echo "Injetando versão calculada: ${{ needs.version.outputs.new_version }}"
-          python -c "
-          with open('src/version.py', 'w', encoding='utf-8') as f:
-              f.write('\"\"\"Módulo gerado automaticamente pelo pipeline de CD.\"\"\"\n\n__version__ = \"${{ needs.version.outputs.new_version }}\"\n')
-          "
-          echo "Conteúdo de src/version.py:"
-          cat src/version.py
-
-      - name: Install Python Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run Test Suite Verification
-        run: |
-          pytest -v
-
-      - name: Build Windows Executable via Flet
-        run: |
-          flet build windows -v
-
-      - name: Compress Windows Build Package
-        shell: pwsh
-        run: |
-          $zipName = "Hinario_Inteligente_Windows_${{ needs.version.outputs.new_tag }}.zip"
-          Write-Host "Compactando diretório de build para $zipName..."
-          if (Test-Path "build/windows") {
-              Compress-Archive -Path "build/windows/*" -DestinationPath $zipName -Force
-          } else {
-              Write-Error "Diretório build/windows não foi encontrado!"
-              exit 1
-          }
-
-      - name: Upload Windows Build Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Hinario_Inteligente_Windows_${{ needs.version.outputs.new_tag }}
-          path: Hinario_Inteligente_Windows_${{ needs.version.outputs.new_tag }}.zip
-
-  release:
-    name: Publish Unified GitHub Release
-    needs:
-      - version
-      - build-android
-      - build-windows
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Download All Build Artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: release_assets
-          merge-multiple: true
-
-      - name: List Release Assets
-        run: |
-          echo "Artefatos prontos para a release:"
-          ls -la release_assets/
+          name: Hinario_Inteligente_Android_APKs_${{ steps.tag_version.outputs.new_tag }}
+          path: release_apks/*.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.version.outputs.new_tag }}
-          name: Hinário Inteligente ${{ needs.version.outputs.new_tag }}
-          body: ${{ needs.version.outputs.changelog }}
-          files: release_assets/*
+          tag_name: ${{ steps.tag_version.outputs.new_tag }}
+          name: Hinário Inteligente ${{ steps.tag_version.outputs.new_tag }}
+          body: |
+            ${{ steps.tag_version.outputs.changelog }}
+
+            ---
+            ### 📱 Downloads do Aplicativo (Android)
+            * **Normal (Recomendado)**: `Hinario_Inteligente_${{ steps.tag_version.outputs.new_tag }}_Android_Normal_arm64.apk` *(Para a grande maioria dos smartphones modernos - 64 bits)*
+            * **Legado**: `Hinario_Inteligente_${{ steps.tag_version.outputs.new_tag }}_Android_Legado_armv7.apk` *(Para aparelhos Android antigos - 32 bits)*
+          files: release_apks/*.apk
           draft: false
           prerelease: false
         env:
