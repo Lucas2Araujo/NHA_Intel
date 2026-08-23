@@ -15,7 +15,8 @@ class DatabaseConnection:
     Suporta conexão física em arquivo ou banco em memória (:memory:).
     """
 
-    def __init__(self, db_path: Optional[str] = DEFAULT_DB_NAME):
+    def __init__(self, db_path: Optional[str] = DEFAULT_DB_NAME, read_only: bool = False):
+        self.read_only = read_only
         self.db_path = self._resolve_db_path(db_path or DEFAULT_DB_NAME)
         self._connection: Optional[aiosqlite.Connection] = None
 
@@ -238,12 +239,20 @@ class DatabaseConnection:
         """
         Retorna/abre uma conexão assíncrona ativa com o SQLite.
         Configura o row_factory para aiosqlite.Row para acesso amigável às colunas.
-        Na primeira conexão, executa otimizações (índices, FTS5, limpeza).
+        Na primeira conexão (quando não for read_only), executa otimizações (índices, FTS5, limpeza).
         """
         if self._connection is None:
-            self._connection = await aiosqlite.connect(self.db_path)
+            if self.read_only:
+                if self.db_path == ":memory:" or self.db_path.startswith("file:"):
+                    self._connection = await aiosqlite.connect(self.db_path)
+                else:
+                    uri_path = f"file:{self.db_path}?mode=ro"
+                    self._connection = await aiosqlite.connect(uri_path, uri=True)
+            else:
+                self._connection = await aiosqlite.connect(self.db_path)
             self._connection.row_factory = aiosqlite.Row
-            await self._initialize_db(self._connection)
+            if not self.read_only:
+                await self._initialize_db(self._connection)
         return self._connection
 
     @staticmethod

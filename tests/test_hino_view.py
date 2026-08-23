@@ -125,5 +125,105 @@ async def test_hino_view_open_youtube_link(in_memory_db):
     assert "indisponível" in view_obj._snackbar.content.value or "não possui link" in view_obj._snackbar.content.value
 
 
+@pytest.mark.asyncio
+async def test_hino_view_abrir_modal_leitura_biblica_success(in_memory_db):
+    from src.models.biblia import PassagemBiblica, Versiculo
+
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    mock_biblia_repo = MagicMock()
+    passagem = PassagemBiblica(
+        referencia="João 3:16",
+        livro="João",
+        capitulo=3,
+        versiculos=[
+            Versiculo(
+                livro="João",
+                capitulo=3,
+                versiculo=16,
+                texto="Porque Deus amou ao mundo de tal maneira...",
+            )
+        ],
+    )
+    mock_biblia_repo.buscar_passagem = AsyncMock(return_value=passagem)
+
+    view_obj = HinoView(
+        1,
+        hino_repo,
+        fav_repo,
+        hist_repo,
+        biblia_repository=mock_biblia_repo,
+    )
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.height = 800
+
+    await view_obj._abrir_modal_leitura_biblica(mock_page, "João 3:16")
+
+    mock_page.show_dialog.assert_called_once()
+    dialog_arg = mock_page.show_dialog.call_args[0][0]
+    assert isinstance(dialog_arg, ft.BottomSheet)
+    mock_biblia_repo.buscar_passagem.assert_called_once_with("João 3:16")
+    mock_page.update.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_hino_view_abrir_modal_leitura_biblica_not_found(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    mock_biblia_repo = MagicMock()
+    mock_biblia_repo.buscar_passagem = AsyncMock(return_value=None)
+
+    view_obj = HinoView(
+        1,
+        hino_repo,
+        fav_repo,
+        hist_repo,
+        biblia_repository=mock_biblia_repo,
+    )
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.height = 800
+
+    await view_obj._abrir_modal_leitura_biblica(mock_page, "ReferenciaInvalida 99:99")
+
+    mock_page.show_dialog.assert_called_once()
+    mock_page.update.assert_called()
+
+
+@pytest.mark.asyncio
+async def test_hino_view_info_modal_biblia_chips(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    view_obj = HinoView(1, hino_repo, fav_repo, hist_repo)
+    mock_page = MagicMock(spec=ft.Page)
+    await view_obj.build(mock_page)
+
+    hino = await hino_repo.get_by_id(1)
+    assert hino is not None
+
+    view_obj._show_info_modal(mock_page, hino)
+    mock_page.show_dialog.assert_called()
+
+    # Testa _on_biblia_click
+    view_obj._on_biblia_click(mock_page, "Apocalipse 4:8")
+    mock_page.pop_dialog.assert_called_once()
+    mock_page.run_task.assert_called_once_with(
+        view_obj._abrir_modal_leitura_biblica, mock_page, "Apocalipse 4:8"
+    )
+
+    # Testa com referência vazia
+    mock_page.overlay = []
+    await view_obj._abrir_modal_leitura_biblica(mock_page, "")
+    assert view_obj._snackbar is not None
+    assert "inválida" in view_obj._snackbar.content.value.lower()
+
+
+
+
 
 

@@ -5,8 +5,10 @@ from typing import Optional, Dict, List
 from src.repositories.hino_repository import HinoRepository
 from src.repositories.favorito_repository import FavoritoRepository
 from src.repositories.historico_repository import HistoricoRepository
+from src.repositories.biblia_repository import BibliaRepository
 from src.services.media_service import MediaService
 from src.models.hino import Hino
+from src.models.biblia import PassagemBiblica
 
 DEFAULT_FONT_FAMILY = "Padrão"
 TIMES_NEW_ROMAN_FONT_FAMILY = "Times New Roman"
@@ -36,6 +38,7 @@ class HinoView:
         historico_repository: HistoricoRepository,
         media_service: Optional[MediaService] = None,
         hino_ids_list: Optional[List[int]] = None,
+        biblia_repository: Optional[BibliaRepository] = None,
     ):
         self.hino_id = hino_id
         self.hino_repository = hino_repository
@@ -43,6 +46,7 @@ class HinoView:
         self.historico_repository = historico_repository
         self.media_service = media_service
         self.hino_ids_list = hino_ids_list or []
+        self.biblia_repository = biblia_repository or BibliaRepository()
 
         # Estado interno de acessibilidade de fonte (carregado do banco se existir)
         self.font_size: int = 18
@@ -213,12 +217,40 @@ class HinoView:
                     content=ft.Column(
                         controls=[
                             ft.Container(
-                                content=ft.Text(
-                                    hino.titulo,
-                                    size=22,
-                                    weight=ft.FontWeight.BOLD,
-                                    text_align=ft.TextAlign.CENTER,
-                                    color=ft.Colors.BLUE_200,
+                                content=ft.Column(
+                                    controls=[
+                                        ft.Text(
+                                            hino.titulo,
+                                            size=22,
+                                            weight=ft.FontWeight.BOLD,
+                                            text_align=ft.TextAlign.CENTER,
+                                            color=ft.Colors.BLUE_200,
+                                        ),
+                                        *(
+                                            [
+                                                ft.Container(
+                                                    content=ft.Chip(
+                                                        label=ft.Text(hino.texto_base, size=12),
+                                                        leading=ft.Icon(
+                                                            ft.Icons.MENU_BOOK_OUTLINED,
+                                                            size=15,
+                                                            color=ft.Colors.GREEN_400,
+                                                        ),
+                                                        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                                                        tooltip="Ler texto bíblico",
+                                                        on_click=lambda e, ref=hino.texto_base: page.run_task(
+                                                            self._abrir_modal_leitura_biblica, page, ref
+                                                        ),
+                                                    ),
+                                                    padding=ft.Padding.only(top=4),
+                                                )
+                                            ]
+                                            if hino.texto_base and hino.texto_base.strip()
+                                            else []
+                                        ),
+                                    ],
+                                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                                    spacing=2,
                                 ),
                                 padding=ft.Padding.symmetric(vertical=15, horizontal=20),
                                 alignment=ft.Alignment.CENTER,
@@ -468,6 +500,166 @@ class HinoView:
 
 
 
+    def _on_biblia_click(self, page: ft.Page, ref: str) -> None:
+        """Fecha o modal de informações e abre o modal de leitura bíblica."""
+        page.pop_dialog()
+        page.run_task(self._abrir_modal_leitura_biblica, page, ref)
+
+    async def _abrir_modal_leitura_biblica(self, page: ft.Page, referencia: str) -> None:
+        """
+        Abre um modal responsivo e assíncrono (BottomSheet) para leitura da passagem bíblica informada.
+        Exibe indicador de carregamento e depois os versículos formatados ou mensagem amigável de erro.
+        """
+        if not referencia or not referencia.strip():
+            self._show_snackbar(page, "Referência bíblica inválida.")
+            return
+
+        ref_clean = referencia.strip()
+
+        title_text = ft.Text(
+            ref_clean,
+            weight=ft.FontWeight.BOLD,
+            size=18,
+            color=ft.Colors.GREEN_200,
+            expand=True,
+        )
+
+        loading_indicator = ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.ProgressRing(width=36, height=36, stroke_width=3),
+                    ft.Text("Carregando passagem bíblica...", size=14, color=ft.Colors.GREY_400),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=12,
+            ),
+            padding=ft.Padding.symmetric(vertical=40),
+            alignment=ft.Alignment.CENTER,
+        )
+
+        verses_container = ft.Column(
+            controls=[loading_indicator],
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            spacing=10,
+        )
+
+        modal_body = ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.MENU_BOOK, color=ft.Colors.GREEN_400, size=22),
+                            title_text,
+                            ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()),
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Divider(height=1),
+                    ft.Container(
+                        content=verses_container,
+                        expand=True,
+                        padding=ft.Padding.symmetric(vertical=8),
+                    ),
+                    ft.Divider(height=1),
+                    ft.Row(
+                        controls=[
+                            ft.TextButton(
+                                "Fechar",
+                                icon=ft.Icons.CLOSE,
+                                on_click=lambda ev: page.pop_dialog(),
+                            ),
+                        ],
+                        alignment=ft.MainAxisAlignment.END,
+                    ),
+                ],
+                spacing=8,
+                expand=True,
+            ),
+            padding=ft.Padding.all(20),
+            height=min(page.height * 0.75, 550) if page and page.height else 450,
+        )
+
+        bs = ft.BottomSheet(
+            content=modal_body,
+        )
+        page.show_dialog(bs)
+
+        # Consulta assíncrona da passagem bíblica
+        try:
+            passagem: Optional[PassagemBiblica] = await self.biblia_repository.buscar_passagem(ref_clean)
+        except Exception:
+            passagem = None
+
+        if passagem and passagem.versiculos:
+            title_text.value = passagem.referencia
+
+            verse_controls: list[ft.Control] = []
+            for v in passagem.versiculos:
+                verse_controls.append(
+                    ft.Container(
+                        content=ft.Row(
+                            controls=[
+                                ft.Container(
+                                    content=ft.Text(
+                                        str(v.versiculo),
+                                        weight=ft.FontWeight.BOLD,
+                                        size=13,
+                                        color=ft.Colors.GREEN_400,
+                                    ),
+                                    alignment=ft.Alignment.TOP_RIGHT,
+                                    width=28,
+                                    padding=ft.Padding.only(top=2),
+                                ),
+                                ft.Text(
+                                    v.texto,
+                                    size=15,
+                                    selectable=True,
+                                    expand=True,
+                                ),
+                            ],
+                            vertical_alignment=ft.CrossAxisAlignment.START,
+                            spacing=8,
+                        ),
+                        padding=ft.Padding.symmetric(vertical=3),
+                    )
+                )
+
+            verses_container.controls = verse_controls
+        else:
+            verses_container.controls = [
+                ft.Container(
+                    content=ft.Column(
+                        controls=[
+                            ft.Icon(ft.Icons.AUTO_STORIES, size=48, color=ft.Colors.GREY_500),
+                            ft.Text(
+                                "Não foi possível carregar a passagem bíblica solicitada.",
+                                size=15,
+                                weight=ft.FontWeight.W_500,
+                                text_align=ft.TextAlign.CENTER,
+                                color=ft.Colors.GREY_400,
+                            ),
+                            ft.Text(
+                                f"Referência: {ref_clean}",
+                                size=12,
+                                italic=True,
+                                text_align=ft.TextAlign.CENTER,
+                                color=ft.Colors.GREY_600,
+                            ),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=10,
+                    ),
+                    padding=ft.Padding.symmetric(vertical=30),
+                    alignment=ft.Alignment.CENTER,
+                )
+            ]
+
+        page.update()
+
     def _show_info_modal(self, page: ft.Page, hino: Hino) -> None:
         async def _navigate_search(term: str):
             """Fecha o modal e navega para Home com busca FTS pelo termo."""
@@ -495,8 +687,6 @@ class HinoView:
                 metadata.append(("Autor da Música:", hino.autor_musica))
             if not hino.autor_letra and not hino.autor_musica and hino.autores:
                 metadata.append(("Autores:", hino.autores))
-        if hino.texto_base:
-            metadata.append(("Texto Base Bíblico:", hino.texto_base))
 
         for label, val in metadata:
             if val and val.strip():
@@ -509,6 +699,24 @@ class HinoView:
                         spacing=2,
                     )
                 )
+
+        # Texto Base Bíblico como chip clicável para leitura direta
+        if hino.texto_base and hino.texto_base.strip():
+            info_items.append(
+                ft.Column(
+                    controls=[
+                        ft.Text("Texto Base Bíblico:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.BLUE_200),
+                        ft.Chip(
+                            label=ft.Text(hino.texto_base, size=12),
+                            leading=ft.Icon(ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400),
+                            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                            tooltip="Ler passagem bíblica",
+                            on_click=lambda e, ref=hino.texto_base: self._on_biblia_click(page, ref),
+                        ),
+                    ],
+                    spacing=4,
+                )
+            )
 
         # Categoria e Subcategoria como chips clicáveis
         cat_chips: list[ft.Control] = []
@@ -563,7 +771,7 @@ class HinoView:
                 )
             )
 
-        # Textos Bíblicos como chips clicáveis
+        # Textos Bíblicos Relacionados como chips clicáveis para leitura bíblica
         textos_biblicos = self.relacionados.get("textos_biblicos", [])
         if textos_biblicos:
             texto_chips: list[ft.Control] = [
@@ -571,14 +779,15 @@ class HinoView:
                     label=ft.Text(tb, size=11),
                     leading=ft.Icon(ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    on_click=lambda e, ref=tb: asyncio.create_task(_navigate_search(ref)),
+                    tooltip="Ler passagem bíblica",
+                    on_click=lambda e, ref=tb: self._on_biblia_click(page, ref),
                 )
                 for tb in textos_biblicos
             ]
             info_items.append(
                 ft.Column(
                     controls=[
-                        ft.Text("Textos Bíblicos:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.GREEN_200),
+                        ft.Text("Textos Bíblicos Relacionados:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.GREEN_200),
                         ft.Row(controls=texto_chips, wrap=True, spacing=6, run_spacing=6),
                     ],
                     spacing=4,

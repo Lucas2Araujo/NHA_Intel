@@ -16,6 +16,7 @@ from src.repositories.hino_repository import HinoRepository
 from src.repositories.favorito_repository import FavoritoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.repositories.culto_repository import CultoRepository
+from src.repositories.biblia_repository import BibliaRepository
 from src.services.media_service import MediaService
 from src.services.agente_service import AgenteService
 from src.views.home_view import HomeView
@@ -152,6 +153,7 @@ async def _render_hino_route(
     favorito_repository: FavoritoRepository,
     historico_repository: HistoricoRepository,
     media_service: MediaService,
+    biblia_repository: BibliaRepository,
     hino_view_cache: OrderedDict[str, ft.View],
     hino_ids_ordered: List[int],
 ) -> None:
@@ -171,6 +173,7 @@ async def _render_hino_route(
             historico_repository,
             media_service,
             hino_ids_list=hino_ids_ordered,
+            biblia_repository=biblia_repository,
         )
         built_view = await hino_view_instance.build(page)
         _update_hino_view_cache(hino_view_cache, route_key, built_view)
@@ -187,10 +190,13 @@ async def main(page: ft.Page):
     _setup_assets_and_theme(page)
 
     db_connection = DatabaseConnection(db_path="hinario.db")
+    biblia_connection = DatabaseConnection(db_path="ARA.sqlite", read_only=True)
+
     hino_repository = HinoRepository(db_connection)
     favorito_repository = FavoritoRepository(db_connection)
     historico_repository = HistoricoRepository(db_connection)
     culto_repository = CultoRepository(db_connection)
+    biblia_repository = BibliaRepository(biblia_connection)
 
     media_service = MediaService(download_dir="downloads")
     agente_service = AgenteService(hino_repository)
@@ -224,6 +230,7 @@ async def main(page: ft.Page):
             favorito_repository,
             historico_repository,
             media_service,
+            biblia_repository,
             hino_view_cache,
             hino_ids_ordered,
         )
