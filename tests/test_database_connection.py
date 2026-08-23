@@ -15,7 +15,7 @@ def test_resolve_db_path_memory():
 def test_resolve_db_path_default():
     """Valida que o caminho padrão resolve para o arquivo em disco existente."""
     db_conn = DatabaseConnection()
-    assert db_conn.db_path.endswith("hinario.db") or db_conn.db_path.endswith("hinario_normalizado.db")
+    assert db_conn.db_path.endswith("hinario.db")
     assert os.path.isabs(db_conn.db_path)
     assert os.path.exists(db_conn.db_path)
 
@@ -26,7 +26,7 @@ def test_resolve_db_path_env_variable(monkeypatch, tmp_path):
     dummy_db.write_text("dummy content")
 
     monkeypatch.setenv("HINARIO_DB_PATH", str(dummy_db))
-    resolved = DatabaseConnection._resolve_db_path("hinario_normalizado.db")
+    resolved = DatabaseConnection._resolve_db_path("hinario.db")
     assert resolved == str(dummy_db)
 
 
@@ -38,9 +38,9 @@ def test_resolve_db_path_android_copy(monkeypatch, tmp_path):
     monkeypatch.setenv("FILES_DIR", str(files_dir))
     monkeypatch.setenv("ANDROID_ARGUMENT", "1")
 
-    resolved = DatabaseConnection._resolve_db_path("hinario_normalizado.db")
+    resolved = DatabaseConnection._resolve_db_path("hinario.db")
 
-    expected_file = files_dir / "hinario_normalizado.db"
+    expected_file = files_dir / "hinario.db"
     assert resolved == str(expected_file)
     assert expected_file.exists()
 

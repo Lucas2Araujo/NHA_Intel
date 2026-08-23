@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from typing import List, Optional, Dict
 import aiosqlite
 from src.database.connection import DatabaseConnection
@@ -200,7 +201,7 @@ class HinoRepository:
         return results
 
     async def get_categorias(self) -> List[str]:
-        """Retorna todas as categorias únicas de hinos, ordenadas alfabeticamente."""
+        """Retorna todas as categorias únicas de hinos, ordenadas alfabeticamente e normalizadas."""
         conn = await self.db_connection.get_connection()
         query = """
             SELECT DISTINCT categoria 
@@ -210,10 +211,10 @@ class HinoRepository:
         """
         async with conn.execute(query) as cursor:
             rows = await cursor.fetchall()
-        return [str(row["categoria"]) for row in rows]
+        return [unicodedata.normalize("NFC", str(row["categoria"])) for row in rows]
 
     async def get_temas(self) -> List[str]:
-        """Retorna todos os temas únicos do banco, ordenados alfabeticamente."""
+        """Retorna todos os temas únicos do banco, ordenados alfabeticamente e normalizados."""
         conn = await self.db_connection.get_connection()
         query = """
             SELECT DISTINCT t.nome 
@@ -223,12 +224,13 @@ class HinoRepository:
         try:
             async with conn.execute(query) as cursor:
                 rows = await cursor.fetchall()
-            return [str(row["nome"]) for row in rows]
+            return [unicodedata.normalize("NFC", str(row["nome"])) for row in rows]
         except Exception:
             return []
 
     async def search_by_categoria(self, categoria: str) -> List[Hino]:
-        """Retorna todos os hinos de uma categoria específica (case-insensitive)."""
+        """Retorna todos os hinos de uma categoria específica (case-insensitive e normalizada)."""
+        cat_norm = unicodedata.normalize("NFC", (categoria or "").strip())
         conn = await self.db_connection.get_connection()
         query = """
             SELECT id, numero, titulo
@@ -236,8 +238,8 @@ class HinoRepository:
             WHERE LOWER(categoria) = LOWER(?) OR categoria LIKE ?
             ORDER BY CAST(numero AS INTEGER) ASC, numero ASC;
         """
-        cat_pattern = f"%{categoria}%"
-        async with conn.execute(query, (categoria, cat_pattern)) as cursor:
+        cat_pattern = f"%{cat_norm}%"
+        async with conn.execute(query, (cat_norm, cat_pattern)) as cursor:
             rows = await cursor.fetchall()
         return [
             Hino(id=row["id"], numero=str(row["numero"]), titulo=str(row["titulo"]))
@@ -245,7 +247,8 @@ class HinoRepository:
         ]
 
     async def search_by_tema(self, tema: str) -> List[Hino]:
-        """Retorna todos os hinos associados a um tema específico (case-insensitive)."""
+        """Retorna todos os hinos associados a um tema específico (case-insensitive e normalizada)."""
+        tema_norm = unicodedata.normalize("NFC", (tema or "").strip())
         conn = await self.db_connection.get_connection()
         query = """
             SELECT DISTINCT h.id, h.numero, h.titulo
@@ -255,9 +258,9 @@ class HinoRepository:
             WHERE LOWER(t.nome) = LOWER(?) OR t.nome LIKE ?
             ORDER BY CAST(h.numero AS INTEGER) ASC, h.numero ASC;
         """
-        tema_pattern = f"%{tema}%"
+        tema_pattern = f"%{tema_norm}%"
         try:
-            async with conn.execute(query, (tema, tema_pattern)) as cursor:
+            async with conn.execute(query, (tema_norm, tema_pattern)) as cursor:
                 rows = await cursor.fetchall()
             return [
                 Hino(id=row["id"], numero=str(row["numero"]), titulo=str(row["titulo"]))

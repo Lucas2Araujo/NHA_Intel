@@ -22,10 +22,13 @@ from src.views.home_view import HomeView
 from src.views.hino_view import HinoView
 from src.views.agente_view import AgenteView
 from src.views.download_manager_view import DownloadManagerView
+try:
+    from src.version import __version__ as APP_VERSION
+except ImportError:
+    APP_VERSION = "0.5.0"
 
 # Tamanho máximo do cache LRU para views de hinos
 _HINO_VIEW_CACHE_MAX = 10
-APP_VERSION = "0.2"
 ROUTE_AGENTE = "/agente"
 ROUTE_DOWNLOADS = "/downloads"
 
@@ -52,7 +55,7 @@ def _setup_assets_and_theme(page: ft.Page) -> None:
     _set_window_icon_if_exists(page, asset_icon)
 
     page.fonts = {
-        "OpenDyslexic": "https://cdn.jsdelivr.net/gh/antijingoist/open-dyslexic@master/otf/OpenDyslexic-Regular.otf",
+        "OpenDyslexic": "fonts/OpenDyslexic-Regular.otf",
         "Times New Roman": "Times New Roman, serif",
     }
     page.theme_mode = ft.ThemeMode.SYSTEM
@@ -248,5 +251,5 @@ async def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    ft.run(main, assets_dir="assets")
 

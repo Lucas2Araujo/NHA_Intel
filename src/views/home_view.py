@@ -7,9 +7,10 @@ from src.repositories.hino_repository import HinoRepository
 from src.repositories.favorito_repository import FavoritoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.models.hino import Hino
-
-
-APP_VERSION = "0.2"
+try:
+    from src.version import __version__ as APP_VERSION
+except ImportError:
+    APP_VERSION = "0.5.0"
 
 
 def parse_hino_number(numero: str) -> float:
@@ -83,6 +84,8 @@ class HomeView:
         self.search_field: Optional[ft.TextField] = None
         self.sort_button: Optional[ft.PopupMenuButton] = None
         self.filter_bar: Optional[ft.SegmentedButton] = None
+        self.active_filter_banner: Optional[ft.Container] = None
+        self._explore_sections_cached: Optional[List[ft.Control]] = None
 
     async def build(self, page: ft.Page, initial_search: str = "") -> ft.View:
         self.page = page
@@ -97,6 +100,7 @@ class HomeView:
             expand=True,
             spacing=2,
             padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+            visible=True,
         )
 
         self.explore_container = ft.Column(
@@ -104,6 +108,7 @@ class HomeView:
             scroll=ft.ScrollMode.AUTO,
             expand=True,
             spacing=10,
+            visible=False,
         )
 
         # Loading state inicial
@@ -149,6 +154,7 @@ class HomeView:
 
         self.filter_bar = ft.SegmentedButton(
             selected=[self.current_filter],
+            allow_empty_selection=True,
             segments=[
                 ft.Segment(value="todos", label=ft.Text("Todos")),
                 ft.Segment(
@@ -167,8 +173,19 @@ class HomeView:
             expand=True,
         )
 
+        self.active_filter_banner = ft.Container(
+            visible=False,
+            padding=ft.Padding.symmetric(horizontal=16, vertical=2),
+        )
+
         self.main_content_container = ft.Container(
-            content=self.list_container,
+            content=ft.Column(
+                controls=[
+                    self.list_container,
+                    self.explore_container,
+                ],
+                expand=True,
+            ),
             expand=True,
             padding=ft.Padding.symmetric(horizontal=4, vertical=4),
         )
@@ -219,6 +236,7 @@ class HomeView:
                     alignment=ft.Alignment.CENTER,
                     padding=ft.Padding.symmetric(horizontal=16, vertical=4),
                 ),
+                self.active_filter_banner,
                 self.main_content_container,
             ],
         )
@@ -244,11 +262,11 @@ class HomeView:
                         ft.Divider(),
                         ft.Row(
                             controls=[
-                                ft.Icon(ft.Icons.BOOK_ROUNDED, size=36, color=ft.Colors.BLUE_200),
+                                ft.Icon(ft.Icons.BOOK_ROUNDED, size=36, color=ft.Colors.GREEN_300),
                                 ft.Column(
                                     controls=[
                                         ft.Text("Hinário Inteligente", weight=ft.FontWeight.BOLD, size=16),
-                                        ft.Text(f"Versão {APP_VERSION}", size=13, color=ft.Colors.AMBER_300, weight=ft.FontWeight.BOLD),
+                                        ft.Text(f"Versão {APP_VERSION}", size=13, color=ft.Colors.PURPLE_300, weight=ft.FontWeight.BOLD),
                                     ],
                                     spacing=2,
                                 ),
@@ -256,13 +274,13 @@ class HomeView:
                             spacing=15,
                         ),
                         ft.Text(
-                            "Aplicação completa para o Hinário Adventista (601 hinos).\n"
+                            "Aplicação completa para o Hinário Adventista (600 hinos).\n"
                             "Oferece busca full-text (FTS5) na letra e temas, favoritos, histórico, "
                             "reprodução e downloads de áudio offline, acessibilidade de leitura "
                             "(OpenDyslexic), exploração por categorias/temas e Agente Organizador "
                             "de Cultos por blocos litúrgicos.",
                             size=13,
-                            color=ft.Colors.GREY_300,
+                            color=ft.Colors.BLACK,
                         ),
                     ],
                     tight=True,
@@ -382,6 +400,12 @@ class HomeView:
         if not self.explore_container:
             return
 
+        if self._explore_sections_cached:
+            self.explore_container.controls = list(self._explore_sections_cached)
+            if self.page:
+                self.page.update()
+            return
+
         self.explore_container.controls = [
             ft.Container(
                 content=ft.ProgressRing(),
@@ -409,7 +433,8 @@ class HomeView:
         if not sections:
             sections.append(self._create_explore_empty_state())
 
-        self.explore_container.controls = sections
+        self._explore_sections_cached = sections
+        self.explore_container.controls = list(sections)
         if self.page:
             self.page.update()
 
@@ -467,6 +492,122 @@ class HomeView:
         if self.page:
             self.page.update()
 
+    def _update_filter_banner(self, count: int = 0):
+        """Atualiza a exibição do banner de filtro ativo (Categoria ou Tema)."""
+        if not self.active_filter_banner:
+            return
+
+        if self.current_filter == "categoria" and self.active_category:
+            self.active_filter_banner.visible = True
+            self.active_filter_banner.content = ft.Container(
+                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                border_radius=8,
+                padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+                content=ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.FOLDER, size=18, color=ft.Colors.BLUE_400),
+                        ft.Text(
+                            f"Categoria: {self.active_category} ({count} hinos)",
+                            weight=ft.FontWeight.W_500,
+                            size=13,
+                            expand=True,
+                        ),
+                        ft.TextButton(
+                            content=ft.Text("Explorar Categorias"),
+                            icon=ft.Icons.ARROW_BACK,
+                            on_click=lambda e: asyncio.create_task(self._return_to_explore()),
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.CLOSE,
+                            tooltip="Limpar filtro de categoria",
+                            icon_size=18,
+                            on_click=lambda e: asyncio.create_task(self._clear_category_or_theme_filter()),
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+            )
+        elif self.current_filter == "tema" and self.active_tema:
+            self.active_filter_banner.visible = True
+            self.active_filter_banner.content = ft.Container(
+                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                border_radius=8,
+                padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+                content=ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.LABEL, size=18, color=ft.Colors.AMBER_400),
+                        ft.Text(
+                            f"Tema: {self.active_tema} ({count} hinos)",
+                            weight=ft.FontWeight.W_500,
+                            size=13,
+                            expand=True,
+                        ),
+                        ft.TextButton(
+                            content=ft.Text("Explorar Temas"),
+                            icon=ft.Icons.ARROW_BACK,
+                            on_click=lambda e: asyncio.create_task(self._return_to_explore()),
+                        ),
+                        ft.IconButton(
+                            icon=ft.Icons.CLOSE,
+                            tooltip="Limpar filtro de tema",
+                            icon_size=18,
+                            on_click=lambda e: asyncio.create_task(self._clear_category_or_theme_filter()),
+                        ),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+            )
+        else:
+            self.active_filter_banner.visible = False
+            self.active_filter_banner.content = None
+
+    def _show_content_view(self, mode: str):
+        """Alterna a visibilidade entre a listagem de hinos e o painel de exploração."""
+        if not self.list_container or not self.explore_container:
+            return
+        if mode == "explorar":
+            self.list_container.visible = False
+            self.explore_container.visible = True
+        else:
+            self.list_container.visible = True
+            self.explore_container.visible = False
+
+    async def _return_to_explore(self):
+        """Retorna para a visão geral de exploração de categorias e temas."""
+        self.active_category = None
+        self.active_tema = None
+        self.current_search = ""
+        self.current_filter = "explorar"
+        if self.search_field:
+            self.search_field.value = ""
+            self.search_field.suffix = None
+        if self.filter_bar:
+            self.filter_bar.selected = ["explorar"]
+        if self.active_filter_banner:
+            self.active_filter_banner.visible = False
+        self._show_content_view("explorar")
+        await self._load_explore_data()
+        if self.page:
+            self.page.update()
+
+    async def _clear_category_or_theme_filter(self):
+        """Limpa o filtro ativo de categoria/tema e volta para todos os hinos."""
+        self.active_category = None
+        self.active_tema = None
+        self.current_search = ""
+        self.current_filter = "todos"
+        if self.search_field:
+            self.search_field.value = ""
+            self.search_field.suffix = None
+        if self.filter_bar:
+            self.filter_bar.selected = ["todos"]
+        if self.active_filter_banner:
+            self.active_filter_banner.visible = False
+        self._show_content_view("list")
+        await self._load_current_filter_data("")
+        if self.page:
+            self.page.update()
+
     async def _filter_by_categoria(self, cat: str):
         """Filtra hinos por categoria e volta para lista."""
         self.current_filter = "categoria"
@@ -474,12 +615,11 @@ class HomeView:
         self.active_tema = None
         self.current_search = ""
         if self.filter_bar:
-            self.filter_bar.selected = []
+            self.filter_bar.selected = ["explorar"]
         if self.search_field:
             self.search_field.value = ""
             self.search_field.suffix = None
-        if self.main_content_container and self.list_container:
-            self.main_content_container.content = self.list_container
+        self._show_content_view("list")
 
         await self._load_current_filter_data("")
         if self.page:
@@ -492,12 +632,11 @@ class HomeView:
         self.active_category = None
         self.current_search = ""
         if self.filter_bar:
-            self.filter_bar.selected = []
+            self.filter_bar.selected = ["explorar"]
         if self.search_field:
             self.search_field.value = ""
             self.search_field.suffix = None
-        if self.main_content_container and self.list_container:
-            self.main_content_container.content = self.list_container
+        self._show_content_view("list")
 
         await self._load_current_filter_data("")
         if self.page:
@@ -509,16 +648,21 @@ class HomeView:
             if search_term and search_term.strip():
                 term = search_term.lower().strip()
                 hinos = [h for h in hinos if term in h.numero.lower() or term in h.titulo.lower()]
+            self._update_filter_banner(len(hinos))
         elif self.current_filter == "tema" and self.active_tema:
             hinos = await self.hino_repository.search_by_tema(self.active_tema)
             if search_term and search_term.strip():
                 term = search_term.lower().strip()
                 hinos = [h for h in hinos if term in h.numero.lower() or term in h.titulo.lower()]
+            self._update_filter_banner(len(hinos))
         elif self.current_filter == "favoritos":
+            self._update_filter_banner(0)
             hinos = await self._fetch_filtered_favoritos(search_term)
         elif self.current_filter == "recentes":
+            self._update_filter_banner(0)
             hinos = await self._fetch_filtered_recentes(search_term)
         else:
+            self._update_filter_banner(0)
             hinos = await self.hino_repository.search(search_term)
 
         sorted_hinos = self._sort_hinos(hinos)
@@ -546,12 +690,6 @@ class HomeView:
 
     def _clear_search(self, e=None):
         self.current_search = ""
-        self.active_category = None
-        self.active_tema = None
-        if self.current_filter in ("categoria", "tema"):
-            self.current_filter = "todos"
-            if self.filter_bar:
-                self.filter_bar.selected = ["todos"]
         if self.search_field:
             self.search_field.value = ""
             self.search_field.suffix = None
@@ -562,12 +700,15 @@ class HomeView:
     def _on_search_change(self, e):
         term = e.control.value or ""
         self.current_search = term
-        if term and self.current_filter in ("categoria", "tema"):
+        if term and self.current_filter in ("favoritos", "recentes", "explorar"):
             self.current_filter = "todos"
             self.active_category = None
             self.active_tema = None
+            if self.active_filter_banner:
+                self.active_filter_banner.visible = False
             if self.filter_bar:
                 self.filter_bar.selected = ["todos"]
+            self._show_content_view("list")
 
         if self.search_field:
             self.search_field.suffix = (
@@ -588,20 +729,35 @@ class HomeView:
 
     async def _on_filter_select(self, e):
         selected = e.control.selected
-        self.active_category = None
-        self.active_tema = None
-
-        if "explorar" in selected:
-            self.current_filter = "explorar"
-            if self.main_content_container and self.explore_container:
-                self.main_content_container.content = self.explore_container
-            await self._load_explore_data()
+        
+        # Previne desseleção acidental para conjunto vazio quando o usuário clica na aba já ativa
+        if not selected:
+            if self.current_filter in ("categoria", "tema"):
+                await self._return_to_explore()
+                return
+            fallback = self.current_filter if self.current_filter in ("todos", "favoritos", "recentes", "explorar") else "todos"
+            if self.filter_bar:
+                self.filter_bar.selected = [fallback]
             if self.page:
                 self.page.update()
             return
 
-        if self.main_content_container and self.list_container:
-            self.main_content_container.content = self.list_container
+        self.current_search = ""
+        if self.search_field:
+            self.search_field.value = ""
+            self.search_field.suffix = None
+
+        if "explorar" in selected:
+            # Se já estava filtrando por categoria ou tema e clicou em Explorar, volta para a tela de exploração
+            await self._return_to_explore()
+            return
+
+        self.active_category = None
+        self.active_tema = None
+        if self.active_filter_banner:
+            self.active_filter_banner.visible = False
+
+        self._show_content_view("list")
 
         if "favoritos" in selected:
             self.current_filter = "favoritos"
@@ -610,8 +766,7 @@ class HomeView:
         else:
             self.current_filter = "todos"
 
-        search_val = self.current_search
-        await self._load_current_filter_data(search_val or "")
+        await self._load_current_filter_data("")
         if self.page:
             self.page.update()
 

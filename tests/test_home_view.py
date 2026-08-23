@@ -22,8 +22,10 @@ async def test_home_view_build(in_memory_db):
     assert view.route == "/"
     assert len(view.controls) > 0
     assert home_view_obj.list_container is not None
+    assert home_view_obj.explore_container is not None
     assert home_view_obj.main_content_container is not None
-    assert home_view_obj.main_content_container.content == home_view_obj.list_container
+    assert home_view_obj.list_container.visible is True
+    assert home_view_obj.explore_container.visible is False
 
 
 @pytest.mark.asyncio
@@ -41,13 +43,15 @@ async def test_home_view_tab_switch(in_memory_db):
     mock_event.control.selected = ["explorar"]
     await home_view_obj._on_filter_select(mock_event)
 
-    assert home_view_obj.main_content_container.content == home_view_obj.explore_container
+    assert home_view_obj.explore_container.visible is True
+    assert home_view_obj.list_container.visible is False
 
     # Simula retorno para a aba "Todos"
     mock_event.control.selected = ["todos"]
     await home_view_obj._on_filter_select(mock_event)
 
-    assert home_view_obj.main_content_container.content == home_view_obj.list_container
+    assert home_view_obj.list_container.visible is True
+    assert home_view_obj.explore_container.visible is False
 
 
 @pytest.mark.asyncio
@@ -175,7 +179,128 @@ async def test_home_view_category_filter(in_memory_db):
 
     await home_view_obj.build(mock_page)
 
+    assert home_view_obj.filter_bar is not None
+    assert home_view_obj.filter_bar.allow_empty_selection is True
+    assert home_view_obj.active_filter_banner is not None
+    assert home_view_obj.active_filter_banner.visible is False
+
+    # Filtra por categoria
     await home_view_obj._filter_by_categoria("Adoração")
     assert home_view_obj.current_filter == "categoria"
     assert home_view_obj.active_category == "Adoração"
+    assert home_view_obj.filter_bar.selected == ["explorar"]
+    assert home_view_obj.active_filter_banner.visible is True
+
+    # Clicar para voltar ao Explorar limpa a categoria e mostra o explore_container
+    await home_view_obj._return_to_explore()
+    assert home_view_obj.current_filter == "explorar"
+    assert home_view_obj.active_category is None
+    assert home_view_obj.active_filter_banner.visible is False
+    assert home_view_obj.explore_container.visible is True
+    assert home_view_obj.list_container.visible is False
+
+
+@pytest.mark.asyncio
+async def test_home_view_theme_filter_and_clear(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo)
+    mock_page = MagicMock(spec=ft.Page)
+
+    await home_view_obj.build(mock_page)
+
+    # Filtra por tema
+    await home_view_obj._filter_by_tema("Louvor")
+    assert home_view_obj.current_filter == "tema"
+    assert home_view_obj.active_tema == "Louvor"
+    assert home_view_obj.filter_bar.selected == ["explorar"]
+    assert home_view_obj.active_filter_banner.visible is True
+
+    # Limpar filtro volta para Todos
+    await home_view_obj._clear_category_or_theme_filter()
+    assert home_view_obj.current_filter == "todos"
+    assert home_view_obj.active_tema is None
+    assert home_view_obj.active_filter_banner.visible is False
+    assert home_view_obj.filter_bar.selected == ["todos"]
+
+
+@pytest.mark.asyncio
+async def test_home_view_recentes_tab_shows_only_clicked_hinos(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo)
+    mock_page = MagicMock(spec=ft.Page)
+
+    await home_view_obj.build(mock_page)
+
+    # 1. Antes de qualquer hino ser acessado, a aba recentes deve estar vazia
+    mock_event = MagicMock()
+    mock_event.control.selected = ["recentes"]
+    await home_view_obj._on_filter_select(mock_event)
+    assert home_view_obj.current_filter == "recentes"
+    # Apenas o container de estado vazio
+    assert len(home_view_obj.list_container.controls) == 1
+
+    # 2. Registrar acesso apenas ao hino 2 (simulando clique/visualização de letra)
+    await hist_repo.add_acesso(2)
+
+    # 3. Recarregar aba recentes
+    await home_view_obj._on_filter_select(mock_event)
+    assert len(home_view_obj.list_container.controls) == 1
+    tile = home_view_obj.list_container.controls[0]
+    assert isinstance(tile, ft.ListTile)
+    assert "Ó Adorai o Senhor" in tile.title.value
+
+    # 4. Digitar na busca com a aba recentes aberta deve redirecionar para busca global (todos)
+    mock_search_event = MagicMock()
+    mock_search_event.control.value = "Santo"
+    home_view_obj._on_search_change(mock_search_event)
+    assert home_view_obj.current_filter == "todos"
+    assert home_view_obj.filter_bar.selected == ["todos"]
+
+
+@pytest.mark.asyncio
+async def test_home_view_category_search_and_tab_switch(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo)
+    mock_page = MagicMock(spec=ft.Page)
+
+    await home_view_obj.build(mock_page)
+
+    # 1. Filtra por categoria Adoração
+    await home_view_obj._filter_by_categoria("Adoração")
+    assert home_view_obj.current_filter == "categoria"
+    assert home_view_obj.active_category == "Adoração"
+    assert home_view_obj.active_filter_banner.visible is True
+
+    # 2. Busca termo dentro da categoria
+    mock_search = MagicMock()
+    mock_search.control.value = "Santo"
+    home_view_obj._on_search_change(mock_search)
+    assert home_view_obj.current_filter == "categoria"
+    assert home_view_obj.active_category == "Adoração"
+    assert home_view_obj.current_search == "Santo"
+
+    # 3. Troca de aba para "Explorar" limpa a categoria e mostra as seções
+    mock_tab_event = MagicMock()
+    mock_tab_event.control.selected = ["explorar"]
+    await home_view_obj._on_filter_select(mock_tab_event)
+    assert home_view_obj.current_filter == "explorar"
+    assert home_view_obj.active_category is None
+    assert home_view_obj.active_filter_banner.visible is False
+
+    # 4. Troca de aba para "Todos"
+    mock_tab_event.control.selected = ["todos"]
+    await home_view_obj._on_filter_select(mock_tab_event)
+    assert home_view_obj.current_filter == "todos"
+    assert home_view_obj.active_category is None
+
+
 

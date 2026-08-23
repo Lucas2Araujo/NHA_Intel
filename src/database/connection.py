@@ -7,7 +7,6 @@ from typing import Optional
 
 
 DEFAULT_DB_NAME: str = "hinario.db"
-FALLBACK_DB_NAME: str = "hinario_normalizado.db"
 
 
 class DatabaseConnection:
@@ -97,11 +96,6 @@ class DatabaseConnection:
         project_root = Path(__file__).resolve().parent.parent.parent
         candidates.append(project_root / filename)
         candidates.append(project_root / "assets" / filename)
-
-        # Fallback de nome de banco caso hinario.db não exista mas hinario_normalizado.db sim
-        if filename != FALLBACK_DB_NAME:
-            candidates.append(project_root / FALLBACK_DB_NAME)
-            candidates.append(project_root / "assets" / FALLBACK_DB_NAME)
 
         candidates.extend(DatabaseConnection._gather_env_candidates(filename))
         candidates.extend(DatabaseConnection._gather_sys_candidates(filename))

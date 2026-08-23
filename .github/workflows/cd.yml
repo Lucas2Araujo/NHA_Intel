@@ -1,28 +1,23 @@
-name: CD Pipeline - Build & Release Android APK
+name: CD Pipeline - Multi-Platform Build & Release (Windows & Android)
 
 on:
   push:
-    branches: [ "main", "master" ]
-    tags:
-      - "v*"
+    branches:
+      - main
+      - master
   workflow_dispatch:
-    inputs:
-      custom_version:
-        description: 'Versão customizada da Release (ex: 0.2 ou v0.2). Deixe em branco para auto-incrementar.'
-        required: false
-        default: ''
-      is_prerelease:
-        description: 'Marcar como Pré-Release (Beta)'
-        type: boolean
-        default: true
 
 permissions:
   contents: write
 
 jobs:
-  build-android:
-    name: Build Android APK Release
+  version:
+    name: Calculate SemVer & Create Tag
     runs-on: ubuntu-latest
+    outputs:
+      new_tag: ${{ steps.tag_version.outputs.new_tag }}
+      new_version: ${{ steps.tag_version.outputs.new_version }}
+      changelog: ${{ steps.tag_version.outputs.changelog }}
 
     steps:
       - name: Checkout Repository Code
@@ -30,44 +25,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Calculate Next Version Tag
-        id: version
-        run: |
-          git fetch --tags --force || true
-          INPUT_VERSION="${{ inputs.custom_version }}"
-          
-          if [ -n "$INPUT_VERSION" ]; then
-            if [[ "$INPUT_VERSION" =~ ^v ]]; then
-              TAG="$INPUT_VERSION"
-            else
-              TAG="v$INPUT_VERSION"
-            fi
-          else
-            LATEST_TAG=$(git tag -l "v*" | sort -V | tail -n 1)
-            
-            if [ -z "$LATEST_TAG" ]; then
-              TAG="v0.1"
-            else
-              CLEAN_TAG="${LATEST_TAG#v}"
-              MAJOR=$(echo "$CLEAN_TAG" | cut -d. -f1)
-              MINOR=$(echo "$CLEAN_TAG" | cut -d. -f2)
+      - name: Bump version and create Git Tag
+        id: tag_version
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: patch
+          tag_prefix: v
+          release_branches: main,master
+          fetch_all_tags: true
 
-              MAJOR=${MAJOR:-0}
-              MINOR=${MINOR:-0}
+  build-android:
+    name: Build Android APK
+    needs: version
+    runs-on: ubuntu-latest
 
-              MINOR=$((MINOR + 1))
-              if [ "$MINOR" -ge 10 ]; then
-                MAJOR=$((MAJOR + 1))
-                MINOR=0
-              fi
-
-              TAG="v${MAJOR}.${MINOR}"
-            fi
-          fi
-          
-          echo "Calculated Version Tag: $TAG"
-          echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "title=Hinário Inteligente $TAG" >> $GITHUB_OUTPUT
+    steps:
+      - name: Checkout Repository Code
+        uses: actions/checkout@v4
 
       - name: Set up Java 17 (JDK)
         uses: actions/setup-java@v4
@@ -78,14 +53,23 @@ jobs:
       - name: Set up Flutter SDK
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.44.8'
           channel: 'stable'
-          cache: true
 
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
+
+      - name: Inject Version into src/version.py
+        run: |
+          echo "Injetando versão calculada: ${{ needs.version.outputs.new_version }}"
+          python -c "
+          with open('src/version.py', 'w', encoding='utf-8') as f:
+              f.write('\"\"\"Módulo gerado automaticamente pelo pipeline de CD.\"\"\"\n\n__version__ = \"${{ needs.version.outputs.new_version }}\"\n')
+          "
+          echo "Conteúdo de src/version.py:"
+          cat src/version.py
 
       - name: Install Python Dependencies
         run: |
@@ -100,21 +84,112 @@ jobs:
         run: |
           flet build apk --verbose
 
+      - name: Prepare APK File for Distribution
+        run: |
+          APK_FILE=$(find build/apk -name "*.apk" | head -n 1)
+          if [ -n "$APK_FILE" ]; then
+            cp "$APK_FILE" "Hinario_Inteligente_Android_${{ needs.version.outputs.new_tag }}.apk"
+          else
+            echo "Nenhum APK encontrado em build/apk!"
+            exit 1
+          fi
+
       - name: Upload Android APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Hinario_Inteligente_Android_APK_${{ steps.version.outputs.tag }}
-          path: build/apk/*.apk
+          name: Hinario_Inteligente_Android_APK_${{ needs.version.outputs.new_tag }}
+          path: Hinario_Inteligente_Android_${{ needs.version.outputs.new_tag }}.apk
+
+  build-windows:
+    name: Build Windows Executable
+    needs: version
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout Repository Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Set up Flutter SDK
+        uses: subosito/flutter-action@v2
+        with:
+          channel: "stable"
+
+      - name: Inject Version into src/version.py
+        shell: bash
+        run: |
+          echo "Injetando versão calculada: ${{ needs.version.outputs.new_version }}"
+          python -c "
+          with open('src/version.py', 'w', encoding='utf-8') as f:
+              f.write('\"\"\"Módulo gerado automaticamente pelo pipeline de CD.\"\"\"\n\n__version__ = \"${{ needs.version.outputs.new_version }}\"\n')
+          "
+          echo "Conteúdo de src/version.py:"
+          cat src/version.py
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Test Suite Verification
+        run: |
+          pytest -v
+
+      - name: Build Windows Executable via Flet
+        run: |
+          flet build windows --icon assets/icon.ico --verbose
+
+      - name: Compress Windows Build Package
+        shell: pwsh
+        run: |
+          $zipName = "Hinario_Inteligente_Windows_${{ needs.version.outputs.new_tag }}.zip"
+          Write-Host "Compactando diretório de build para $zipName..."
+          if (Test-Path "build/windows") {
+              Compress-Archive -Path "build/windows/*" -DestinationPath $zipName -Force
+          } else {
+              Write-Error "Diretório build/windows não foi encontrado!"
+              exit 1
+          }
+
+      - name: Upload Windows Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hinario_Inteligente_Windows_${{ needs.version.outputs.new_tag }}
+          path: Hinario_Inteligente_Windows_${{ needs.version.outputs.new_tag }}.zip
+
+  release:
+    name: Publish Unified GitHub Release
+    needs:
+      - version
+      - build-android
+      - build-windows
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download All Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release_assets
+          merge-multiple: true
+
+      - name: List Release Assets
+        run: |
+          echo "Artefatos prontos para a release:"
+          ls -la release_assets/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: build/apk/*.apk
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: ${{ steps.version.outputs.title }}
-          prerelease: ${{ inputs.is_prerelease != false }}
-          generate_release_notes: true
+          tag_name: ${{ needs.version.outputs.new_tag }}
+          name: Hinário Inteligente ${{ needs.version.outputs.new_tag }}
+          body: ${{ needs.version.outputs.changelog }}
+          files: release_assets/*
+          draft: false
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-
