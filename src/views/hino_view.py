@@ -6,9 +6,9 @@ from src.repositories.hino_repository import HinoRepository
 from src.repositories.favorito_repository import FavoritoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.repositories.biblia_repository import BibliaRepository
+from src.models.biblia import PassagemBiblica
 from src.services.media_service import MediaService
 from src.models.hino import Hino
-from src.models.biblia import PassagemBiblica
 
 DEFAULT_FONT_FAMILY = "Padrão"
 TIMES_NEW_ROMAN_FONT_FAMILY = "Times New Roman"
@@ -57,10 +57,20 @@ class HinoView:
 
         # Referências aos elementos dinâmicos da interface
         self.page: Optional[ft.Page] = None
+        self.view: Optional[ft.View] = None
+        self.current_hino: Optional[Hino] = None
+        self.appbar_title: Optional[ft.Text] = None
+        self.titulo_text: Optional[ft.Text] = None
+        self.texto_base_chip: Optional[ft.Chip] = None
+        self.texto_base_container: Optional[ft.Container] = None
         self.letra_text: Optional[ft.Text] = None
+        self.scroll_column: Optional[ft.Column] = None
+        self.content_container: Optional[ft.Container] = None
         self.font_size_text: Optional[ft.Text] = None
         self.fav_icon: Optional[ft.IconButton] = None
         self.youtube_btn: Optional[ft.IconButton] = None
+        self.prev_btn: Optional[ft.IconButton] = None
+        self.next_btn: Optional[ft.IconButton] = None
         self.is_fav: bool = False
         self.relacionados: Dict[str, List[str]] = {"temas": [], "textos_biblicos": []}
 
@@ -136,6 +146,8 @@ class HinoView:
         if hino is None:
             return self._build_not_found_view(page)
 
+        self.current_hino = hino
+
         # Carrega preferências de fonte persistidas
         await self._load_preferences()
 
@@ -161,12 +173,37 @@ class HinoView:
             expand=True,
         )
 
+        # Título do hino no corpo da página
+        self.titulo_text = ft.Text(
+            hino.titulo,
+            size=22,
+            weight=ft.FontWeight.BOLD,
+            text_align=ft.TextAlign.CENTER,
+            color=ft.Colors.BLUE_200,
+        )
+
+        # Chip de texto bíblico base
+        self.texto_base_chip = ft.Chip(
+            label=ft.Text(hino.texto_base or "", size=12),
+            leading=ft.Icon(ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400),
+            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+            tooltip="Ler passagem bíblica",
+            on_click=lambda e, ref=hino.texto_base: self._on_biblia_click(
+                page, ref, from_info_modal=False, hino=self.current_hino
+            ),
+        )
+        self.texto_base_container = ft.Container(
+            content=self.texto_base_chip,
+            padding=ft.Padding.only(top=4),
+            visible=bool(hino.texto_base and hino.texto_base.strip()),
+        )
+
         # Toggle de Favorito
         self.fav_icon = ft.IconButton(
             icon=ft.Icons.FAVORITE if self.is_fav else ft.Icons.FAVORITE_BORDER,
             icon_color=ft.Colors.RED_400 if self.is_fav else None,
             tooltip="Desfavoritar" if self.is_fav else "Favoritar",
-            on_click=lambda e: page.run_task(self._toggle_favorito, page, hino),
+            on_click=lambda e: page.run_task(self._toggle_favorito, page, self.current_hino),
         )
 
         # Botão de Link Externo do YouTube
@@ -176,11 +213,53 @@ class HinoView:
             icon_color=ft.Colors.RED_400 if has_youtube else None,
             tooltip="Assistir no YouTube (Link Externo)" if has_youtube else "Link do YouTube indisponível",
             disabled=not has_youtube,
-            on_click=lambda e: page.run_task(self._open_youtube_link, page, hino),
+            on_click=lambda e: page.run_task(self._open_youtube_link, page, self.current_hino),
         )
 
         # Navegação anterior/próximo
         prev_btn, next_btn = self._build_nav_buttons(page)
+
+        # Título na AppBar
+        self.appbar_title = ft.Text(f"Hino {hino.numero}", weight=ft.FontWeight.BOLD)
+
+        # Coluna rolável de conteúdo
+        self.scroll_column = ft.Column(
+            controls=[
+                ft.Container(
+                    content=ft.Column(
+                        controls=[
+                            self.titulo_text,
+                            self.texto_base_container,
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=2,
+                    ),
+                    padding=ft.Padding.symmetric(vertical=15, horizontal=20),
+                    alignment=ft.Alignment.CENTER,
+                ),
+                ft.Divider(height=1),
+                ft.Container(
+                    content=self.letra_text,
+                    padding=ft.Padding.symmetric(vertical=20, horizontal=20),
+                    alignment=ft.Alignment.TOP_CENTER,
+                    expand=True,
+                ),
+            ],
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+        )
+
+        # Container animado com suporte a transição direcional
+        self.content_container = ft.Container(
+            content=self.scroll_column,
+            expand=True,
+            padding=0,
+            offset=ft.Offset(0, 0),
+            opacity=1.0,
+            animate_offset=ft.Animation(200, ft.AnimationCurve.DECELERATE),
+            animate_opacity=ft.Animation(180, ft.AnimationCurve.EASE_OUT),
+        )
 
         # Botão voltar usa stack de views
         async def _go_back(e):
@@ -191,14 +270,14 @@ class HinoView:
             else:
                 await page.push_route("/")
 
-        return ft.View(
+        self.view = ft.View(
             route=f"/hino/{self.hino_id}",
             appbar=ft.AppBar(
                 leading=ft.IconButton(
                     ft.Icons.ARROW_BACK,
                     on_click=_go_back,
                 ),
-                title=ft.Text(f"Hino {hino.numero}", weight=ft.FontWeight.BOLD),
+                title=self.appbar_title,
                 center_title=True,
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 actions=[
@@ -208,68 +287,12 @@ class HinoView:
                     ft.IconButton(
                         ft.Icons.INFO_OUTLINED,
                         tooltip="Informações do Hino",
-                        on_click=lambda e: self._show_info_modal(page, hino),
+                        on_click=lambda e: self._show_info_modal(page, self.current_hino),
                     ),
                 ],
             ),
             controls=[
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.Container(
-                                content=ft.Column(
-                                    controls=[
-                                        ft.Text(
-                                            hino.titulo,
-                                            size=22,
-                                            weight=ft.FontWeight.BOLD,
-                                            text_align=ft.TextAlign.CENTER,
-                                            color=ft.Colors.BLUE_200,
-                                        ),
-                                        *(
-                                            [
-                                                ft.Container(
-                                                    content=ft.Chip(
-                                                        label=ft.Text(hino.texto_base, size=12),
-                                                        leading=ft.Icon(
-                                                            ft.Icons.MENU_BOOK_OUTLINED,
-                                                            size=15,
-                                                            color=ft.Colors.GREEN_400,
-                                                        ),
-                                                        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                                                        tooltip="Ler texto bíblico",
-                                                        on_click=lambda e, ref=hino.texto_base: page.run_task(
-                                                            self._abrir_modal_leitura_biblica, page, ref
-                                                        ),
-                                                    ),
-                                                    padding=ft.Padding.only(top=4),
-                                                )
-                                            ]
-                                            if hino.texto_base and hino.texto_base.strip()
-                                            else []
-                                        ),
-                                    ],
-                                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                                    spacing=2,
-                                ),
-                                padding=ft.Padding.symmetric(vertical=15, horizontal=20),
-                                alignment=ft.Alignment.CENTER,
-                            ),
-                            ft.Divider(height=1),
-                            ft.Container(
-                                content=self.letra_text,
-                                padding=ft.Padding.symmetric(vertical=20, horizontal=20),
-                                alignment=ft.Alignment.TOP_CENTER,
-                                expand=True,
-                            ),
-                        ],
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        scroll=ft.ScrollMode.AUTO,
-                        expand=True,
-                    ),
-                    expand=True,
-                    padding=0,
-                ),
+                self.content_container,
             ],
             bottom_appbar=ft.BottomAppBar(
                 content=ft.Row(
@@ -300,9 +323,10 @@ class HinoView:
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
             ),
         )
+        return self.view
 
     def _build_nav_buttons(self, page: ft.Page) -> tuple:
-        """Constrói botões de navegação anterior/próximo baseados na lista de IDs."""
+        """Constrói botões de navegação anterior/próximo com transição direcional suave."""
         current_idx = -1
         if self.hino_ids_list and self.hino_id in self.hino_ids_list:
             current_idx = self.hino_ids_list.index(self.hino_id)
@@ -311,201 +335,185 @@ class HinoView:
         has_next = current_idx >= 0 and current_idx < len(self.hino_ids_list) - 1
 
         async def _go_prev(e):
-            if has_prev:
-                prev_id = self.hino_ids_list[current_idx - 1]
-                await page.push_route(f"/hino/{prev_id}")
+            if self.hino_ids_list and self.hino_id in self.hino_ids_list:
+                idx = self.hino_ids_list.index(self.hino_id)
+                if idx > 0:
+                    prev_id = self.hino_ids_list[idx - 1]
+                    await self.load_hino(prev_id, direction="prev")
 
         async def _go_next(e):
-            if has_next:
-                next_id = self.hino_ids_list[current_idx + 1]
-                await page.push_route(f"/hino/{next_id}")
+            if self.hino_ids_list and self.hino_id in self.hino_ids_list:
+                idx = self.hino_ids_list.index(self.hino_id)
+                if idx < len(self.hino_ids_list) - 1:
+                    next_id = self.hino_ids_list[idx + 1]
+                    await self.load_hino(next_id, direction="next")
 
-        prev_btn = ft.IconButton(
+        self.prev_btn = ft.IconButton(
             ft.Icons.NAVIGATE_BEFORE,
             tooltip="Hino Anterior",
             on_click=_go_prev,
             disabled=not has_prev,
         )
-        next_btn = ft.IconButton(
+        self.next_btn = ft.IconButton(
             ft.Icons.NAVIGATE_NEXT,
             tooltip="Próximo Hino",
             on_click=_go_next,
             disabled=not has_next,
         )
 
-        return prev_btn, next_btn
+        return self.prev_btn, self.next_btn
 
-    def _build_not_found_view(self, page: ft.Page) -> ft.View:
-        async def _go_back(e):
-            if len(page.views) > 1:
-                page.views.pop()
-                top_view = page.views[-1]
-                await page.push_route(top_view.route)
-            else:
-                await page.push_route("/")
+    def _update_nav_buttons(self) -> None:
+        """Atualiza estados de habilitado/desabilitado dos botões de navegação."""
+        current_idx = -1
+        if self.hino_ids_list and self.hino_id in self.hino_ids_list:
+            current_idx = self.hino_ids_list.index(self.hino_id)
 
-        return ft.View(
-            route=f"/hino/{self.hino_id}",
-            appbar=ft.AppBar(
-                leading=ft.IconButton(
-                    ft.Icons.ARROW_BACK,
-                    on_click=_go_back,
-                ),
-                title=ft.Text("Hino não encontrado"),
-            ),
-            controls=[
-                ft.Container(
-                    content=ft.Text("O hino solicitado não foi encontrado."),
-                    alignment=ft.Alignment.CENTER,
-                    expand=True,
-                )
-            ],
-        )
+        has_prev = current_idx > 0
+        has_next = current_idx >= 0 and current_idx < len(self.hino_ids_list) - 1
 
-    def _update_font(self, page: ft.Page) -> None:
-        if self.letra_text:
-            self.letra_text.size = self.font_size
-            self.letra_text.font_family = FONT_FAMILY_MAP.get(self.selected_font)
-        if self.font_size_text:
-            self.font_size_text.value = f"{self.font_size}pt"
-        if page:
-            page.update()
-        # Persiste preferências de forma assíncrona (fire-and-forget)
-        self._save_pref_task = asyncio.create_task(self._save_preferences())
+        if self.prev_btn:
+            self.prev_btn.disabled = not has_prev
+        if self.next_btn:
+            self.next_btn.disabled = not has_next
 
-    def _increase_font(self, page: ft.Page) -> None:
-        if self.font_size < 36:
-            self.font_size += 2
-            self.is_custom_font = True
-            self._update_font(page)
+    async def load_hino(self, hino_id: int, direction: str = "next") -> None:
+        """
+        Transiciona direcionalmente para outro hino na mesma View:
+        - direction='next': desliza o conteúdo atual para a esquerda (-0.25) e entra o novo vindo da direita (+0.25 -> 0).
+        - direction='prev': desliza o conteúdo atual para a direita (+0.25) e entra o novo vindo da esquerda (-0.25 -> 0).
+        """
+        self.hino_id = hino_id
+        if self.page:
+            self.page.route = f"/hino/{hino_id}"
+        if self.view:
+            self.view.route = f"/hino/{hino_id}"
 
-    def _decrease_font(self, page: ft.Page) -> None:
-        if self.font_size > 12:
-            self.font_size -= 2
-            self.is_custom_font = True
-            self._update_font(page)
+        # 1. Animação de saída direcional
+        if self.content_container and self.page:
+            exit_offset = -0.25 if direction == "next" else 0.25
+            self.content_container.animate_offset = ft.Animation(130, ft.AnimationCurve.EASE_IN)
+            self.content_container.animate_opacity = ft.Animation(110, ft.AnimationCurve.EASE_IN)
+            self.content_container.offset = ft.Offset(exit_offset, 0)
+            self.content_container.opacity = 0
+            self.page.update()
+            await asyncio.sleep(0.12)
 
-    def _reset_font(self, page: ft.Page) -> None:
-        self.font_size = self._calculate_responsive_font_size(page)
-        self.selected_font = DEFAULT_FONT_FAMILY
-        self.is_custom_font = False
-        self._update_font(page)
-
-    def _set_font_family(self, page: ft.Page, font_family: str) -> None:
-        self.selected_font = font_family
-        self._update_font(page)
-
-    def _update_fav_icon_state(self) -> None:
-        if self.fav_icon:
-            self.fav_icon.icon = ft.Icons.FAVORITE if self.is_fav else ft.Icons.FAVORITE_BORDER
-            self.fav_icon.icon_color = ft.Colors.RED_400 if self.is_fav else None
-            self.fav_icon.tooltip = "Desfavoritar" if self.is_fav else "Favoritar"
-
-    async def _toggle_favorito(self, page: ft.Page, hino: Hino) -> None:
-        if self.is_fav:
-            await self.favorito_repository.remove_favorito(self.hino_id)
-            self.is_fav = False
-            msg = f"Hino {hino.numero} removido dos favoritos"
-        else:
-            await self.favorito_repository.add_favorito(self.hino_id)
-            self.is_fav = True
-            msg = f"Hino {hino.numero} adicionado aos favoritos!"
-
-        self._update_fav_icon_state()
-        self._show_snackbar(page, msg)
-
-    async def _open_youtube_link(self, page: ft.Page, hino: Hino) -> None:
-        """Abre o link externo do YouTube no navegador ou app nativo."""
-        if not hino.link_video or not hino.link_video.strip():
-            self._show_snackbar(page, "Este hino não possui link do YouTube cadastrado.")
+        # 2. Carrega dados do novo hino no banco
+        hino = await self.hino_repository.get_by_id(hino_id)
+        if not hino:
             return
 
-        url = hino.link_video.strip()
-        try:
-            await ft.UrlLauncher().launch_url(url)
-        except Exception:
-            try:
-                await page.launch_url(url)
-            except Exception:
-                self._show_snackbar(page, "Não foi possível abrir o link do YouTube.")
+        self.current_hino = hino
 
+        historico_task = self.historico_repository.add_acesso(hino_id)
+        metadados_task = self.hino_repository.get_metadados_relacionados(hino_id)
+        favorito_task = self.favorito_repository.is_favorito(hino_id)
 
-    def _show_accessibility_modal(self, page: ft.Page) -> None:
-        self.font_size_text = ft.Text(f"{self.font_size}pt", weight=ft.FontWeight.BOLD)
-
-        font_radio_group = ft.RadioGroup(
-            content=ft.Column(
-                controls=[
-                    ft.Radio(value=DEFAULT_FONT_FAMILY, label=f"{DEFAULT_FONT_FAMILY} (Sans-Serif)"),
-                    ft.Radio(
-                        value=TIMES_NEW_ROMAN_FONT_FAMILY,
-                        label=f"Serifada ({TIMES_NEW_ROMAN_FONT_FAMILY})",
-                    ),
-                    ft.Radio(
-                        value=OPENDYSLEXIC_FONT_FAMILY,
-                        label=f"{OPENDYSLEXIC_FONT_FAMILY} (Acessível)",
-                    ),
-                ],
-                spacing=8,
-            ),
-            value=self.selected_font,
-            on_change=lambda e: self._set_font_family(page, e.control.value),
+        _, self.relacionados, self.is_fav = await asyncio.gather(
+            historico_task, metadados_task, favorito_task
         )
 
-        bs = ft.BottomSheet(
-            content=ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Row(
-                            controls=[
-                                ft.Text("Acessibilidade de Fonte", weight=ft.FontWeight.BOLD, size=18),
-                                ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()),
-                            ],
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        ),
-                        ft.Divider(),
-                        ft.Row(
-                            controls=[
-                                ft.Text("Tamanho da Letra:"),
-                                ft.IconButton(
-                                    ft.Icons.REMOVE_CIRCLE_OUTLINE,
-                                    on_click=lambda e: self._decrease_font(page),
-                                    tooltip="Diminuir",
-                                ),
-                                self.font_size_text,
-                                ft.IconButton(
-                                    ft.Icons.ADD_CIRCLE_OUTLINE,
-                                    on_click=lambda e: self._increase_font(page),
-                                    tooltip="Aumentar",
-                                ),
-                                ft.TextButton("Resetar", on_click=lambda e: self._reset_font(page)),
-                            ],
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            wrap=True,
-                            spacing=6,
-                            run_spacing=6,
-                        ),
-                        ft.Divider(),
-                        ft.Text("Família de Fonte:", weight=ft.FontWeight.BOLD, size=14),
-                        font_radio_group,
-                    ],
-                    tight=True,
-                    spacing=12,
-                    scroll=ft.ScrollMode.AUTO,
-                ),
-                padding=ft.Padding.all(20),
+        # 3. Atualiza textos e controles
+        if self.appbar_title:
+            self.appbar_title.value = f"Hino {hino.numero}"
+
+        if self.titulo_text:
+            self.titulo_text.value = hino.titulo
+
+        if self.letra_text:
+            self.letra_text.value = (
+                hino.letra if hino.letra else "Letra não disponível para este hino."
             )
-        )
-        page.show_dialog(bs)
 
+        if self.texto_base_container and self.texto_base_chip:
+            if hino.texto_base and hino.texto_base.strip():
+                self.texto_base_chip.label = ft.Text(hino.texto_base, size=12)
+                self.texto_base_chip.on_click = lambda e, ref=hino.texto_base: self._on_biblia_click(
+                    self.page, ref, from_info_modal=False, hino=hino
+                )
+                self.texto_base_container.visible = True
+            else:
+                self.texto_base_container.visible = False
 
+        self._update_nav_buttons()
+        self._update_fav_icon_state()
 
-    def _on_biblia_click(self, page: ft.Page, ref: str) -> None:
-        """Fecha o modal de informações e abre o modal de leitura bíblica."""
-        page.pop_dialog()
-        page.run_task(self._abrir_modal_leitura_biblica, page, ref)
+        has_youtube = bool(hino.link_video and hino.link_video.strip())
+        if self.youtube_btn:
+            self.youtube_btn.disabled = not has_youtube
+            self.youtube_btn.icon_color = ft.Colors.RED_400 if has_youtube else None
+            self.youtube_btn.tooltip = (
+                "Assistir no YouTube (Link Externo)"
+                if has_youtube
+                else "Link do YouTube indisponível"
+            )
+            self.youtube_btn.on_click = lambda e: self.page.run_task(
+                self._open_youtube_link, self.page, hino
+            )
 
-    async def _abrir_modal_leitura_biblica(self, page: ft.Page, referencia: str) -> None:
+        if self.scroll_column:
+            try:
+                res = self.scroll_column.scroll_to(offset=0, duration=0)
+                if asyncio.iscoroutine(res):
+                    await res
+            except Exception:
+                pass
+
+        # 4. Posiciona o novo conteúdo do lado de entrada sem animação
+        if self.content_container and self.page:
+            enter_offset = 0.25 if direction == "next" else -0.25
+            self.content_container.animate_offset = None
+            self.content_container.animate_opacity = None
+            self.content_container.offset = ft.Offset(enter_offset, 0)
+            self.content_container.opacity = 0
+            self.page.update()
+            await asyncio.sleep(0.02)
+
+            # 5. Anima o novo conteúdo entrando para o centro
+            self.content_container.animate_offset = ft.Animation(200, ft.AnimationCurve.DECELERATE)
+            self.content_container.animate_opacity = ft.Animation(180, ft.AnimationCurve.EASE_OUT)
+            self.content_container.offset = ft.Offset(0, 0)
+            self.content_container.opacity = 1.0
+            self.page.update()
+
+    def _on_biblia_click(
+        self,
+        page: ft.Page,
+        ref: str,
+        from_info_modal: bool = False,
+        hino: Optional[Hino] = None,
+    ) -> None:
+        """Manipula o clique em um chip bíblico, fechando modal aberto se houver e abrindo a leitura."""
+        try:
+            page.pop_dialog()
+        except Exception:
+            pass
+        if hasattr(page, "run_task"):
+            page.run_task(
+                self._abrir_modal_leitura_biblica,
+                page,
+                ref,
+                from_info_modal,
+                hino,
+            )
+        else:
+            asyncio.create_task(
+                self._abrir_modal_leitura_biblica(
+                    page,
+                    ref,
+                    from_info_modal=from_info_modal,
+                    hino=hino,
+                )
+            )
+
+    async def _abrir_modal_leitura_biblica(
+        self,
+        page: ft.Page,
+        referencia: str,
+        from_info_modal: bool = False,
+        hino: Optional[Hino] = None,
+    ) -> None:
         """
         Abre um modal responsivo e assíncrono (BottomSheet) para leitura da passagem bíblica informada.
         Exibe indicador de carregamento e depois os versículos formatados ou mensagem amigável de erro.
@@ -545,6 +553,14 @@ class HinoView:
             spacing=10,
         )
 
+        def _close_dialog(ev):
+            page.pop_dialog()
+            if from_info_modal:
+                self._show_info_modal(page, hino)
+
+        button_label = "Voltar para Informações" if from_info_modal else "Fechar"
+        button_icon = ft.Icons.ARROW_BACK if from_info_modal else ft.Icons.CLOSE
+
         modal_body = ft.Container(
             content=ft.Column(
                 controls=[
@@ -552,10 +568,10 @@ class HinoView:
                         controls=[
                             ft.Icon(ft.Icons.MENU_BOOK, color=ft.Colors.GREEN_400, size=22),
                             title_text,
-                            ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()),
                         ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        alignment=ft.MainAxisAlignment.START,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=10,
                     ),
                     ft.Divider(height=1),
                     ft.Container(
@@ -567,9 +583,9 @@ class HinoView:
                     ft.Row(
                         controls=[
                             ft.TextButton(
-                                "Fechar",
-                                icon=ft.Icons.CLOSE,
-                                on_click=lambda ev: page.pop_dialog(),
+                                button_label,
+                                icon=button_icon,
+                                on_click=_close_dialog,
                             ),
                         ],
                         alignment=ft.MainAxisAlignment.END,
@@ -660,7 +676,180 @@ class HinoView:
 
         page.update()
 
-    def _show_info_modal(self, page: ft.Page, hino: Hino) -> None:
+    def _build_not_found_view(self, page: ft.Page) -> ft.View:
+        async def _go_back(e):
+            if len(page.views) > 1:
+                page.views.pop()
+                top_view = page.views[-1]
+                await page.push_route(top_view.route)
+            else:
+                await page.push_route("/")
+
+        return ft.View(
+            route=f"/hino/{self.hino_id}",
+            appbar=ft.AppBar(
+                leading=ft.IconButton(
+                    ft.Icons.ARROW_BACK,
+                    on_click=_go_back,
+                ),
+                title=ft.Text("Hino não encontrado"),
+            ),
+            controls=[
+                ft.Container(
+                    content=ft.Text("O hino solicitado não foi encontrado."),
+                    alignment=ft.Alignment.CENTER,
+                    expand=True,
+                )
+            ],
+        )
+
+    def _update_font(self, page: ft.Page) -> None:
+        if self.letra_text:
+            self.letra_text.size = self.font_size
+            self.letra_text.font_family = FONT_FAMILY_MAP.get(self.selected_font)
+        if self.font_size_text:
+            self.font_size_text.value = f"{self.font_size}pt"
+        if page:
+            page.update()
+        # Persiste preferências de forma assíncrona (fire-and-forget)
+        self._save_pref_task = asyncio.create_task(self._save_preferences())
+
+    def _increase_font(self, page: ft.Page) -> None:
+        if self.font_size < 36:
+            self.font_size += 2
+            self.is_custom_font = True
+            self._update_font(page)
+
+    def _decrease_font(self, page: ft.Page) -> None:
+        if self.font_size > 12:
+            self.font_size -= 2
+            self.is_custom_font = True
+            self._update_font(page)
+
+    def _reset_font(self, page: ft.Page) -> None:
+        self.font_size = self._calculate_responsive_font_size(page)
+        self.selected_font = DEFAULT_FONT_FAMILY
+        self.is_custom_font = False
+        self._update_font(page)
+
+    def _set_font_family(self, page: ft.Page, font_family: str) -> None:
+        self.selected_font = font_family
+        self._update_font(page)
+
+    def _update_fav_icon_state(self) -> None:
+        if self.fav_icon:
+            self.fav_icon.icon = ft.Icons.FAVORITE if self.is_fav else ft.Icons.FAVORITE_BORDER
+            self.fav_icon.icon_color = ft.Colors.RED_400 if self.is_fav else None
+            self.fav_icon.tooltip = "Desfavoritar" if self.is_fav else "Favoritar"
+
+    async def _toggle_favorito(self, page: ft.Page, hino: Optional[Hino] = None) -> None:
+        target_hino = hino or self.current_hino
+        if not target_hino:
+            return
+        if self.is_fav:
+            await self.favorito_repository.remove_favorito(self.hino_id)
+            self.is_fav = False
+            msg = f"Hino {target_hino.numero} removido dos favoritos"
+        else:
+            await self.favorito_repository.add_favorito(self.hino_id)
+            self.is_fav = True
+            msg = f"Hino {target_hino.numero} adicionado aos favoritos!"
+
+        self._update_fav_icon_state()
+        self._show_snackbar(page, msg)
+
+    async def _open_youtube_link(self, page: ft.Page, hino: Optional[Hino] = None) -> None:
+        """Abre o link externo do YouTube no navegador ou app nativo."""
+        target_hino = hino or self.current_hino
+        if not target_hino or not target_hino.link_video or not target_hino.link_video.strip():
+            self._show_snackbar(page, "Este hino não possui link do YouTube cadastrado.")
+            return
+
+        url = target_hino.link_video.strip()
+        try:
+            await ft.UrlLauncher().launch_url(url)
+        except Exception:
+            try:
+                await page.launch_url(url)
+            except Exception:
+                self._show_snackbar(page, "Não foi possível abrir o link do YouTube.")
+
+
+    def _show_accessibility_modal(self, page: ft.Page) -> None:
+        self.font_size_text = ft.Text(f"{self.font_size}pt", weight=ft.FontWeight.BOLD)
+
+        font_radio_group = ft.RadioGroup(
+            content=ft.Column(
+                controls=[
+                    ft.Radio(value=DEFAULT_FONT_FAMILY, label=f"{DEFAULT_FONT_FAMILY} (Sans-Serif)"),
+                    ft.Radio(
+                        value=TIMES_NEW_ROMAN_FONT_FAMILY,
+                        label=f"Serifada ({TIMES_NEW_ROMAN_FONT_FAMILY})",
+                    ),
+                    ft.Radio(
+                        value=OPENDYSLEXIC_FONT_FAMILY,
+                        label=f"{OPENDYSLEXIC_FONT_FAMILY} (Acessível)",
+                    ),
+                ],
+                spacing=8,
+            ),
+            value=self.selected_font,
+            on_change=lambda e: self._set_font_family(page, e.control.value),
+        )
+
+        bs = ft.BottomSheet(
+            content=ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Row(
+                            controls=[
+                                ft.Text("Acessibilidade de Fonte", weight=ft.FontWeight.BOLD, size=18),
+                                ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        ft.Divider(),
+                        ft.Row(
+                            controls=[
+                                ft.Text("Tamanho da Letra:"),
+                                ft.IconButton(
+                                    ft.Icons.REMOVE_CIRCLE_OUTLINE,
+                                    on_click=lambda e: self._decrease_font(page),
+                                    tooltip="Diminuir",
+                                ),
+                                self.font_size_text,
+                                ft.IconButton(
+                                    ft.Icons.ADD_CIRCLE_OUTLINE,
+                                    on_click=lambda e: self._increase_font(page),
+                                    tooltip="Aumentar",
+                                ),
+                                ft.TextButton("Resetar", on_click=lambda e: self._reset_font(page)),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            wrap=True,
+                            spacing=6,
+                            run_spacing=6,
+                        ),
+                        ft.Divider(),
+                        ft.Text("Família de Fonte:", weight=ft.FontWeight.BOLD, size=14),
+                        font_radio_group,
+                    ],
+                    tight=True,
+                    spacing=12,
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+                padding=ft.Padding.all(20),
+            )
+        )
+        page.show_dialog(bs)
+
+
+
+    def _show_info_modal(self, page: ft.Page, hino: Optional[Hino] = None) -> None:
+        target_hino = hino or self.current_hino
+        if not target_hino:
+            return
+
         async def _navigate_search(term: str):
             """Fecha o modal e navega para Home com busca FTS pelo termo."""
             page.pop_dialog()
@@ -678,16 +867,15 @@ class HinoView:
         ]
 
         metadata = []
-        if hino.autor_letra and hino.autor_musica and hino.autor_letra == hino.autor_musica:
-            metadata.append(("Letra e Música:", hino.autor_letra))
+        if target_hino.autor_letra and target_hino.autor_musica and target_hino.autor_letra == target_hino.autor_musica:
+            metadata.append(("Letra e Música:", target_hino.autor_letra))
         else:
-            if hino.autor_letra:
-                metadata.append(("Autor da Letra:", hino.autor_letra))
-            if hino.autor_musica:
-                metadata.append(("Autor da Música:", hino.autor_musica))
-            if not hino.autor_letra and not hino.autor_musica and hino.autores:
-                metadata.append(("Autores:", hino.autores))
-
+            if target_hino.autor_letra:
+                metadata.append(("Autor da Letra:", target_hino.autor_letra))
+            if target_hino.autor_musica:
+                metadata.append(("Autor da Música:", target_hino.autor_musica))
+            if not target_hino.autor_letra and not target_hino.autor_musica and target_hino.autores:
+                metadata.append(("Autores:", target_hino.autores))
         for label, val in metadata:
             if val and val.strip():
                 info_items.append(
@@ -701,17 +889,19 @@ class HinoView:
                 )
 
         # Texto Base Bíblico como chip clicável para leitura direta
-        if hino.texto_base and hino.texto_base.strip():
+        if target_hino.texto_base and target_hino.texto_base.strip():
             info_items.append(
                 ft.Column(
                     controls=[
                         ft.Text("Texto Base Bíblico:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.BLUE_200),
                         ft.Chip(
-                            label=ft.Text(hino.texto_base, size=12),
+                            label=ft.Text(target_hino.texto_base, size=12),
                             leading=ft.Icon(ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400),
                             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                             tooltip="Ler passagem bíblica",
-                            on_click=lambda e, ref=hino.texto_base: self._on_biblia_click(page, ref),
+                            on_click=lambda e, ref=target_hino.texto_base: self._on_biblia_click(
+                                page, ref, from_info_modal=True, hino=target_hino
+                            ),
                         ),
                     ],
                     spacing=4,
@@ -720,22 +910,22 @@ class HinoView:
 
         # Categoria e Subcategoria como chips clicáveis
         cat_chips: list[ft.Control] = []
-        if hino.categoria and hino.categoria.strip():
+        if target_hino.categoria and target_hino.categoria.strip():
             cat_chips.append(
                 ft.Chip(
-                    label=ft.Text(hino.categoria, size=12),
+                    label=ft.Text(target_hino.categoria, size=12),
                     leading=ft.Icon(ft.Icons.FOLDER_OUTLINED, size=16, color=ft.Colors.BLUE_400),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    on_click=lambda e, c=hino.categoria: asyncio.create_task(_navigate_search(c)),
+                    on_click=lambda e, c=target_hino.categoria: asyncio.create_task(_navigate_search(c)),
                 )
             )
-        if hino.subcategoria and hino.subcategoria.strip():
+        if target_hino.subcategoria and target_hino.subcategoria.strip():
             cat_chips.append(
                 ft.Chip(
-                    label=ft.Text(hino.subcategoria, size=12),
+                    label=ft.Text(target_hino.subcategoria, size=12),
                     leading=ft.Icon(ft.Icons.FOLDER_SPECIAL_OUTLINED, size=16, color=ft.Colors.BLUE_300),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    on_click=lambda e, sc=hino.subcategoria: asyncio.create_task(_navigate_search(sc)),
+                    on_click=lambda e, sc=target_hino.subcategoria: asyncio.create_task(_navigate_search(sc)),
                 )
             )
         if cat_chips:
@@ -780,7 +970,9 @@ class HinoView:
                     leading=ft.Icon(ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                     tooltip="Ler passagem bíblica",
-                    on_click=lambda e, ref=tb: self._on_biblia_click(page, ref),
+                    on_click=lambda e, ref=tb: self._on_biblia_click(
+                        page, ref, from_info_modal=True, hino=target_hino
+                    ),
                 )
                 for tb in textos_biblicos
             ]

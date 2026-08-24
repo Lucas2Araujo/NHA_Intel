@@ -74,7 +74,7 @@ jobs:
 
       - name: Build Android Split APKs via Flet
         run: |
-          flet build apk --split-per-abi -v
+          flet build apk --build-version "${{ steps.tag_version.outputs.new_version }}" --build-number ${{ github.run_number }} --split-per-abi -v
 
       - name: Organize and Rename Split APKs
         id: organize_apks
@@ -115,8 +115,26 @@ jobs:
             done
           fi
 
-          echo "Arquivos finais preparados para a Release:"
+          echo "Arquivos finais preparados para assinatura:"
           ls -la release_apks/
+
+      - name: Sign APKs with Android Keystore
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.jks
+          BUILD_TOOLS=$(find $ANDROID_HOME/build-tools -mindepth 1 -maxdepth 1 | sort -V | tail -n 1)
+
+          for apk in release_apks/*.apk; do
+            echo "Assinando $apk..."
+            $BUILD_TOOLS/apksigner sign \
+              --ks release.jks \
+              --ks-key-alias "${{ secrets.ANDROID_KEY_ALIAS }}" \
+              --ks-pass pass:"${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+              --key-pass pass:"${{ secrets.ANDROID_KEY_PASSWORD }}" \
+              "$apk"
+          done
+
+          rm -f release.jks
+          echo "Todos os APKs foram assinados com sucesso!"
 
       - name: Upload Android APK Artifacts
         uses: actions/upload-artifact@v4

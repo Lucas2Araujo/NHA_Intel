@@ -2,7 +2,6 @@ import os
 import shutil
 import asyncio
 from pathlib import Path
-from collections import OrderedDict
 import flet as ft
 
 # Registrar plugins do Flet 0.23+ globalmente na raiz
@@ -19,17 +18,17 @@ from src.repositories.culto_repository import CultoRepository
 from src.repositories.biblia_repository import BibliaRepository
 from src.services.media_service import MediaService
 from src.services.agente_service import AgenteService
+from src.services.updater_service import UpdaterService
 from src.views.home_view import HomeView
 from src.views.hino_view import HinoView
 from src.views.agente_view import AgenteView
 from src.views.download_manager_view import DownloadManagerView
+from src.views.update_dialog import show_update_dialog
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
     APP_VERSION = "0.5.0"
 
-# Tamanho máximo do cache LRU para views de hinos
-_HINO_VIEW_CACHE_MAX = 10
 ROUTE_AGENTE = "/agente"
 ROUTE_DOWNLOADS = "/downloads"
 
@@ -60,6 +59,15 @@ def _setup_assets_and_theme(page: ft.Page) -> None:
         "Times New Roman": "Times New Roman, serif",
     }
     page.theme_mode = ft.ThemeMode.SYSTEM
+    page.theme = ft.Theme(
+        page_transitions=ft.PageTransitionsTheme(
+            android=ft.PageTransitionTheme.CUPERTINO,
+            ios=ft.PageTransitionTheme.CUPERTINO,
+            linux=ft.PageTransitionTheme.CUPERTINO,
+            macos=ft.PageTransitionTheme.CUPERTINO,
+            windows=ft.PageTransitionTheme.CUPERTINO,
+        )
+    )
 
 
 def _copy_icon_if_needed(root_icon: Path, asset_icon: Path) -> None:
@@ -97,22 +105,13 @@ def _parse_route_query(route: str) -> tuple[str, str]:
     return route_base, initial_search
 
 
-def _update_hino_view_cache(
-    hino_view_cache: OrderedDict[str, ft.View], route_key: str, built_view: ft.View
-) -> None:
-    """Mantém o cache LRU de views de hinos dentro do limite máximo."""
-    hino_view_cache[route_key] = built_view
-    hino_view_cache.move_to_end(route_key)
-    while len(hino_view_cache) > _HINO_VIEW_CACHE_MAX:
-        hino_view_cache.popitem(last=False)
-
-
 async def _render_home_route(
     page: ft.Page,
     route_base: str,
     initial_search: str,
     view_cache: Dict[str, ft.View],
     home_view_instance: HomeView,
+    target_views: List[ft.View],
 ) -> None:
     """Renderiza a rota principal (Home)."""
     coming_from_hino = route_base and not route_base.startswith("/hino/")
@@ -120,31 +119,33 @@ async def _render_home_route(
         view_cache["/"] = await home_view_instance.build(
             page, initial_search=initial_search
         )
-    page.views.append(view_cache["/"])
+    target_views.append(view_cache["/"])
 
 
 def _render_agente_route(
     page: ft.Page,
     view_cache: Dict[str, ft.View],
     agente_view_instance: AgenteView,
+    target_views: List[ft.View],
 ) -> None:
     """Renderiza a rota do Agente Organizador (/agente)."""
     if page.route == ROUTE_AGENTE:
         if ROUTE_AGENTE not in view_cache:
             view_cache[ROUTE_AGENTE] = agente_view_instance.build(page)
-        page.views.append(view_cache[ROUTE_AGENTE])
+        target_views.append(view_cache[ROUTE_AGENTE])
 
 
 def _render_downloads_route(
     page: ft.Page,
     view_cache: Dict[str, ft.View],
     download_manager_instance: DownloadManagerView,
+    target_views: List[ft.View],
 ) -> None:
     """Renderiza a rota do Gerenciador de Downloads (/downloads)."""
     if page.route == ROUTE_DOWNLOADS:
         if ROUTE_DOWNLOADS not in view_cache:
             view_cache[ROUTE_DOWNLOADS] = download_manager_instance.build(page)
-        page.views.append(view_cache[ROUTE_DOWNLOADS])
+        target_views.append(view_cache[ROUTE_DOWNLOADS])
 
 
 async def _render_hino_route(
@@ -154,15 +155,14 @@ async def _render_hino_route(
     historico_repository: HistoricoRepository,
     media_service: MediaService,
     biblia_repository: BibliaRepository,
-    hino_view_cache: OrderedDict[str, ft.View],
     hino_ids_ordered: List[int],
+    target_views: List[ft.View],
 ) -> None:
     """Renderiza a rota detalhada do hino (/hino/{id})."""
     if not (page.route and page.route.startswith("/hino/")):
         return
     try:
         hino_id = int(page.route.split("/")[-1])
-        route_key = f"/hino/{hino_id}"
 
         await _get_hino_ids(hino_repository, hino_ids_ordered)
 
@@ -176,9 +176,22 @@ async def _render_hino_route(
             biblia_repository=biblia_repository,
         )
         built_view = await hino_view_instance.build(page)
-        _update_hino_view_cache(hino_view_cache, route_key, built_view)
-        page.views.append(built_view)
+        target_views.append(built_view)
     except ValueError:
+        pass
+
+
+async def _check_updates_background(page: ft.Page, updater_service: UpdaterService):
+    """Verifica atualizações em segundo plano sem bloquear a inicialização do app."""
+    try:
+        # Aguarda a renderização inicial da UI
+        await asyncio.sleep(1.5)
+        update_info = await updater_service.check_for_updates()
+        if update_info.get("update_available") and (
+            update_info.get("download_url") or update_info.get("html_url")
+        ):
+            show_update_dialog(page, update_info, updater_service)
+    except Exception:
         pass
 
 
@@ -200,30 +213,33 @@ async def main(page: ft.Page):
 
     media_service = MediaService(download_dir="downloads")
     agente_service = AgenteService(hino_repository)
+    updater_service = UpdaterService()
 
     view_cache: Dict[str, ft.View] = {}
-    hino_view_cache: OrderedDict[str, ft.View] = OrderedDict()
 
     home_view_instance = HomeView(
-        hino_repository, favorito_repository, historico_repository
+        hino_repository,
+        favorito_repository,
+        historico_repository,
+        updater_service=updater_service,
     )
     agente_view_instance = AgenteView(agente_service, culto_repository)
     download_manager_instance = DownloadManagerView(hino_repository, media_service)
     hino_ids_ordered: List[int] = []
 
     async def route_change(e=None):
-        page.views.clear()
-
         route = page.route or "/"
         route_base, initial_search = _parse_route_query(route)
         if "?" in route:
             page.route = route_base
 
+        new_views: List[ft.View] = []
+
         await _render_home_route(
-            page, route_base, initial_search, view_cache, home_view_instance
+            page, route_base, initial_search, view_cache, home_view_instance, new_views
         )
-        _render_agente_route(page, view_cache, agente_view_instance)
-        _render_downloads_route(page, view_cache, download_manager_instance)
+        _render_agente_route(page, view_cache, agente_view_instance, new_views)
+        _render_downloads_route(page, view_cache, download_manager_instance, new_views)
         await _render_hino_route(
             page,
             hino_repository,
@@ -231,10 +247,12 @@ async def main(page: ft.Page):
             historico_repository,
             media_service,
             biblia_repository,
-            hino_view_cache,
             hino_ids_ordered,
+            new_views,
         )
 
+        page.views.clear()
+        page.views.extend(new_views)
         page.update()
 
     async def view_pop(e: ft.ViewPopEvent):
@@ -255,6 +273,9 @@ async def main(page: ft.Page):
         page.route = "/"
 
     await route_change(None)
+
+    # Dispara a verificação assíncrona de atualizações em segundo plano
+    asyncio.create_task(_check_updates_background(page, updater_service))
 
 
 if __name__ == "__main__":

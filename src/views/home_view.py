@@ -7,6 +7,8 @@ from src.repositories.hino_repository import HinoRepository
 from src.repositories.favorito_repository import FavoritoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.models.hino import Hino
+from src.services.updater_service import UpdaterService
+from src.views.update_dialog import show_update_dialog
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
@@ -68,10 +70,12 @@ class HomeView:
         hino_repository: HinoRepository,
         favorito_repository: FavoritoRepository,
         historico_repository: HistoricoRepository,
+        updater_service: Optional[UpdaterService] = None,
     ):
         self.hino_repository = hino_repository
         self.favorito_repository = favorito_repository
         self.historico_repository = historico_repository
+        self.updater_service = updater_service or UpdaterService()
         self._search_task: Optional[asyncio.Task] = None
         self.current_filter: str = "todos"
         self.current_search: str = ""
@@ -245,6 +249,20 @@ class HomeView:
         if self.page:
             await self.page.push_route(route_path)
 
+    async def _open_url(self, url: str):
+        """Abre uma URL externa no navegador padrão ou app nativo."""
+        try:
+            if hasattr(ft, "UrlLauncher"):
+                await ft.UrlLauncher().launch_url(url)
+            elif self.page and hasattr(self.page, "launch_url"):
+                await self.page.launch_url(url)
+        except Exception:
+            if self.page and hasattr(self.page, "launch_url"):
+                try:
+                    await self.page.launch_url(url)
+                except Exception:
+                    pass
+
     def _show_about_dialog(self, e=None):
         if not self.page:
             return
@@ -254,33 +272,74 @@ class HomeView:
                     controls=[
                         ft.Row(
                             controls=[
-                                ft.Text("Sobre o Aplicativo", weight=ft.FontWeight.BOLD, size=18),
-                                ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: self.page.pop_dialog() if self.page else None),
+                                ft.Row(
+                                    controls=[
+                                        ft.Icon(ft.Icons.INFO_OUTLINE, size=20, color=ft.Colors.PRIMARY),
+                                        ft.Text("Sobre o Aplicativo", weight=ft.FontWeight.BOLD, size=18),
+                                    ],
+                                    spacing=8,
+                                ),
+                                ft.IconButton(
+                                    ft.Icons.CLOSE,
+                                    tooltip="Fechar",
+                                    on_click=lambda ev: self.page.pop_dialog() if self.page else None,
+                                ),
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         ),
-                        ft.Divider(),
+                        ft.Divider(height=1),
                         ft.Row(
                             controls=[
-                                ft.Icon(ft.Icons.BOOK_ROUNDED, size=36, color=ft.Colors.GREEN_300),
+                                ft.Container(
+                                    content=ft.Icon(ft.Icons.LIBRARY_MUSIC, size=30, color=ft.Colors.PRIMARY),
+                                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                                    border_radius=10,
+                                    padding=ft.Padding.all(8),
+                                ),
                                 ft.Column(
                                     controls=[
                                         ft.Text("Hinário Inteligente", weight=ft.FontWeight.BOLD, size=16),
-                                        ft.Text(f"Versão {APP_VERSION}", size=13, color=ft.Colors.PURPLE_300, weight=ft.FontWeight.BOLD),
+                                        ft.Text(f"Versão {APP_VERSION}", size=12, color=ft.Colors.PRIMARY, weight=ft.FontWeight.W_600),
                                     ],
                                     spacing=2,
                                 ),
                             ],
-                            spacing=15,
+                            spacing=12,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
                         ),
-                        ft.Text(
-                            "Aplicação completa para o Hinário Adventista (600 hinos).\n"
-                            "Oferece busca full-text (FTS5) na letra e temas, favoritos, histórico, "
-                            "reprodução e downloads de áudio offline, acessibilidade de leitura "
-                            "(OpenDyslexic), exploração por categorias/temas e Agente Organizador "
-                            "de Cultos por blocos litúrgicos.",
-                            size=13,
-                            color=ft.Colors.BLACK,
+                        ft.Container(
+                            content=ft.Text(
+                                "Aplicação moderna e completa para o Hinário Adventista (601 hinos).\n"
+                                "Oferece busca inteligente e rápida (letra, temas e categorias), favoritos, "
+                                "histórico de acessos, reprodução e downloads de áudio offline, recursos de acessibilidade "
+                                "tipográfica (incluindo fonte OpenDyslexic), referências bíblicas cruzadas "
+                                "e o Agente Organizador de Cultos por blocos litúrgicos.",
+                                size=13,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                            border_radius=10,
+                            padding=ft.Padding.all(12),
+                        ),
+                        ft.Row(
+                            controls=[
+                                ft.OutlinedButton(
+                                    "GitHub do Projeto",
+                                    icon=ft.Icons.CODE,
+                                    url="https://github.com/Lucas2Araujo/NHA_Intel",
+                                    on_click=lambda ev: asyncio.create_task(
+                                        self._open_url("https://github.com/Lucas2Araujo/NHA_Intel")
+                                    ),
+                                    expand=True,
+                                ),
+                                ft.FilledTonalButton(
+                                    "Verificar Atualizações",
+                                    icon=ft.Icons.SYSTEM_UPDATE_ALT,
+                                    on_click=lambda ev: asyncio.create_task(self._check_updates_manual()),
+                                    expand=True,
+                                ),
+                            ],
+                            spacing=10,
                         ),
                     ],
                     tight=True,
@@ -290,6 +349,43 @@ class HomeView:
             )
         )
         self.page.show_dialog(bs)
+
+    async def _check_updates_manual(self):
+        """Verifica manualmente por atualizações a partir do modal Sobre."""
+        if not self.page or not self.updater_service:
+            return
+        
+        snack = ft.SnackBar(ft.Text("Buscando atualizações no GitHub..."), duration=2000)
+        try:
+            if hasattr(self.page, "open"):
+                self.page.open(snack)
+            elif hasattr(self.page, "show_snack_bar"):
+                self.page.show_snack_bar(snack)
+        except Exception:
+            pass
+
+        update_info = await self.updater_service.check_for_updates()
+        if update_info.get("update_available"):
+            try:
+                self.page.pop_dialog()
+            except Exception:
+                pass
+            show_update_dialog(self.page, update_info, self.updater_service)
+        else:
+            err = update_info.get("error")
+            msg = (
+                f"Você já está na versão mais recente (v{APP_VERSION})!"
+                if not err
+                else f"Não foi possível verificar atualizações: {err}"
+            )
+            res_snack = ft.SnackBar(ft.Text(msg), duration=3000)
+            try:
+                if hasattr(self.page, "open"):
+                    self.page.open(res_snack)
+                elif hasattr(self.page, "show_snack_bar"):
+                    self.page.show_snack_bar(res_snack)
+            except Exception:
+                pass
 
     def _create_empty_state_control(self) -> ft.Container:
         if self.current_filter == "favoritos":

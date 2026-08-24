@@ -303,4 +303,49 @@ async def test_home_view_category_search_and_tab_switch(in_memory_db):
     assert home_view_obj.active_category is None
 
 
+@pytest.mark.asyncio
+async def test_home_view_show_about_dialog(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
 
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo)
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.show_dialog = MagicMock()
+
+    await home_view_obj.build(mock_page)
+
+    home_view_obj._show_about_dialog()
+    mock_page.show_dialog.assert_called_once()
+    bs = mock_page.show_dialog.call_args[0][0]
+    assert isinstance(bs, ft.BottomSheet)
+    assert bs.content is not None
+
+    # Verifica se os componentes do diálogo estão presentes
+    dialog_col = bs.content.content
+    assert isinstance(dialog_col, ft.Column)
+    
+    # Encontra o container com o botão do GitHub
+    github_button_found = False
+    for control in dialog_col.controls:
+        if isinstance(control, ft.Row):
+            for sub in control.controls:
+                if isinstance(sub, ft.OutlinedButton) and "github.com/Lucas2Araujo/NHA_Intel" in (sub.url or ""):
+                    github_button_found = True
+    assert github_button_found is True
+
+
+@pytest.mark.asyncio
+async def test_home_view_open_url(in_memory_db):
+    from unittest.mock import patch, AsyncMock
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo)
+    mock_page = MagicMock(spec=ft.Page)
+    await home_view_obj.build(mock_page)
+
+    with patch("flet.UrlLauncher.launch_url", new_callable=AsyncMock) as mock_launch:
+        await home_view_obj._open_url("https://github.com/Lucas2Araujo/NHA_Intel")
+        mock_launch.assert_called_once_with("https://github.com/Lucas2Araujo/NHA_Intel")

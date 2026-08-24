@@ -159,13 +159,38 @@ async def test_hino_view_abrir_modal_leitura_biblica_success(in_memory_db):
     mock_page = MagicMock(spec=ft.Page)
     mock_page.height = 800
 
-    await view_obj._abrir_modal_leitura_biblica(mock_page, "João 3:16")
+    hino = await hino_repo.get_by_id(1)
+
+    # Teste 1: Aberto direto da tela do hino (from_info_modal=False)
+    await view_obj._abrir_modal_leitura_biblica(mock_page, "João 3:16", from_info_modal=False, hino=hino)
 
     mock_page.show_dialog.assert_called_once()
     dialog_arg = mock_page.show_dialog.call_args[0][0]
     assert isinstance(dialog_arg, ft.BottomSheet)
     mock_biblia_repo.buscar_passagem.assert_called_once_with("João 3:16")
-    mock_page.update.assert_called()
+    
+    # Verifica que não há botão de fechar no topo (cabeçalho)
+    header_row = dialog_arg.content.content.controls[0]
+    assert not any(isinstance(ctrl, ft.IconButton) and ctrl.icon == ft.Icons.CLOSE for ctrl in header_row.controls)
+    
+    # Verifica que o botão do rodapé é "Fechar"
+    footer_row = dialog_arg.content.content.controls[-1]
+    assert isinstance(footer_row.controls[0], ft.TextButton)
+    assert footer_row.controls[0].content == "Fechar"
+
+    # Teste 2: Aberto a partir do modal de informações (from_info_modal=True)
+    mock_page.show_dialog.reset_mock()
+    with patch.object(view_obj, "_show_info_modal") as mock_show_info:
+        await view_obj._abrir_modal_leitura_biblica(mock_page, "João 3:16", from_info_modal=True, hino=hino)
+        dialog_arg_info = mock_page.show_dialog.call_args[0][0]
+        footer_btn = dialog_arg_info.content.content.controls[-1].controls[0]
+        assert footer_btn.content == "Voltar para Informações"
+        assert footer_btn.icon == ft.Icons.ARROW_BACK
+        
+        # Dispara clique no botão voltar
+        footer_btn.on_click(MagicMock())
+        mock_page.pop_dialog.assert_called()
+        mock_show_info.assert_called_once_with(mock_page, hino)
 
 
 @pytest.mark.asyncio
@@ -209,11 +234,11 @@ async def test_hino_view_info_modal_biblia_chips(in_memory_db):
     view_obj._show_info_modal(mock_page, hino)
     mock_page.show_dialog.assert_called()
 
-    # Testa _on_biblia_click
-    view_obj._on_biblia_click(mock_page, "Apocalipse 4:8")
+    # Testa _on_biblia_click passando from_info_modal=True
+    view_obj._on_biblia_click(mock_page, "Apocalipse 4:8", from_info_modal=True, hino=hino)
     mock_page.pop_dialog.assert_called_once()
     mock_page.run_task.assert_called_once_with(
-        view_obj._abrir_modal_leitura_biblica, mock_page, "Apocalipse 4:8"
+        view_obj._abrir_modal_leitura_biblica, mock_page, "Apocalipse 4:8", True, hino
     )
 
     # Testa com referência vazia
@@ -223,7 +248,40 @@ async def test_hino_view_info_modal_biblia_chips(in_memory_db):
     assert "inválida" in view_obj._snackbar.content.value.lower()
 
 
+@pytest.mark.asyncio
+async def test_hino_view_nav_buttons_directional_load(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
 
+    view_obj = HinoView(1, hino_repo, fav_repo, hist_repo, hino_ids_list=[1, 2, 3])
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.route = "/hino/1"
+    
+    await view_obj.build(mock_page)
 
+    prev_btn = view_obj.prev_btn
+    next_btn = view_obj.next_btn
+    assert prev_btn.disabled is True
+    assert next_btn.disabled is False
 
+    # Avança para o hino 2 (direction="next")
+    await next_btn.on_click(MagicMock())
+    assert view_obj.hino_id == 2
+    assert mock_page.route == "/hino/2"
+    assert view_obj.prev_btn.disabled is False
+    assert view_obj.next_btn.disabled is False
 
+    # Avança para o hino 3 (direction="next")
+    await next_btn.on_click(MagicMock())
+    assert view_obj.hino_id == 3
+    assert mock_page.route == "/hino/3"
+    assert view_obj.prev_btn.disabled is False
+    assert view_obj.next_btn.disabled is True
+
+    # Retorna para o hino 2 (direction="prev")
+    await prev_btn.on_click(MagicMock())
+    assert view_obj.hino_id == 2
+    assert mock_page.route == "/hino/2"
+    assert view_obj.prev_btn.disabled is False
+    assert view_obj.next_btn.disabled is False

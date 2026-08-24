@@ -7,8 +7,17 @@ description = "Hinário Adventista Inteligente — App completo com busca, favor
 assets_dir = "assets"
 icon = "icon.ico"
 
+[tool.flet.android]
+permissions = [
+    "android.permission.INTERNET",
+    "android.permission.REQUEST_INSTALL_PACKAGES",
+    "android.permission.READ_EXTERNAL_STORAGE",
+    "android.permission.WRITE_EXTERNAL_STORAGE",
+]
+
 [tool.pyright]
 extraPaths = ["."]
 venvPath = "."
 venv = ".venv"
+
 
