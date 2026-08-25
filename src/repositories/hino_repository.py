@@ -34,6 +34,42 @@ class HinoRepository:
             for row in rows
         ]
 
+    async def get_all_complete(self) -> List[Hino]:
+        """
+        Retorna todos os hinos com todos os campos completos em uma única consulta otimizada.
+        Elimina o problema de N+1 queries em processamento em lote.
+        """
+        conn = await self.db_connection.get_connection()
+        query = """
+            SELECT * 
+            FROM hino 
+            ORDER BY CAST(numero AS INTEGER) ASC, numero ASC;
+        """
+        async with conn.execute(query) as cursor:
+            rows = await cursor.fetchall()
+
+        hinos: List[Hino] = []
+        for row in rows:
+            keys = row.keys()
+            hinos.append(
+                Hino(
+                    id=row["id"],
+                    numero=str(row["numero"]),
+                    titulo=str(row["titulo"]),
+                    letra=row["letra"] if "letra" in keys else None,
+                    autor_letra=row["autor_letra"] if "autor_letra" in keys else None,
+                    autor_musica=row["autor_musica"] if "autor_musica" in keys else None,
+                    texto_base=row["texto_base"] if "texto_base" in keys else None,
+                    categoria=row["categoria"] if "categoria" in keys else None,
+                    subcategoria=row["subcategoria"] if "subcategoria" in keys else None,
+                    link_video=row["link_video"] if "link_video" in keys else None,
+                    letra_json=row["letra_json"] if "letra_json" in keys else None,
+                    autores=row["autores"] if "autores" in keys else None,
+                )
+            )
+        return hinos
+
+
     async def get_by_id(self, hino_id: int) -> Optional[Hino]:
         """
         Retorna um hino completo pelo ID único.

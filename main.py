@@ -1,7 +1,9 @@
 import os
 import shutil
 import asyncio
+import urllib.parse
 from pathlib import Path
+from typing import Dict, List, Optional
 import flet as ft
 
 # Registrar plugins do Flet 0.23+ globalmente na raiz
@@ -9,7 +11,7 @@ try:
     import flet_video
 except ImportError:
     pass
-from typing import Dict, List
+
 from src.database.connection import DatabaseConnection
 from src.repositories.hino_repository import HinoRepository
 from src.repositories.favorito_repository import FavoritoRepository
@@ -19,11 +21,13 @@ from src.repositories.biblia_repository import BibliaRepository
 from src.services.media_service import MediaService
 from src.services.agente_service import AgenteService
 from src.services.updater_service import UpdaterService
+from src.services.theme_service import ThemeService
 from src.views.home_view import HomeView
 from src.views.hino_view import HinoView
 from src.views.agente_view import AgenteView
 from src.views.download_manager_view import DownloadManagerView
 from src.views.update_dialog import show_update_dialog
+
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
@@ -32,6 +36,8 @@ except ImportError:
 ROUTE_AGENTE = "/agente"
 ROUTE_DOWNLOADS = "/downloads"
 
+_background_tasks: set[asyncio.Task] = set()
+
 
 async def _get_hino_ids(hino_repository: HinoRepository, hino_ids_ordered: List[int]) -> List[int]:
     """Carrega a lista ordenada de IDs de hinos (uma vez, lazy)."""
@@ -39,44 +45,6 @@ async def _get_hino_ids(hino_repository: HinoRepository, hino_ids_ordered: List[
         all_hinos = await hino_repository.get_all()
         hino_ids_ordered.extend([h.id for h in all_hinos if h.id is not None])
     return hino_ids_ordered
-
-
-def _setup_assets_and_theme(page: ft.Page) -> None:
-    """Configura título, ícones, fontes e tema da aplicação."""
-    page.title = f"Hinário Inteligente v{APP_VERSION}"
-
-    root_dir = Path(__file__).resolve().parent
-    assets_dir = root_dir / "assets"
-    assets_dir.mkdir(exist_ok=True)
-
-    root_icon = root_dir / "icon.ico"
-    asset_icon = assets_dir / "icon.ico"
-    _copy_icon_if_needed(root_icon, asset_icon)
-    _set_window_icon_if_exists(page, asset_icon)
-
-    page.fonts = {
-        "OpenDyslexic": "fonts/OpenDyslexic-Regular.otf",
-        "Times New Roman": "Times New Roman, serif",
-    }
-    page.theme_mode = ft.ThemeMode.SYSTEM
-    page.theme = ft.Theme(
-        page_transitions=ft.PageTransitionsTheme(
-            android=ft.PageTransitionTheme.CUPERTINO,
-            ios=ft.PageTransitionTheme.CUPERTINO,
-            linux=ft.PageTransitionTheme.CUPERTINO,
-            macos=ft.PageTransitionTheme.CUPERTINO,
-            windows=ft.PageTransitionTheme.CUPERTINO,
-        )
-    )
-
-
-def _copy_icon_if_needed(root_icon: Path, asset_icon: Path) -> None:
-    """Copia o ícone raiz para assets se não existir."""
-    if root_icon.exists() and not asset_icon.exists():
-        try:
-            shutil.copy2(root_icon, asset_icon)
-        except Exception:
-            pass
 
 
 def _set_window_icon_if_exists(page: ft.Page, asset_icon: Path) -> None:
@@ -88,7 +56,81 @@ def _set_window_icon_if_exists(page: ft.Page, asset_icon: Path) -> None:
             pass
 
 
-import urllib.parse
+def _setup_assets_and_theme(page: ft.Page, theme_service: Optional[ThemeService] = None) -> None:
+    """Configura título, ícones, fontes e tema da aplicação."""
+    page.title = f"Hinário Inteligente v{APP_VERSION}"
+
+    root_dir = Path(__file__).resolve().parent
+    asset_icon = root_dir / "assets" / "icon.ico"
+    _set_window_icon_if_exists(page, asset_icon)
+
+    if theme_service:
+        theme_service.apply_theme(page)
+    else:
+        page.fonts = {
+            "OpenDyslexic": "fonts/OpenDyslexic-Regular.otf",
+            "Times New Roman": "Times New Roman, serif",
+        }
+        page.theme_mode = ft.ThemeMode.SYSTEM
+        page.theme = ft.Theme(
+            page_transitions=ft.PageTransitionsTheme(
+                android=ft.PageTransitionTheme.CUPERTINO,
+                ios=ft.PageTransitionTheme.CUPERTINO,
+                linux=ft.PageTransitionTheme.CUPERTINO,
+                macos=ft.PageTransitionTheme.CUPERTINO,
+                windows=ft.PageTransitionTheme.CUPERTINO,
+            )
+        )
+
+
+def _build_loading_view(progress_val: Optional[float] = None) -> ft.View:
+    """
+    Constrói a tela de loading/splash minimalista e adaptativa.
+    Exibe o ícone, título e uma barra de progresso suave completando-se da esquerda para a direita.
+    """
+    return ft.View(
+        route="/loading",
+        controls=[
+            ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Container(
+                            content=ft.Icon(
+                                ft.Icons.LIBRARY_MUSIC,
+                                size=48,
+                                color=ft.Colors.BLUE_400,
+                            ),
+                            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                            border_radius=16,
+                            padding=ft.Padding.all(16),
+                        ),
+                        ft.Text(
+                            "Hinário Inteligente",
+                            size=20,
+                            weight=ft.FontWeight.BOLD,
+                            text_align=ft.TextAlign.CENTER,
+                        ),
+                        ft.Container(
+                            content=ft.ProgressBar(
+                                value=progress_val,
+                                width=200,
+                                height=4,
+                                border_radius=2,
+                                color=ft.Colors.BLUE_400,
+                                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                            ),
+                            padding=ft.Padding.only(top=16),
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=12,
+                ),
+                alignment=ft.Alignment.CENTER,
+                expand=True,
+            )
+        ],
+    )
 
 
 def _parse_route_query(route: str) -> tuple[str, str]:
@@ -198,12 +240,23 @@ async def _check_updates_background(page: ft.Page, updater_service: UpdaterServi
 async def main(page: ft.Page):
     """
     Ponto de entrada assíncrono do aplicativo Hinário Inteligente em Flet (0.85+).
-    Inicializa a conexão aiosqlite, repositórios, serviços de mídia, Agente Organizador e roteamento.
+    Exibe imediatamente a tela de loading/splash adaptativa, inicializa as conexões
+    aiosqlite, restaura preferências (incluindo AMOLED) e carrega as views com fluidez.
     """
-    _setup_assets_and_theme(page)
-
     db_connection = DatabaseConnection(db_path="hinario.db")
     biblia_connection = DatabaseConnection(db_path="ARA.sqlite", read_only=True)
+
+    theme_service = ThemeService(db_connection)
+    _setup_assets_and_theme(page, theme_service)
+
+    # 1. Renderiza IMEDIATAMENTE a tela de loading minimalista (elimina tela branca em ARMv7)
+    page.views.clear()
+    page.views.append(_build_loading_view())
+    page.update()
+
+    # 2. Carrega preferências de tema (ex: Modo AMOLED) e aplica na página
+    await theme_service.load_preferences()
+    theme_service.apply_theme(page)
 
     hino_repository = HinoRepository(db_connection)
     favorito_repository = FavoritoRepository(db_connection)
@@ -222,6 +275,7 @@ async def main(page: ft.Page):
         favorito_repository,
         historico_repository,
         updater_service=updater_service,
+        theme_service=theme_service,
     )
     agente_view_instance = AgenteView(agente_service, culto_repository)
     download_manager_instance = DownloadManagerView(hino_repository, media_service)
@@ -269,13 +323,16 @@ async def main(page: ft.Page):
     page.on_route_change = route_change
     page.on_view_pop = view_pop
 
-    if not page.route:
+    if not page.route or page.route == "/loading":
         page.route = "/"
 
+    # 3. Transiciona suavemente para a rota inicial (HomeView)
     await route_change(None)
 
-    # Dispara a verificação assíncrona de atualizações em segundo plano
-    asyncio.create_task(_check_updates_background(page, updater_service))
+    # 4. Dispara a verificação assíncrona de atualizações em segundo plano
+    update_task = asyncio.create_task(_check_updates_background(page, updater_service))
+    _background_tasks.add(update_task)
+    update_task.add_done_callback(_background_tasks.discard)
 
 
 if __name__ == "__main__":

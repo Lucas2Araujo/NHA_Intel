@@ -1,25 +1,62 @@
-@startuml
+@startuml DCU1
+' ==============================================================================
+' Diagrama de Casos de Uso 1 (DCU1) — Navegação, Busca FTS5 & Agente Litúrgico
+' ==============================================================================
+
 left to right direction
 skinparam packageStyle rectangle
+skinparam roundcorner 6
+skinparam shadowing false
 
-actor "Usuário" as User
-
-rectangle "Módulo: Navegação e Agente Organizador" {
-  
-  ' Ações de Navegação
-  usecase "Pesquisar Hino\n(Nº, Nome, Letra)" as UC_Pesquisa
-  usecase "Acessar Favoritos e Recentes" as UC_Listas
-  usecase "Baixar Hinos em Lote" as UC_Lote
-  
-  ' Ações do Agente
-  usecase "Gerar Lista para Culto" as UC_GerarCulto
-  usecase "Definir Parâmetros\n(Tema e Qtd. Hinos)" as UC_Parametros
-  
-  User --> UC_Pesquisa
-  User --> UC_Listas
-  User --> UC_Lote
-  User --> UC_GerarCulto
-  
-  UC_GerarCulto ..> UC_Parametros : <<include>>
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #2B6CB0
+  FontName "Segoe UI, Arial, SansSerif"
+  FontSize 12
 }
+
+skinparam actor {
+  BackgroundColor #EDF2F7
+  BorderColor #2D3748
+  FontName "Segoe UI, Arial, SansSerif"
+}
+
+title <b>Diagrama de Casos de Uso (DCU 1)</b>\nNavegação, Busca FTS5, Filtros Temáticos & Agente Litúrgico
+
+actor "Usuário / Pastor" as User
+
+rectangle "Módulo: Navegação, Busca e Agente Organizador" {
+  
+  ' Ações de Navegação e Busca
+  usecase "Pesquisar Hinos via FTS5\n(Número, Título, Letra, Autor)" as UC_PesquisaFTS
+  usecase "Filtrar por Categorias & Temas\n(Chips Clicáveis)" as UC_FiltroChips
+  usecase "Acessar Lista de Favoritos" as UC_Favoritos
+  usecase "Acessar Histórico Recente" as UC_Historico
+  usecase "Acessar Gerenciador de Downloads" as UC_DownloadsManager
+  
+  ' Ações do Agente Litúrgico
+  usecase "Gerar Sugestão de Culto\n(Agente Inteligente)" as UC_GerarCulto
+  usecase "Definir Tema Pastoral & Quantidade de Hinos" as UC_Parametros
+  usecase "Organizar por Blocos Litúrgicos\n(Abertura, Oração, Mensagem, Encerramento)" as UC_Blocos
+  usecase "Salvar Ordem do Culto no SQLite" as UC_SalvarCulto
+  usecase "Consultar / Reproduzir Cultos Salvos" as UC_VerCultosSalvos
+  usecase "Excluir Culto Salvo" as UC_ExcluirCulto
+
+  ' Ligações do Usuário
+  User --> UC_PesquisaFTS
+  User --> UC_FiltroChips
+  User --> UC_Favoritos
+  User --> UC_Historico
+  User --> UC_DownloadsManager
+  User --> UC_GerarCulto
+  User --> UC_VerCultosSalvos
+
+  ' Relacionamentos <<include>> e <<extend>>
+  UC_GerarCulto ..> UC_Parametros : <<include>>
+  UC_GerarCulto ..> UC_Blocos : <<include>>
+  UC_SalvarCulto .left.> UC_GerarCulto : <<extend>>
+  UC_ExcluirCulto .up.> UC_VerCultosSalvos : <<extend>>
+  UC_FiltroChips .left.> UC_PesquisaFTS : <<extend>>
+}
+
 @enduml

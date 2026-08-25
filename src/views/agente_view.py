@@ -22,36 +22,55 @@ class AgenteView:
         self.current_tab: str = "novo"  # "novo" ou "salvos"
         self.num_hinos_value: int = 6  # valor padrão
 
+        # Componentes visuais e de controle
+        self.results_container: Optional[ft.Column] = None
+        self.prompt_input: Optional[ft.TextField] = None
+        self.save_button: Optional[ft.FilledButton] = None
+        self.generate_button: Optional[ft.FilledButton] = None
+        self.prompt_card: Optional[ft.Card] = None
+        self.num_hinos_label: Optional[ft.Text] = None
+        self.num_hinos_slider: Optional[ft.Slider] = None
+        self.example_chips: Optional[ft.Row] = None
+        self.tab_bar: Optional[ft.SegmentedButton] = None
+
     def build(self, page: ft.Page) -> ft.View:
         page.title = "Agente Organizador de Cultos - v0.2"
 
         self._init_controls(page)
 
+        scrollable_controls: List[ft.Control] = [
+            ctrl
+            for ctrl in (self.prompt_card, ft.Divider(height=1), self.results_container)
+            if ctrl is not None
+        ]
+
         scrollable_content = ft.Column(
-            controls=[
-                self.prompt_card,
-                ft.Divider(height=1),
-                self.results_container,
-            ],
+            controls=scrollable_controls,
             scroll=ft.ScrollMode.AUTO,
             expand=True,
             spacing=10,
         )
 
-        return ft.View(
-            route="/agente",
-            appbar=self._build_app_bar(page),
-            controls=[
+        view_controls: List[ft.Control] = []
+        if self.tab_bar:
+            view_controls.append(
                 ft.Container(
                     content=self.tab_bar,
                     padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-                ),
-                ft.Container(
-                    content=scrollable_content,
-                    expand=True,
-                    padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-                ),
-            ],
+                )
+            )
+        view_controls.append(
+            ft.Container(
+                content=scrollable_content,
+                expand=True,
+                padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+            )
+        )
+
+        return ft.View(
+            route="/agente",
+            appbar=self._build_app_bar(page),
+            controls=view_controls,
         )
 
     def _init_controls(self, page: ft.Page) -> None:
@@ -86,19 +105,21 @@ class AgenteView:
             spacing=12,
         )
 
-        self.save_button = ft.Button(
+        self.save_button = ft.FilledButton(
             "Salvar Lista de Culto",
             icon=ft.Icons.SAVE,
             visible=False,
             on_click=lambda e: page.run_task(self._salvar_lista, page),
         )
 
-        self.generate_button = ft.Button(
+        self.generate_button = ft.FilledButton(
             "Gerar Sugestão de Culto",
             icon=ft.Icons.AUTO_AWESOME,
             on_click=lambda e: page.run_task(self._gerar_playlist, page),
-            bgcolor=ft.Colors.BLUE_700,
-            color=ft.Colors.WHITE,
+            style=ft.ButtonStyle(
+                bgcolor=ft.Colors.BLUE_700,
+                color=ft.Colors.WHITE,
+            ),
         )
 
         example_themes = [
@@ -147,36 +168,49 @@ class AgenteView:
             expand=True,
         )
 
+        prompt_controls: List[ft.Control] = [
+            ft.Text(
+                "Defina o Tema Pastoral do Culto:",
+                weight=ft.FontWeight.BOLD,
+                size=15,
+            ),
+            ft.Text(
+                "Clique em um tema de exemplo ou escreva o seu:",
+                size=12,
+                italic=True,
+                color=ft.Colors.GREY_400,
+            ),
+        ]
+        if self.example_chips:
+            prompt_controls.append(self.example_chips)
+        if self.prompt_input:
+            prompt_controls.append(self.prompt_input)
+
+        slider_controls: List[ft.Control] = [
+            c for c in (self.num_hinos_label, self.num_hinos_slider) if c is not None
+        ]
+        prompt_controls.append(
+            ft.Row(
+                controls=slider_controls,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+        )
+
+        button_controls: List[ft.Control] = [
+            c for c in (self.generate_button, self.save_button) if c is not None
+        ]
+        prompt_controls.append(
+            ft.Row(
+                controls=button_controls,
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                wrap=True,
+            )
+        )
+
         self.prompt_card = ft.Card(
             content=ft.Container(
                 content=ft.Column(
-                    controls=[
-                        ft.Text(
-                            "Defina o Tema Pastoral do Culto:",
-                            weight=ft.FontWeight.BOLD,
-                            size=15,
-                        ),
-                        ft.Text(
-                            "Clique em um tema de exemplo ou escreva o seu:",
-                            size=12,
-                            italic=True,
-                            color=ft.Colors.GREY_400,
-                        ),
-                        self.example_chips,
-                        self.prompt_input,
-                        ft.Row(
-                            controls=[
-                                self.num_hinos_label,
-                                self.num_hinos_slider,
-                            ],
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        ft.Row(
-                            controls=[self.generate_button, self.save_button],
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                            wrap=True,
-                        ),
-                    ],
+                    controls=prompt_controls,
                     spacing=10,
                 ),
                 padding=ft.Padding.all(14),
@@ -215,11 +249,13 @@ class AgenteView:
     def _on_slider_change(self, e: ft.ControlEvent, page: ft.Page) -> None:
         if isinstance(e.control, ft.Slider) and e.control.value is not None:
             self.num_hinos_value = int(e.control.value)
-        self.num_hinos_label.value = f"Hinos: {self.num_hinos_value}"
+        if self.num_hinos_label:
+            self.num_hinos_label.value = f"Hinos: {self.num_hinos_value}"
         page.update()
 
     def _on_chip_click(self, page: ft.Page, theme_text: str) -> None:
-        self.prompt_input.value = theme_text
+        if self.prompt_input:
+            self.prompt_input.value = theme_text
         page.update()
 
     async def _salvar_lista(self, page: ft.Page) -> None:
@@ -245,25 +281,26 @@ class AgenteView:
         page.update()
 
     async def _gerar_playlist(self, page: ft.Page) -> None:
-        tema = self.prompt_input.value or ""
+        tema = self.prompt_input.value if self.prompt_input and self.prompt_input.value else ""
 
-        self.results_container.controls = [
-            ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.ProgressRing(),
-                        ft.Text(
-                            "O Agente está selecionando os hinos mais adequados...",
-                            italic=True,
-                        ),
-                    ],
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    spacing=15,
-                ),
-                alignment=ft.Alignment.CENTER,
-                padding=ft.Padding.all(30),
-            )
-        ]
+        if self.results_container:
+            self.results_container.controls = [
+                ft.Container(
+                    content=ft.Column(
+                        controls=[
+                            ft.ProgressRing(),
+                            ft.Text(
+                                "O Agente está selecionando os hinos mais adequados...",
+                                italic=True,
+                            ),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=15,
+                    ),
+                    alignment=ft.Alignment.CENTER,
+                    padding=ft.Padding.all(30),
+                )
+            ]
         page.update()
 
         self.playlist_gerada = await self.agente_service.sugerir_playlist_culto(
@@ -271,12 +308,13 @@ class AgenteView:
         )
         
         self._refresh_novo_culto(page)
-        self.save_button.visible = True
+        if self.save_button:
+            self.save_button.visible = True
         page.update()
 
     def _refresh_novo_culto(self, page: ft.Page):
         blocos = self.playlist_gerada.get("blocos", []) if self.playlist_gerada else []
-        controls = [self._build_bloco_card(item, page) for item in blocos]
+        controls: List[ft.Control] = [self._build_bloco_card(item, page) for item in blocos]
         
         btn_add = ft.TextButton(
             "+ Adicionar Hino",
@@ -287,25 +325,34 @@ class AgenteView:
         )
         controls.append(ft.Container(content=btn_add, alignment=ft.Alignment.CENTER))
         
-        self.results_container.controls = controls
+        if self.results_container:
+            self.results_container.controls = controls
         page.update()
 
     def _adicionar_em_memoria(self, page: ft.Page, hino):
         if not self.playlist_gerada:
-            self.playlist_gerada = {"hinos": [], "blocos": [], "tema": self.prompt_input.value or "Culto Ad Hoc"}
+            tema_default = self.prompt_input.value if self.prompt_input and self.prompt_input.value else "Culto Ad Hoc"
+            self.playlist_gerada = {"hinos": [], "blocos": [], "tema": tema_default}
         novo_item = {"bloco": "Hino Adicional", "hino": hino, "justificativa": ""}
-        self.playlist_gerada["blocos"].append(novo_item)
-        self.playlist_gerada["hinos"].append(hino)
+        self.playlist_gerada.setdefault("blocos", []).append(novo_item)
+        self.playlist_gerada.setdefault("hinos", []).append(hino)
         self._refresh_novo_culto(page)
         
     def _substituir_em_memoria(self, page: ft.Page, item: Dict[str, Any], novo_hino):
+        if not self.playlist_gerada:
+            return
         item["hino"] = novo_hino
-        self.playlist_gerada["hinos"] = [i["hino"] for i in self.playlist_gerada["blocos"]]
+        blocos = self.playlist_gerada.get("blocos", [])
+        self.playlist_gerada["hinos"] = [i["hino"] for i in blocos if "hino" in i]
         self._refresh_novo_culto(page)
 
     def _remover_em_memoria(self, page: ft.Page, item: Dict[str, Any]):
-        self.playlist_gerada["blocos"].remove(item)
-        self.playlist_gerada["hinos"] = [i["hino"] for i in self.playlist_gerada["blocos"]]
+        if not self.playlist_gerada:
+            return
+        blocos = self.playlist_gerada.get("blocos", [])
+        if item in blocos:
+            blocos.remove(item)
+        self.playlist_gerada["hinos"] = [i["hino"] for i in blocos if "hino" in i]
         self._refresh_novo_culto(page)
 
     def _build_bloco_card(
@@ -361,6 +408,9 @@ class AgenteView:
 
     async def _carregar_cultos_salvos(self, page: ft.Page) -> None:
         listas = await self.culto_repository.get_listas_culto()
+        if not self.results_container:
+            return
+
         if not listas:
             self.results_container.controls = [
                 ft.Container(
@@ -644,13 +694,17 @@ class AgenteView:
     ) -> None:
         if "salvos" in selected:
             self.current_tab = "salvos"
-            self.prompt_card.visible = False
+            if self.prompt_card:
+                self.prompt_card.visible = False
             await self._carregar_cultos_salvos(page)
         else:
             self.current_tab = "novo"
-            self.prompt_card.visible = True
-            self.results_container.controls = []
-            self.save_button.visible = False
+            if self.prompt_card:
+                self.prompt_card.visible = True
+            if self.results_container:
+                self.results_container.controls = []
+            if self.save_button:
+                self.save_button.visible = False
 
         page.update()
 

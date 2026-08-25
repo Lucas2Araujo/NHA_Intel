@@ -8,6 +8,7 @@ from src.repositories.favorito_repository import FavoritoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.models.hino import Hino
 from src.services.updater_service import UpdaterService
+from src.services.theme_service import ThemeService
 from src.views.update_dialog import show_update_dialog
 try:
     from src.version import __version__ as APP_VERSION
@@ -61,7 +62,8 @@ class HomeView:
     - Abas: Todos | Favoritos | Recentes | Explorar (categorias/temas)
     - Loading state com ProgressRing no primeiro carregamento
     - Empty states ilustrados para Favoritos/Recentes vazios
-    - Modal "Sobre o App" com informações da versão
+    - Modal "Sobre o App" com informações da versão e Toggle AMOLED
+    - Suporte a temas dinâmicos (Sistema / AMOLED)
     Segue as diretrizes do Flet 0.85+.
     """
 
@@ -71,12 +73,15 @@ class HomeView:
         favorito_repository: FavoritoRepository,
         historico_repository: HistoricoRepository,
         updater_service: Optional[UpdaterService] = None,
+        theme_service: Optional[ThemeService] = None,
     ):
         self.hino_repository = hino_repository
         self.favorito_repository = favorito_repository
         self.historico_repository = historico_repository
         self.updater_service = updater_service or UpdaterService()
+        self.theme_service = theme_service or ThemeService(hino_repository.db_connection)
         self._search_task: Optional[asyncio.Task] = None
+        self._sort_task: Optional[asyncio.Task] = None
         self.current_filter: str = "todos"
         self.current_search: str = ""
         self.current_sort: str = "num_asc"
@@ -90,6 +95,7 @@ class HomeView:
         self.filter_bar: Optional[ft.SegmentedButton] = None
         self.active_filter_banner: Optional[ft.Container] = None
         self._explore_sections_cached: Optional[List[ft.Control]] = None
+
 
     async def build(self, page: ft.Page, initial_search: str = "") -> ft.View:
         self.page = page
@@ -266,6 +272,43 @@ class HomeView:
     def _show_about_dialog(self, e=None):
         if not self.page:
             return
+
+        amoled_switch = ft.Switch(
+            value=self.theme_service.is_amoled if self.theme_service else False,
+            on_change=lambda ev: asyncio.create_task(self._on_amoled_toggle(ev.control.value)),
+            active_color=ft.Colors.BLUE_400,
+        )
+
+        amoled_tile = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Row(
+                        controls=[
+                            ft.Icon(ft.Icons.DARK_MODE_OUTLINED, size=22, color=ft.Colors.AMBER_300),
+                            ft.Column(
+                                controls=[
+                                    ft.Text("Modo Telas AMOLED", weight=ft.FontWeight.BOLD, size=14),
+                                    ft.Text(
+                                        "Preto puro (#000000) e economia de energia",
+                                        size=11,
+                                        color=ft.Colors.ON_SURFACE_VARIANT,
+                                    ),
+                                ],
+                                spacing=1,
+                            ),
+                        ],
+                        spacing=10,
+                    ),
+                    amoled_switch,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+            border_radius=10,
+            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
+        )
+
         bs = ft.BottomSheet(
             content=ft.Container(
                 content=ft.Column(
@@ -321,6 +364,7 @@ class HomeView:
                             border_radius=10,
                             padding=ft.Padding.all(12),
                         ),
+                        amoled_tile,
                         ft.Row(
                             controls=[
                                 ft.OutlinedButton(
@@ -350,12 +394,17 @@ class HomeView:
         )
         self.page.show_dialog(bs)
 
-    async def _check_updates_manual(self):
-        """Verifica manualmente por atualizações a partir do modal Sobre."""
-        if not self.page or not self.updater_service:
+    async def _on_amoled_toggle(self, enabled: bool) -> None:
+        """Manipula a alternância do Modo AMOLED."""
+        if self.theme_service and self.page:
+            await self.theme_service.toggle_amoled(self.page, enabled)
+
+
+    def _show_snack(self, message: str, duration: int = 3000) -> None:
+        """Exibe um SnackBar de forma segura compatível com o Flet."""
+        if not self.page:
             return
-        
-        snack = ft.SnackBar(ft.Text("Buscando atualizações no GitHub..."), duration=2000)
+        snack = ft.SnackBar(ft.Text(message), duration=duration)
         try:
             if hasattr(self.page, "open"):
                 self.page.open(snack)
@@ -363,6 +412,13 @@ class HomeView:
                 self.page.show_snack_bar(snack)
         except Exception:
             pass
+
+    async def _check_updates_manual(self):
+        """Verifica manualmente por atualizações a partir do modal Sobre."""
+        if not self.page or not self.updater_service:
+            return
+
+        self._show_snack("Buscando atualizações no GitHub...", duration=2000)
 
         update_info = await self.updater_service.check_for_updates()
         if update_info.get("update_available"):
@@ -378,14 +434,7 @@ class HomeView:
                 if not err
                 else f"Não foi possível verificar atualizações: {err}"
             )
-            res_snack = ft.SnackBar(ft.Text(msg), duration=3000)
-            try:
-                if hasattr(self.page, "open"):
-                    self.page.open(res_snack)
-                elif hasattr(self.page, "show_snack_bar"):
-                    self.page.show_snack_bar(res_snack)
-            except Exception:
-                pass
+            self._show_snack(msg, duration=3000)
 
     def _create_empty_state_control(self) -> ft.Container:
         if self.current_filter == "favoritos":
@@ -581,7 +630,9 @@ class HomeView:
         self.current_sort = new_sort
         if self.sort_button:
             self.sort_button.items = self._build_sort_menu_items()
-        asyncio.create_task(self._execute_sort_update())
+        if self._sort_task and not self._sort_task.done():
+            self._sort_task.cancel()
+        self._sort_task = asyncio.create_task(self._execute_sort_update())
 
     async def _execute_sort_update(self):
         await self._load_current_filter_data(self.current_search)
@@ -668,19 +719,39 @@ class HomeView:
             self.list_container.visible = True
             self.explore_container.visible = False
 
-    async def _return_to_explore(self):
-        """Retorna para a visão geral de exploração de categorias e temas."""
-        self.active_category = None
-        self.active_tema = None
+    def _reset_search_state(self) -> None:
+        """Limpa o campo de busca e o estado de pesquisa."""
         self.current_search = ""
-        self.current_filter = "explorar"
         if self.search_field:
             self.search_field.value = ""
             self.search_field.suffix = None
-        if self.filter_bar:
-            self.filter_bar.selected = ["explorar"]
+
+    def _reset_filter_banner(self) -> None:
+        """Oculta e limpa os filtros de categoria/tema."""
+        self.active_category = None
+        self.active_tema = None
         if self.active_filter_banner:
             self.active_filter_banner.visible = False
+
+    async def _handle_empty_filter_selection(self) -> None:
+        """Restaura o filtro quando ocorre desseleção acidental de aba."""
+        if self.current_filter in ("categoria", "tema"):
+            await self._return_to_explore()
+            return
+        valid_filters = ("todos", "favoritos", "recentes", "explorar")
+        fallback = self.current_filter if self.current_filter in valid_filters else "todos"
+        if self.filter_bar:
+            self.filter_bar.selected = [fallback]
+        if self.page:
+            self.page.update()
+
+    async def _return_to_explore(self):
+        """Retorna para a visão geral de exploração de categorias e temas."""
+        self._reset_filter_banner()
+        self._reset_search_state()
+        self.current_filter = "explorar"
+        if self.filter_bar:
+            self.filter_bar.selected = ["explorar"]
         self._show_content_view("explorar")
         await self._load_explore_data()
         if self.page:
@@ -688,17 +759,11 @@ class HomeView:
 
     async def _clear_category_or_theme_filter(self):
         """Limpa o filtro ativo de categoria/tema e volta para todos os hinos."""
-        self.active_category = None
-        self.active_tema = None
-        self.current_search = ""
+        self._reset_filter_banner()
+        self._reset_search_state()
         self.current_filter = "todos"
-        if self.search_field:
-            self.search_field.value = ""
-            self.search_field.suffix = None
         if self.filter_bar:
             self.filter_bar.selected = ["todos"]
-        if self.active_filter_banner:
-            self.active_filter_banner.visible = False
         self._show_content_view("list")
         await self._load_current_filter_data("")
         if self.page:
@@ -706,15 +771,12 @@ class HomeView:
 
     async def _filter_by_categoria(self, cat: str):
         """Filtra hinos por categoria e volta para lista."""
+        self._reset_search_state()
         self.current_filter = "categoria"
         self.active_category = cat
         self.active_tema = None
-        self.current_search = ""
         if self.filter_bar:
             self.filter_bar.selected = ["explorar"]
-        if self.search_field:
-            self.search_field.value = ""
-            self.search_field.suffix = None
         self._show_content_view("list")
 
         await self._load_current_filter_data("")
@@ -723,15 +785,12 @@ class HomeView:
 
     async def _filter_by_tema(self, tema: str):
         """Filtra hinos por tema e volta para lista."""
+        self._reset_search_state()
         self.current_filter = "tema"
         self.active_tema = tema
         self.active_category = None
-        self.current_search = ""
         if self.filter_bar:
             self.filter_bar.selected = ["explorar"]
-        if self.search_field:
-            self.search_field.value = ""
-            self.search_field.suffix = None
         self._show_content_view("list")
 
         await self._load_current_filter_data("")
@@ -825,42 +884,21 @@ class HomeView:
 
     async def _on_filter_select(self, e):
         selected = e.control.selected
-        
-        # Previne desseleção acidental para conjunto vazio quando o usuário clica na aba já ativa
         if not selected:
-            if self.current_filter in ("categoria", "tema"):
-                await self._return_to_explore()
-                return
-            fallback = self.current_filter if self.current_filter in ("todos", "favoritos", "recentes", "explorar") else "todos"
-            if self.filter_bar:
-                self.filter_bar.selected = [fallback]
-            if self.page:
-                self.page.update()
+            await self._handle_empty_filter_selection()
             return
 
-        self.current_search = ""
-        if self.search_field:
-            self.search_field.value = ""
-            self.search_field.suffix = None
+        self._reset_search_state()
 
         if "explorar" in selected:
-            # Se já estava filtrando por categoria ou tema e clicou em Explorar, volta para a tela de exploração
             await self._return_to_explore()
             return
 
-        self.active_category = None
-        self.active_tema = None
-        if self.active_filter_banner:
-            self.active_filter_banner.visible = False
-
+        self._reset_filter_banner()
         self._show_content_view("list")
 
-        if "favoritos" in selected:
-            self.current_filter = "favoritos"
-        elif "recentes" in selected:
-            self.current_filter = "recentes"
-        else:
-            self.current_filter = "todos"
+        filter_map = {"favoritos": "favoritos", "recentes": "recentes"}
+        self.current_filter = next((filter_map[k] for k in filter_map if k in selected), "todos")
 
         await self._load_current_filter_data("")
         if self.page:

@@ -1,25 +1,75 @@
-@startuml
+@startuml DCU2
+' ==============================================================================
+' Diagrama de Casos de Uso 2 (DCU2) — Leitura, Mídia, Bíblia ARA, Downloads & OTA
+' ==============================================================================
+
 left to right direction
 skinparam packageStyle rectangle
+skinparam roundcorner 6
+skinparam shadowing false
 
-actor "Usuário" as User
-
-rectangle "Módulo: Leitura e Mídia" {
-  
-  usecase "Visualizar Letra do Hino" as UC_Visualizar
-  
-  usecase "Alternar Acessibilidade\n(Tamanho e Fonte Dislexia)" as UC_Acessibilidade
-  usecase "Adicionar aos Favoritos" as UC_Favoritar
-  usecase "Reproduzir Mídia\n(Áudio/Vídeo YouTube)" as UC_Play
-  usecase "Baixar Mídia Local\n(MP3/MP4)" as UC_Download
-  usecase "Consultar Informações\n(Autores e Textos)" as UC_Info
-  
-  User --> UC_Visualizar
-  
-  UC_Acessibilidade .up.> UC_Visualizar : <<extend>>
-  UC_Favoritar .up.> UC_Visualizar : <<extend>>
-  UC_Play .left.> UC_Visualizar : <<extend>>
-  UC_Download .right.> UC_Visualizar : <<extend>>
-  UC_Info .down.> UC_Visualizar : <<extend>>
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #2B6CB0
+  FontName "Segoe UI, Arial, SansSerif"
+  FontSize 12
 }
+
+skinparam actor {
+  BackgroundColor #EDF2F7
+  BorderColor #2D3748
+  FontName "Segoe UI, Arial, SansSerif"
+}
+
+title <b>Diagrama de Casos de Uso (DCU 2)</b>\nLeitura, Acessibilidade, Player de Mídia, Bíblia Integrada & Modo Offline
+
+actor "Usuário / Leitor" as User
+actor "GitHub Releases" as GitHub <<Sistema Externo>>
+actor "YouTube" as YouTube <<Provedor de Mídia>>
+
+rectangle "Módulo: Leitura, Mídia, Bíblia e Downloads" {
+  
+  ' Ações de Leitura e Acessibilidade
+  usecase "Visualizar Letra Completa do Hino" as UC_Visualizar
+  usecase "Ajustar Tamanho da Fonte (12–36 pt)" as UC_TamFonte
+  usecase "Alternar Família Tipográfica\n(Padrão, Times, OpenDyslexic)" as UC_FonteDislexia
+  usecase "Marcar / Desmarcar Favorito" as UC_Favoritar
+  usecase "Navegar Hino Anterior / Próximo" as UC_NavegacaoHinos
+  
+  ' Ações Bíblicas e Metadados
+  usecase "Consultar Metadados (Autores & Temas)" as UC_Info
+  usecase "Visualizar Passagem Bíblica (ARA)\n(Modal Interativo / Referências Cruzadas)" as UC_BibliaModal
+  
+  ' Ações de Mídia e Downloads
+  usecase "Reproduzir Áudio Real In-App\n(ffplay / mpv / alto-falantes)" as UC_PlayAudio
+  usecase "Abrir Vídeo no YouTube (Link Externo)" as UC_PlayVideo
+  usecase "Baixar Áudio do Hino (Modo Offline)" as UC_DownloadUnico
+  usecase "Executar Download em Lote (/downloads)" as UC_DownloadLote
+  
+  ' Atualizações do Sistema
+  usecase "Verificar e Aplicar Atualização do App (OTA)" as UC_OTA
+
+  ' Relações com o Usuário
+  User --> UC_Visualizar
+  User --> UC_DownloadLote
+  User --> UC_OTA
+
+  ' Extensões da Visualização do Hino
+  UC_TamFonte .up.> UC_Visualizar : <<extend>>
+  UC_FonteDislexia .up.> UC_Visualizar : <<extend>>
+  UC_Favoritar .up.> UC_Visualizar : <<extend>>
+  UC_NavegacaoHinos .up.> UC_Visualizar : <<extend>>
+  UC_Info .down.> UC_Visualizar : <<extend>>
+  UC_BibliaModal .down.> UC_Visualizar : <<extend>>
+  UC_PlayAudio .left.> UC_Visualizar : <<extend>>
+  UC_PlayVideo .left.> UC_Visualizar : <<extend>>
+  UC_DownloadUnico .right.> UC_Visualizar : <<extend>>
+
+  ' Comunicação com Sistemas Externos
+  UC_PlayVideo ..> YouTube : <<abre link externo>>
+  UC_DownloadUnico ..> YouTube : <<extrai áudio yt-dlp>>
+  UC_DownloadLote ..> YouTube : <<extrai áudio yt-dlp>>
+  UC_OTA ..> GitHub : <<baixa APK da release>>
+}
+
 @enduml

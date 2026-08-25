@@ -12,6 +12,17 @@ async def test_get_all_returns_all_hymns(in_memory_db):
 
 
 @pytest.mark.asyncio
+async def test_get_all_complete_returns_full_metadata(in_memory_db):
+    repository = HinoRepository(in_memory_db)
+    hinos = await repository.get_all_complete()
+    assert len(hinos) == 3
+    assert hinos[0].numero == "1"
+    assert hinos[0].titulo == "Santo, Santo, Santo!"
+    assert hinos[0].letra is not None
+
+
+
+@pytest.mark.asyncio
 async def test_get_all_empty_database(in_memory_db):
     conn = await in_memory_db.get_connection()
     await conn.execute("DELETE FROM hino;")

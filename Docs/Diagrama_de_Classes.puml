@@ -1,51 +1,215 @@
-@startuml
+@startuml Diagrama_de_Classes
+' ==============================================================================
+' Diagrama de Classes da Arquitetura — Hinário Inteligente
+' Padrões: Clean Architecture, Repository Pattern, DTO Imutável, Services, Views
+' ==============================================================================
+
 skinparam classAttributeIconSize 0
+skinparam linetype ortho
+skinparam roundcorner 6
+skinparam shadowing false
+skinparam packageStyle rectangle
 
-class Hino {
-  - numeroIndice: Integer
-  - titulo: String
-  - letra: String
-  - autorLetra: String
-  - autorMusica: String
-  - textoBaseRef: String
-  - textoBaseConteudo: String
-  + favoritar()
+skinparam class {
+  BackgroundColor #FFFFFF
+  BorderColor #2D3748
+  FontName "Segoe UI, Arial, SansSerif"
+  FontSize 11
+  HeaderBackgroundColor #EDF2F7
 }
 
-class Tema {
-  - nome: String
+title <b>Diagrama de Classes da Arquitetura (Clean Architecture & MVT)</b>\nProjeto Hinário Inteligente
+
+package "Camada de Domínio / Models (DTOs Imutáveis)" #F7FAFC {
+  class Hino << (D,#A9DCDF) @dataclass(frozen=True) >> {
+    + id: Optional[int]
+    + numero: str
+    + titulo: str
+    + letra: Optional[str]
+    + autor_letra: Optional[str]
+    + autor_musica: Optional[str]
+    + texto_base: Optional[str]
+    + categoria: Optional[str]
+    + subcategoria: Optional[str]
+    + link_video: Optional[str]
+    + letra_json: Optional[str]
+    + autores: Optional[str]
+  }
+
+  class Versiculo << (D,#A9DCDF) @dataclass(frozen=True) >> {
+    + livro: str
+    + capitulo: int
+    + versiculo: int
+    + texto: str
+  }
+
+  class PassagemBiblica << (D,#A9DCDF) @dataclass(frozen=True) >> {
+    + referencia: str
+    + livro: str
+    + capitulo: int
+    + versiculos: List[Versiculo]
+    + texto_formatado: str
+  }
 }
 
-class TextoRelacionado {
-  - referencia: String
+package "Camada de Acesso a Dados / Database" #EDF2F7 {
+  class DatabaseConnection {
+    - db_path: str
+    - read_only: bool
+    - _connection: Optional[aiosqlite.Connection]
+    + get_connection(): aiosqlite.Connection
+    + close(): None
+    - _initialize_db(conn): None
+    + _resolve_db_path(db_path): str
+  }
 }
 
-class Midia {
-  - tipo: TipoMidia <<Enum: Audio, Video>>
-  - urlYouTube: String
-  - caminhoLocal: String
-  - isBaixado: Boolean
-  + baixarMidia()
-  + reproduzir()
+package "Camada de Repositórios / Repositories" #EBF8FF {
+  class HinoRepository {
+    - db: DatabaseConnection
+    + get_all(): List[Hino]
+    + get_by_id(hino_id: int): Optional[Hino]
+    + search(termo: str): List[Hino]
+    + get_categorias(): List[str]
+    + get_temas(): List[str]
+    + get_hinos_by_categoria(cat: str): List[Hino]
+    + get_hinos_by_tema(tema: str): List[Hino]
+    + get_metadados_relacionados(hino_id: int): Tuple[List[str], List[str]]
+    + get_all_with_media(): List[Hino]
+  }
+
+  class FavoritoRepository {
+    - db: DatabaseConnection
+    + add_favorito(hino_id: int): bool
+    + remove_favorito(hino_id: int): bool
+    + is_favorito(hino_id: int): bool
+    + get_favoritos(): List[Hino]
+  }
+
+  class HistoricoRepository {
+    - db: DatabaseConnection
+    + add_acesso(hino_id: int): None
+    + get_recentes(limit: int): List[Hino]
+    + clear_historico(): None
+  }
+
+  class CultoRepository {
+    - db: DatabaseConnection
+    + create_lista_culto(tema: str, hino_ids: List[int]): int
+    + get_listas_culto(): List[Dict]
+    + get_hinos_da_lista(lista_id: int): List[Hino]
+    + delete_lista_culto(lista_id: int): bool
+  }
+
+  class BibliaRepository {
+    - db: DatabaseConnection
+    + parse_reference(ref_text: str): Optional[Dict]
+    + get_passage(ref_text: str): Optional[PassagemBiblica]
+    + search_text(query: str): List[Versiculo]
+  }
 }
 
-class ListaCulto {
-  - id: Integer
-  - temaBuscado: String
-  - quantidadeSelecionada: Integer
-  - dataCriacao: DateTime
+package "Camada de Serviços / Services" #FEFCBF {
+  class MediaService {
+    - download_dir: Path
+    - _active_process: Optional[subprocess.Popen]
+    + get_audio_path(hino_id: int): Optional[Path]
+    + is_downloaded(hino_id: int): bool
+    + download_audio(hino_id: int, url: str, on_progress): Tuple[bool, str]
+    + play_audio(source: str): bool
+    + stop_audio(): None
+    + extract_youtube_id(url: str): Optional[str]
+    + list_downloads(): List[Dict]
+  }
+
+  class AgenteService {
+    - hino_repo: HinoRepository
+    + sugerir_playlist_culto(tema_prompt: str, qtd: int): Dict
+    - _calcular_score_hino(hino: Hino, termos: List[str]): int
+  }
+
+  class UpdaterService {
+    - current_version: str
+    - github_repo: str
+    + check_for_updates(): Dict
+    + download_and_install_update(download_url: str): bool
+  }
 }
 
-class PreferenciasApp {
-  - usarFonteDislexia: Boolean
-  - tamanhoFonte: Integer
-  - temaEscuro: Boolean
+package "Camada de Apresentação / Views (Flet Material 3)" #F0FFF4 {
+  class HomeView {
+    - hino_repo: HinoRepository
+    - fav_repo: FavoritoRepository
+    - hist_repo: HistoricoRepository
+    - updater_service: UpdaterService
+    + build(page: ft.Page, initial_search: str): ft.View
+    - _on_search_changed(e): None
+    - _render_hinos_list(): None
+  }
+
+  class HinoView {
+    - hino_id: int
+    - hino_repo: HinoRepository
+    - fav_repo: FavoritoRepository
+    - hist_repo: HistoricoRepository
+    - media_service: MediaService
+    - biblia_repo: BibliaRepository
+    + build(page: ft.Page): ft.View
+    + _toggle_favorito(): None
+    + _open_biblia_modal(ref: str): None
+    + _open_player_modal(): None
+  }
+
+  class AgenteView {
+    - agente_service: AgenteService
+    - culto_repo: CultoRepository
+    + build(page: ft.Page): ft.View
+    - _gerar_sugestao_click(e): None
+    - _salvar_culto_click(e): None
+  }
+
+  class DownloadManagerView {
+    - hino_repo: HinoRepository
+    - media_service: MediaService
+    + build(page: ft.Page): ft.View
+    - _start_batch_download(): None
+    - _delete_download(hino_id): None
+  }
 }
 
-' Relacionamentos
-Hino "1" *-- "0..2" Midia : possui >
-Hino "1..*" -- "1..*" Tema : classificado por >
-Hino "1" -- "0..*" TextoRelacionado : inspira-se em >
-ListaCulto "1" o-- "1..*" Hino : agrupa >
+' ==============================================================================
+' Injeções de Dependência e Relacionamentos
+' ==============================================================================
+
+DatabaseConnection <.. HinoRepository : <<injetado>>
+DatabaseConnection <.. FavoritoRepository : <<injetado>>
+DatabaseConnection <.. HistoricoRepository : <<injetado>>
+DatabaseConnection <.. CultoRepository : <<injetado>>
+DatabaseConnection <.. BibliaRepository : <<injetado>>
+
+HinoRepository ..> Hino : retorna
+FavoritoRepository ..> Hino : retorna
+HistoricoRepository ..> Hino : retorna
+CultoRepository ..> Hino : associa
+BibliaRepository ..> PassagemBiblica : retorna
+PassagemBiblica *-- "1..*" Versiculo : contém
+
+AgenteService --> HinoRepository : consulta
+HomeView --> HinoRepository : consome
+HomeView --> FavoritoRepository : consome
+HomeView --> HistoricoRepository : consome
+HomeView --> UpdaterService : verifica updates
+
+HinoView --> HinoRepository : consome
+HinoView --> FavoritoRepository : consome
+HinoView --> HistoricoRepository : consome
+HinoView --> MediaService : reproduz / baixa
+HinoView --> BibliaRepository : consulta passagens
+
+AgenteView --> AgenteService : gera culto
+AgenteView --> CultoRepository : persiste culto
+
+DownloadManagerView --> HinoRepository : lista mídias
+DownloadManagerView --> MediaService : orquestra downloads
 
 @enduml

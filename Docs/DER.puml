@@ -1,72 +1,163 @@
-@startuml
-' Esconde o ícone de classe para ficar com cara de BD
+@startuml DER
+' ==============================================================================
+' Diagrama Entidade-Relacionamento (DER) — Hinário Inteligente
+' Bancos: hinario.db (Principal / RW) e ARA.sqlite (Bíblia / Read-Only)
+' ==============================================================================
+
 hide circle
 skinparam linetype ortho
-skinparam EntityBackgroundColor #F9F9F9
-skinparam EntityBorderColor #333333
+skinparam roundcorner 5
+skinparam shadowing false
+skinparam packageStyle rectangle
 
-title Diagrama Entidade-Relacionamento (SQLite - Hinário App)
-
-entity "hinos" as hino {
-  * id_hino : INTEGER <<PK>>
-  --
-  titulo : TEXT
-  letra : TEXT
-  autor_letra : TEXT
-  autor_musica : TEXT
-  texto_base : TEXT
-  link_video : TEXT
-  caminho_audio_local : TEXT
+skinparam entity {
+  BackgroundColor #FBFBFE
+  BorderColor #4A5568
+  FontName "Segoe UI, Arial, SansSerif"
+  FontSize 12
+  HeaderBackgroundColor #EDF2F7
 }
 
-entity "temas" as tema {
-  * id_tema : INTEGER <<PK>>
-  --
-  nome_tema : TEXT
+title <b>Diagrama Entidade-Relacionamento — Hinário Inteligente</b>\n(Bases de Dados SQLite: hinario.db & ARA.sqlite)
+
+package "hinario.db (Banco de Dados Principal da Aplicação)" #F7FAFC {
+
+  entity "hino" as hino {
+    * <b>id</b> : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    * <b>numero</b> : TEXT <<UNIQUE>>
+    * <b>titulo</b> : TEXT
+    letra : TEXT
+    letra_json : TEXT
+    autor_letra : TEXT
+    autor_musica : TEXT
+    autores : TEXT
+    texto_base : TEXT
+    categoria : TEXT
+    subcategoria : TEXT
+    link_video : TEXT
+  }
+
+  entity "tema" as tema {
+    * <b>id</b> : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    * <b>nome</b> : TEXT <<UNIQUE>>
+  }
+
+  entity "texto_biblico" as texto_biblico {
+    * <b>id</b> : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    * <b>referencia</b> : TEXT <<UNIQUE>>
+  }
+
+  entity "hino_tema" as hino_tema {
+    * <b>hino_id</b> : INTEGER <<PK, FK>>
+    * <b>tema_id</b> : INTEGER <<PK, FK>>
+    --
+    <<Tabela de Junção (N:N)>>
+  }
+
+  entity "hino_texto" as hino_texto {
+    * <b>hino_id</b> : INTEGER <<PK, FK>>
+    * <b>texto_id</b> : INTEGER <<PK, FK>>
+    --
+    <<Tabela de Junção (N:N)>>
+  }
+
+  entity "favorito" as favorito {
+    * <b>hino_id</b> : INTEGER <<PK, FK>>
+    --
+    data_favoritado : DATETIME <<DEFAULT CURRENT_TIMESTAMP>>
+  }
+
+  entity "historico" as historico {
+    * <b>id</b> : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    * <b>hino_id</b> : INTEGER <<FK>>
+    data_acesso : DATETIME <<DEFAULT CURRENT_TIMESTAMP>>
+  }
+
+  entity "lista_culto" as lista_culto {
+    * <b>id</b> : INTEGER <<PK, AUTOINCREMENT>>
+    --
+    tema_gerador : TEXT
+    data_criacao : DATETIME <<DEFAULT CURRENT_TIMESTAMP>>
+  }
+
+  entity "item_lista_culto" as item_lista_culto {
+    * <b>lista_id</b> : INTEGER <<PK, FK>>
+    * <b>hino_id</b> : INTEGER <<PK, FK>>
+    --
+    * <b>ordem_execucao</b> : INTEGER
+  }
+
+  entity "preferencias" as preferencias {
+    * <b>chave</b> : TEXT <<PK>>
+    --
+    valor : TEXT
+  }
+
+  entity "hino_fts" as hino_fts <<Virtual Table (FTS5)>> {
+    * <b>rowid</b> : INTEGER <<Implicit PK>>
+    --
+    numero : TEXT
+    titulo : TEXT
+    letra : TEXT
+    categoria : TEXT
+    subcategoria : TEXT
+    texto_base : TEXT
+    autor_letra : TEXT
+    autor_musica : TEXT
+    temas : TEXT
+    textos : TEXT
+  }
 }
 
-entity "hinos_temas" as hino_tema {
-  * id_hino : INTEGER <<FK>>
-  * id_tema : INTEGER <<FK>>
-  --
-  <<Tabela de Junção (N:N)>>
+package "ARA.sqlite (Bíblia Almeida Revista e Atualizada - Read Only)" #F0FFF4 {
+
+  entity "book" as book {
+    * <b>id</b> : INTEGER <<PK>>
+    --
+    book_reference_id : INTEGER
+    testament_reference_id : INTEGER
+    name : VARCHAR(50)
+  }
+
+  entity "verse" as verse {
+    * <b>id</b> : INTEGER <<PK>>
+    --
+    * <b>book_id</b> : INTEGER <<FK>>
+    * <b>chapter</b> : INTEGER
+    * <b>verse</b> : INTEGER
+    text : TEXT
+  }
+
+  entity "metadata" as metadata {
+    * <b>key</b> : VARCHAR(255) <<PK>>
+    --
+    value : VARCHAR(255)
+  }
 }
 
-entity "favoritos" as favorito {
-  * id_hino : INTEGER <<PK, FK>>
-  --
-  data_favoritado : DATETIME
-}
+' ==============================================================================
+' Relacionamentos e Cardinalidades
+' ==============================================================================
 
-entity "historico" as historico {
-  * id_historico : INTEGER <<PK>>
-  --
-  id_hino : INTEGER <<FK>>
-  data_acesso : DATETIME
-}
-
-entity "listas_culto" as listaculto {
-  * id_lista : INTEGER <<PK>>
-  --
-  tema_gerador : TEXT
-  data_criacao : DATETIME
-}
-
-entity "itens_lista_culto" as itemlista {
-  * id_lista : INTEGER <<PK, FK>>
-  * id_hino : INTEGER <<PK, FK>>
-  --
-  ordem_execucao : INTEGER
-}
-
-' Relacionamentos
-hino ||--o{ hino_tema : "tem"
+hino ||--o{ hino_tema : "possui"
 tema ||--o{ hino_tema : "classifica"
 
-hino ||--o{ favorito : "marcado como"
-hino ||--o{ historico : "acessado em"
+hino ||--o{ hino_texto : "referencia"
+texto_biblico ||--o{ hino_texto : "citado em"
 
-listaculto ||--o{ itemlista : "contém"
-hino ||--o{ itemlista : "pertence a"
+hino ||--o{ favorito : "marcado como"
+hino ||--o{ historico : "registra leitura"
+
+lista_culto ||--|{ item_lista_culto : "contém itens"
+hino ||--o{ item_lista_culto : "incluído em"
+
+hino ..> hino_fts : "<<sincroniza índice FTS5>>"
+
+book ||--|{ verse : "contém versículos"
+texto_biblico ..> verse : "<<consulta textual via parser>>"
 
 @enduml

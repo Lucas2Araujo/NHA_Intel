@@ -249,39 +249,18 @@ async def test_hino_view_info_modal_biblia_chips(in_memory_db):
 
 
 @pytest.mark.asyncio
-async def test_hino_view_nav_buttons_directional_load(in_memory_db):
+async def test_hino_view_nav_buttons_push_route(in_memory_db):
     hino_repo = HinoRepository(in_memory_db)
     fav_repo = FavoritoRepository(in_memory_db)
     hist_repo = HistoricoRepository(in_memory_db)
 
     view_obj = HinoView(1, hino_repo, fav_repo, hist_repo, hino_ids_list=[1, 2, 3])
     mock_page = MagicMock(spec=ft.Page)
-    mock_page.route = "/hino/1"
-    
-    await view_obj.build(mock_page)
+    mock_page.push_route = AsyncMock()
 
-    prev_btn = view_obj.prev_btn
-    next_btn = view_obj.next_btn
+    prev_btn, next_btn = view_obj._build_nav_buttons(mock_page)
     assert prev_btn.disabled is True
     assert next_btn.disabled is False
 
-    # Avança para o hino 2 (direction="next")
     await next_btn.on_click(MagicMock())
-    assert view_obj.hino_id == 2
-    assert mock_page.route == "/hino/2"
-    assert view_obj.prev_btn.disabled is False
-    assert view_obj.next_btn.disabled is False
-
-    # Avança para o hino 3 (direction="next")
-    await next_btn.on_click(MagicMock())
-    assert view_obj.hino_id == 3
-    assert mock_page.route == "/hino/3"
-    assert view_obj.prev_btn.disabled is False
-    assert view_obj.next_btn.disabled is True
-
-    # Retorna para o hino 2 (direction="prev")
-    await prev_btn.on_click(MagicMock())
-    assert view_obj.hino_id == 2
-    assert mock_page.route == "/hino/2"
-    assert view_obj.prev_btn.disabled is False
-    assert view_obj.next_btn.disabled is False
+    mock_page.push_route.assert_called_once_with("/hino/2")

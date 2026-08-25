@@ -1,23 +1,75 @@
-@startuml
+@startuml Diagrama_caso_de_Uso_Geral
+' ==============================================================================
+' Diagrama Geral de Casos de Uso (Geral) — Hinário Inteligente
+' ==============================================================================
+
 left to right direction
 skinparam packageStyle rectangle
+skinparam roundcorner 6
+skinparam shadowing false
 
-actor "Usuário" as User
-
-package "Navegação e Pesquisa" {
-  usecase "Explorar Hinário\n(Busca, Favoritos, Lote)" as Mod1
+skinparam usecase {
+  BackgroundColor #FFFFFF
+  BorderColor #2B6CB0
+  FontName "Segoe UI, Arial, SansSerif"
+  FontSize 12
 }
 
-package "Agente Organizador" {
-  usecase "Planejar Culto\n(Busca Semântica)" as Mod2
+skinparam actor {
+  BackgroundColor #EDF2F7
+  BorderColor #2D3748
+  FontName "Segoe UI, Arial, SansSerif"
 }
 
-package "Leitura e Mídia" {
-  usecase "Visualizar e Interagir\ncom Hino" as Mod3
+title <b>Diagrama Geral de Casos de Uso — Hinário Inteligente</b>
+
+actor "Usuário / Leitor" as User
+actor "Líder de Louvor / Pastor" as Pastor
+actor "GitHub Releases" as GitHub <<Sistema Externo>>
+actor "YouTube" as YouTube <<Provedor de Mídia>>
+
+rectangle "Sistema Hinário Inteligente" {
+
+  package "1. Navegação & Busca FTS5" #EBF8FF {
+    usecase "Explorar Hinário\n(Busca Full-Text, Categorias & Temas)" as UC_Explorar
+    usecase "Acessar Favoritos & Histórico" as UC_Fav_Hist
+  }
+
+  package "2. Leitura, Acessibilidade & Mídia" #FEFCBF {
+    usecase "Ler Hino com Acessibilidade\n(Ajuste de Fonte & OpenDyslexic)" as UC_LerHino
+    usecase "Reproduzir Mídia In-App\n(Áudio Real / YouTube)" as UC_Reproduzir
+  }
+
+  package "3. Agente Litúrgico de Cultos" #F0FFF4 {
+    usecase "Planejar Culto Inteligente\n(Sugestões por Blocos Litúrgicos)" as UC_PlanejarCulto
+    usecase "Gerenciar Cultos Salvos" as UC_GerenciarCultos
+  }
+
+  package "4. Leitura Bíblica Integrada (ARA)" #E9D8FD {
+    usecase "Consultar Versículos & Passagens Bíblicas" as UC_Biblia
+  }
+
+  package "5. Modo Offline & Manutenção" #FED7D7 {
+    usecase "Gerenciar Downloads de Áudio em Lote" as UC_DownloadsLote
+    usecase "Verificar e Aplicar Atualizações do App (OTA)" as UC_Updater
+  }
 }
 
-User --> Mod1 : " Pesquisa e filtra"
-User --> Mod2 : " Gera listas"
-User --> Mod3 : " Lê, ouve e baixa"
+' Relações dos Atores com os Casos de Uso
+User --> UC_Explorar
+User --> UC_Fav_Hist
+User --> UC_LerHino
+User --> UC_Reproduzir
+User --> UC_Biblia
+User --> UC_DownloadsLote
+User --> UC_Updater
+
+Pastor --> UC_Explorar
+Pastor --> UC_PlanejarCulto
+Pastor --> UC_GerenciarCultos
+Pastor --> UC_Biblia
+
+UC_Reproduzir ..> YouTube : <<streaming>>
+UC_Updater ..> GitHub : <<consulta releases>>
 
 @enduml

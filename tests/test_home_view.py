@@ -325,14 +325,20 @@ async def test_home_view_show_about_dialog(in_memory_db):
     dialog_col = bs.content.content
     assert isinstance(dialog_col, ft.Column)
     
-    # Encontra o container com o botão do GitHub
+    # Encontra o container com o botão do GitHub e o switch AMOLED
     github_button_found = False
+    amoled_switch_found = False
     for control in dialog_col.controls:
         if isinstance(control, ft.Row):
             for sub in control.controls:
                 if isinstance(sub, ft.OutlinedButton) and "github.com/Lucas2Araujo/NHA_Intel" in (sub.url or ""):
                     github_button_found = True
+        elif isinstance(control, ft.Container) and isinstance(control.content, ft.Row):
+            for sub in control.content.controls:
+                if isinstance(sub, ft.Switch):
+                    amoled_switch_found = True
     assert github_button_found is True
+    assert amoled_switch_found is True
 
 
 @pytest.mark.asyncio
@@ -349,3 +355,25 @@ async def test_home_view_open_url(in_memory_db):
     with patch("flet.UrlLauncher.launch_url", new_callable=AsyncMock) as mock_launch:
         await home_view_obj._open_url("https://github.com/Lucas2Araujo/NHA_Intel")
         mock_launch.assert_called_once_with("https://github.com/Lucas2Araujo/NHA_Intel")
+
+
+@pytest.mark.asyncio
+async def test_home_view_amoled_toggle(in_memory_db):
+    from src.services.theme_service import ThemeService
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+    theme_service = ThemeService(in_memory_db)
+
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo, theme_service=theme_service)
+    mock_page = MagicMock(spec=ft.Page)
+    await home_view_obj.build(mock_page)
+
+    await home_view_obj._on_amoled_toggle(True)
+    assert theme_service.is_amoled is True
+    assert mock_page.theme_mode == ft.ThemeMode.DARK
+
+    await home_view_obj._on_amoled_toggle(False)
+    assert theme_service.is_amoled is False
+    assert mock_page.theme_mode == ft.ThemeMode.SYSTEM
+

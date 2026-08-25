@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
 
 # Caches and testing
 .pytest_cache/
@@ -37,5 +43,16 @@ tmp_downloads/
 # Logs & Database temporary files
 *.log
 *.sqlite-journal
-*.db-journal
 *.sqlite-wal
+*.sqlite-shm
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Android / CD Release Build Artifacts & Keystores
+release_apks/
+*.jks
+*.keystore
+.flutter-plugins
+.flutter-plugins-dependencies
+
