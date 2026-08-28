@@ -18,6 +18,7 @@ from src.repositories.favorito_repository import FavoritoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.repositories.culto_repository import CultoRepository
 from src.repositories.biblia_repository import BibliaRepository
+from src.repositories.comparativo_repository import ComparativoRepository
 from src.services.media_service import MediaService
 from src.services.agente_service import AgenteService
 from src.services.updater_service import UpdaterService
@@ -90,45 +91,49 @@ def _build_loading_view(progress_val: Optional[float] = None) -> ft.View:
     """
     return ft.View(
         route="/loading",
+        bgcolor=ft.Colors.SURFACE,
         controls=[
-            ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Container(
-                            content=ft.Icon(
-                                ft.Icons.LIBRARY_MUSIC,
-                                size=48,
-                                color=ft.Colors.BLUE_400,
-                            ),
-                            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                            border_radius=16,
-                            padding=ft.Padding.all(16),
-                        ),
-                        ft.Text(
-                            "Hinário Inteligente",
-                            size=20,
-                            weight=ft.FontWeight.BOLD,
-                            text_align=ft.TextAlign.CENTER,
-                        ),
-                        ft.Container(
-                            content=ft.ProgressBar(
-                                value=progress_val,
-                                width=200,
-                                height=4,
-                                border_radius=2,
-                                color=ft.Colors.BLUE_400,
+            ft.SafeArea(
+                content=ft.Container(
+                    content=ft.Column(
+                        controls=[
+                            ft.Container(
+                                content=ft.Icon(
+                                    ft.Icons.LIBRARY_MUSIC,
+                                    size=48,
+                                    color=ft.Colors.BLUE_400,
+                                ),
                                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                                border_radius=16,
+                                padding=ft.Padding.all(16),
                             ),
-                            padding=ft.Padding.only(top=16),
-                        ),
-                    ],
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    spacing=12,
+                            ft.Text(
+                                "Hinário Inteligente",
+                                size=20,
+                                weight=ft.FontWeight.BOLD,
+                                text_align=ft.TextAlign.CENTER,
+                            ),
+                            ft.Container(
+                                content=ft.ProgressBar(
+                                    value=progress_val,
+                                    width=200,
+                                    height=4,
+                                    border_radius=2,
+                                    color=ft.Colors.BLUE_400,
+                                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                                ),
+                                padding=ft.Padding.only(top=16),
+                            ),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=12,
+                    ),
+                    alignment=ft.Alignment.CENTER,
+                    expand=True,
                 ),
-                alignment=ft.Alignment.CENTER,
                 expand=True,
-            )
+            ),
         ],
     )
 
@@ -199,6 +204,8 @@ async def _render_hino_route(
     biblia_repository: BibliaRepository,
     hino_ids_ordered: List[int],
     target_views: List[ft.View],
+    comparativo_repository: Optional[ComparativoRepository] = None,
+    antigo_repository: Optional[HinoRepository] = None,
 ) -> None:
     """Renderiza a rota detalhada do hino (/hino/{id})."""
     if not (page.route and page.route.startswith("/hino/")):
@@ -216,6 +223,8 @@ async def _render_hino_route(
             media_service,
             hino_ids_list=hino_ids_ordered,
             biblia_repository=biblia_repository,
+            comparativo_repository=comparativo_repository,
+            antigo_repository=antigo_repository,
         )
         built_view = await hino_view_instance.build(page)
         target_views.append(built_view)
@@ -245,6 +254,8 @@ async def main(page: ft.Page):
     """
     db_connection = DatabaseConnection(db_path="hinario.db")
     biblia_connection = DatabaseConnection(db_path="ARA.sqlite", read_only=True)
+    comparativo_connection = DatabaseConnection(db_path="hinario_comparativo.db", read_only=True)
+    antigo_connection = DatabaseConnection(db_path="hinario_antigo.db", read_only=True)
 
     theme_service = ThemeService(db_connection)
     _setup_assets_and_theme(page, theme_service)
@@ -263,6 +274,8 @@ async def main(page: ft.Page):
     historico_repository = HistoricoRepository(db_connection)
     culto_repository = CultoRepository(db_connection)
     biblia_repository = BibliaRepository(biblia_connection)
+    comparativo_repository = ComparativoRepository(comparativo_connection)
+    antigo_repository = HinoRepository(antigo_connection)
 
     media_service = MediaService(download_dir="downloads")
     agente_service = AgenteService(hino_repository)
@@ -303,6 +316,8 @@ async def main(page: ft.Page):
             biblia_repository,
             hino_ids_ordered,
             new_views,
+            comparativo_repository=comparativo_repository,
+            antigo_repository=antigo_repository,
         )
 
         page.views.clear()

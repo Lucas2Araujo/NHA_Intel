@@ -4,6 +4,7 @@ import flet as ft
 from src.repositories.hino_repository import HinoRepository
 from src.repositories.favorito_repository import FavoritoRepository
 from src.repositories.historico_repository import HistoricoRepository
+from src.models.hino import Hino
 from src.views.hino_view import (
     HinoView,
     DEFAULT_FONT_FAMILY,
@@ -24,6 +25,9 @@ async def test_hino_view_build_success(in_memory_db):
     view = await view_obj.build(mock_page)
     assert isinstance(view, ft.View)
     assert view.route == "/hino/1"
+    assert view.bgcolor == ft.Colors.SURFACE
+    assert len(view.controls) > 0
+    assert isinstance(view.controls[0], ft.SafeArea)
     assert view_obj.letra_text is not None
     assert view_obj.font_size == 18
 
@@ -264,3 +268,160 @@ async def test_hino_view_nav_buttons_push_route(in_memory_db):
 
     await next_btn.on_click(MagicMock())
     mock_page.push_route.assert_called_once_with("/hino/2")
+
+
+@pytest.mark.asyncio
+async def test_hino_view_comparativo_identico(in_memory_db):
+    import json
+    from src.models.comparativo import HinoComparativo
+
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    mock_comp_repo = MagicMock()
+    comp_identico = HinoComparativo(
+        id=1,
+        numero_novo="1",
+        numero_antigo="18",
+        titulo_novo="Santo, Santo, Santo!",
+        titulo_antigo="Santo! Santo! Santo!",
+        status_comparacao="IDENTICO",
+        similaridade_pct=100.0,
+        resumo_alteracoes="Letra idêntica",
+        diff_json=json.dumps({"similaridade_pct": 100.0, "estatisticas": {}, "blocos": []}),
+    )
+    mock_comp_repo.get_by_numero_novo = AsyncMock(return_value=comp_identico)
+
+    mock_antigo_repo = MagicMock()
+    mock_antigo_hino = Hino(id=18, numero="18", titulo="Santo! Santo! Santo!", letra="Letra antiga do hino 18.")
+    mock_antigo_repo.get_by_numero = AsyncMock(return_value=mock_antigo_hino)
+
+    view_obj = HinoView(
+        1,
+        hino_repo,
+        fav_repo,
+        hist_repo,
+        comparativo_repository=mock_comp_repo,
+        antigo_repository=mock_antigo_repo,
+    )
+    mock_page = MagicMock(spec=ft.Page)
+
+    built_view = await view_obj.build(mock_page)
+    assert isinstance(built_view, ft.View)
+    assert view_obj.comparativo is not None
+    assert view_obj.comparativo.status_comparacao == "IDENTICO"
+    assert view_obj.hino_antigo is not None
+    assert view_obj.segmented_button is not None
+
+    # Teste de alternância para o Hinário Antigo
+    view_obj._on_segment_change(mock_page, ["antigo"])
+    assert view_obj.selected_view_mode == "antigo"
+    antigo_ctrl = view_obj._render_current_mode_content()
+    assert isinstance(antigo_ctrl, ft.Column)
+
+    # Teste de alternância de volta para o Novo
+    view_obj._on_segment_change(mock_page, ["novo"])
+    assert view_obj.selected_view_mode == "novo"
+    novo_ctrl = view_obj._render_current_mode_content()
+    assert novo_ctrl == view_obj.letra_text
+
+
+@pytest.mark.asyncio
+async def test_hino_view_comparativo_modificado_and_diff_rendering(in_memory_db):
+    import json
+    from src.models.comparativo import HinoComparativo
+
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    sample_diff = {
+        "similaridade_pct": 85.0,
+        "estatisticas": {
+            "linhas_adicionadas": 1,
+            "linhas_removidas": 1,
+            "linhas_alteradas": 2,
+            "linhas_iguais": 4,
+        },
+        "blocos": [
+            {"tipo": "igual", "texto": "Linha inalterada"},
+            {"tipo": "modificado", "antigo": ["Linha Antiga 1"], "novo": ["Linha Nova 1"]},
+            {"tipo": "adicionado", "texto": "Linha Nova Adicionada"},
+            {"tipo": "removido", "texto": "Linha Velha Removida"},
+        ],
+    }
+
+    mock_comp_repo = MagicMock()
+    comp_mod = HinoComparativo(
+        id=3,
+        numero_novo="3",
+        numero_antigo="3",
+        titulo_novo="O Deus Eterno Reina",
+        titulo_antigo="O Deus Eterno Reina",
+        status_comparacao="MODIFICADO",
+        modificado=1,
+        similaridade_pct=85.0,
+        resumo_alteracoes="2 linha(s) modificada(s)",
+        diff_json=json.dumps(sample_diff),
+    )
+    mock_comp_repo.get_by_numero_novo = AsyncMock(return_value=comp_mod)
+
+    view_obj = HinoView(
+        3,
+        hino_repo,
+        fav_repo,
+        hist_repo,
+        comparativo_repository=mock_comp_repo,
+    )
+    mock_page = MagicMock(spec=ft.Page)
+
+    await view_obj.build(mock_page)
+    assert view_obj.comparativo.status_comparacao == "MODIFICADO"
+
+    # Clicar no chip aciona o modo de comparação
+    view_obj._on_chip_comparativo_click(mock_page)
+    assert view_obj.selected_view_mode == "comparacao"
+
+    diff_ctrl = view_obj._render_current_mode_content()
+    assert isinstance(diff_ctrl, ft.Column)
+    assert len(diff_ctrl.controls) > 1
+
+    # Atualização de fontes atualiza o modo comparativo também
+    view_obj._increase_font(mock_page)
+    assert view_obj.font_size == 20
+    assert view_obj.content_container is not None
+
+
+@pytest.mark.asyncio
+async def test_hino_view_comparativo_inedito(in_memory_db):
+    from src.models.comparativo import HinoComparativo
+
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    mock_comp_repo = MagicMock()
+    comp_inedito = HinoComparativo(
+        id=11,
+        numero_novo="1",
+        numero_antigo=None,
+        titulo_novo="Hino Inedito",
+        titulo_antigo=None,
+        status_comparacao="NOVO_INEDITO",
+        modificado=1,
+    )
+    mock_comp_repo.get_by_numero_novo = AsyncMock(return_value=comp_inedito)
+
+    view_obj = HinoView(
+        1,
+        hino_repo,
+        fav_repo,
+        hist_repo,
+        comparativo_repository=mock_comp_repo,
+    )
+    mock_page = MagicMock(spec=ft.Page)
+
+    await view_obj.build(mock_page)
+    assert view_obj.comparativo.status_comparacao == "NOVO_INEDITO"
+    assert view_obj.segmented_button is None  # Não exibe segmented button para inédito

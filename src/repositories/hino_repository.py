@@ -102,6 +102,43 @@ class HinoRepository:
             autores=row["autores"] if "autores" in keys else None,
         )
 
+    async def get_by_numero(self, numero: str) -> Optional[Hino]:
+        """
+        Retorna um hino completo pelo número (ex: '18', '587A').
+        """
+        if not numero:
+            return None
+        conn = await self.db_connection.get_connection()
+        query = """
+            SELECT * 
+            FROM hino 
+            WHERE numero = ? OR numero = ?
+            LIMIT 1;
+        """
+        num_clean = str(numero).strip()
+        num_with_underscore = num_clean.replace("A", "_A").replace("B", "_B") if ("A" in num_clean or "B" in num_clean) and "_" not in num_clean else num_clean
+        async with conn.execute(query, (num_clean, num_with_underscore)) as cursor:
+            row = await cursor.fetchone()
+
+        if row is None:
+            return None
+
+        keys = row.keys()
+        return Hino(
+            id=row["id"],
+            numero=str(row["numero"]),
+            titulo=str(row["titulo"]),
+            letra=row["letra"] if "letra" in keys else None,
+            autor_letra=row["autor_letra"] if "autor_letra" in keys else None,
+            autor_musica=row["autor_musica"] if "autor_musica" in keys else None,
+            texto_base=row["texto_base"] if "texto_base" in keys else None,
+            categoria=row["categoria"] if "categoria" in keys else None,
+            subcategoria=row["subcategoria"] if "subcategoria" in keys else None,
+            link_video=row["link_video"] if "link_video" in keys else None,
+            letra_json=row["letra_json"] if "letra_json" in keys else None,
+            autores=row["autores"] if "autores" in keys else None,
+        )
+
     async def search(self, term: str) -> List[Hino]:
         """
         Busca inteligente de hinos com relevância ponderada:

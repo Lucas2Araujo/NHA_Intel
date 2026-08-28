@@ -60,6 +60,10 @@ def test_theme_service_apply_theme_amoled(in_memory_db):
     assert mock_page.bgcolor == AMOLED_BG_COLOR
     assert mock_page.dark_theme is not None
     assert mock_page.dark_theme.color_scheme.surface == AMOLED_BG_COLOR
+    assert mock_page.dark_theme.system_overlay_style is not None
+    assert mock_page.dark_theme.system_overlay_style.status_bar_color == AMOLED_BG_COLOR
+    assert mock_page.theme is not None
+    assert mock_page.theme != mock_page.dark_theme
 
 
 

@@ -167,17 +167,9 @@ class HomeView:
             allow_empty_selection=True,
             segments=[
                 ft.Segment(value="todos", label=ft.Text("Todos")),
-                ft.Segment(
-                    value="favoritos",
-                    label=ft.Text("Favoritos"),
-                    icon=ft.Icons.FAVORITE,
-                ),
-                ft.Segment(
-                    value="recentes", label=ft.Text("Recentes"), icon=ft.Icons.HISTORY
-                ),
-                ft.Segment(
-                    value="explorar", label=ft.Text("Explorar"), icon=ft.Icons.EXPLORE
-                ),
+                ft.Segment(value="favoritos", label=ft.Text("Favoritos")),
+                ft.Segment(value="recentes", label=ft.Text("Recentes")),
+                ft.Segment(value="explorar", label=ft.Text("Explorar")),
             ],
             on_change=self._on_filter_select,
             expand=True,
@@ -202,6 +194,7 @@ class HomeView:
 
         return ft.View(
             route="/",
+            bgcolor=ft.Colors.SURFACE,
             appbar=ft.AppBar(
                 title=ft.Row(
                     controls=[
@@ -231,23 +224,34 @@ class HomeView:
                 ],
             ),
             controls=[
-                ft.Container(
-                    content=ft.Row(
+                ft.SafeArea(
+                    content=ft.Column(
                         controls=[
-                            self.search_field,
-                            self.sort_button,
+                            ft.Container(
+                                content=ft.Row(
+                                    controls=[
+                                        self.search_field,
+                                        self.sort_button,
+                                    ],
+                                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                                ),
+                                padding=ft.Padding.only(left=16, top=16, right=16, bottom=8),
+                            ),
+                            ft.Container(
+                                content=ft.Row(
+                                    controls=[self.filter_bar],
+                                    scroll=ft.ScrollMode.AUTO,
+                                ),
+                                alignment=ft.Alignment.CENTER,
+                                padding=ft.Padding.symmetric(horizontal=16, vertical=4),
+                            ),
+                            self.active_filter_banner,
+                            self.main_content_container,
                         ],
-                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        expand=True,
                     ),
-                    padding=ft.Padding.only(left=16, top=16, right=16, bottom=8),
+                    expand=True,
                 ),
-                ft.Container(
-                    content=self.filter_bar,
-                    alignment=ft.Alignment.CENTER,
-                    padding=ft.Padding.symmetric(horizontal=16, vertical=4),
-                ),
-                self.active_filter_banner,
-                self.main_content_container,
             ],
         )
 
@@ -389,7 +393,7 @@ class HomeView:
                     tight=True,
                     spacing=12,
                 ),
-                padding=ft.Padding.all(20),
+                padding=ft.Padding.only(left=20, top=20, right=20, bottom=40),
             )
         )
         self.page.show_dialog(bs)
@@ -487,7 +491,7 @@ class HomeView:
                         size=14,
                         color=ft.Colors.BLUE_200,
                     ),
-                    width=50,
+                    width=55,
                     alignment=ft.Alignment.CENTER,
                 ),
                 title=ft.Text(

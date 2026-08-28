@@ -131,6 +131,7 @@ class DownloadManagerView:
 
         return ft.View(
             route="/downloads",
+            bgcolor=ft.Colors.SURFACE,
             appbar=ft.AppBar(
                 leading=ft.IconButton(ft.Icons.ARROW_BACK, on_click=_go_back),
                 title=ft.Text("Gerenciador de Downloads", weight=ft.FontWeight.BOLD),
@@ -138,21 +139,24 @@ class DownloadManagerView:
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
             ),
             controls=[
-                ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            progress_panel,
-                            ft.Divider(height=1),
-                            video_sd_card,
-                            video_hd_card,
-                            ft.Divider(height=1),
-                            clear_section,
-                        ],
-                        spacing=12,
-                        scroll=ft.ScrollMode.AUTO,
+                ft.SafeArea(
+                    content=ft.Container(
+                        content=ft.Column(
+                            controls=[
+                                progress_panel,
+                                ft.Divider(height=1),
+                                video_sd_card,
+                                video_hd_card,
+                                ft.Divider(height=1),
+                                clear_section,
+                            ],
+                            spacing=12,
+                            scroll=ft.ScrollMode.AUTO,
+                            expand=True,
+                        ),
+                        padding=ft.Padding.symmetric(horizontal=16, vertical=8),
                         expand=True,
                     ),
-                    padding=ft.Padding.symmetric(horizontal=16, vertical=8),
                     expand=True,
                 ),
             ],

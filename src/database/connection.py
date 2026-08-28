@@ -272,6 +272,27 @@ class DatabaseConnection:
             except Exception:
                 pass
 
+        # Sincronização automática entre metadados e hino (caso metadados seja atualizado externamente)
+        try:
+            await conn.execute("""
+                UPDATE hino
+                SET texto_base = (
+                    SELECT TRIM(m.texto_base)
+                    FROM metadados m
+                    WHERE m.hino_numero = hino.numero
+                )
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM metadados m
+                    WHERE m.hino_numero = hino.numero
+                      AND m.texto_base IS NOT NULL
+                      AND TRIM(m.texto_base) != ''
+                      AND (hino.texto_base IS NULL OR TRIM(hino.texto_base) = '')
+                );
+            """)
+        except Exception:
+            pass
+
         # Tabela FTS5 para busca full-text (letra, categoria, subcategoria, texto_base, autores, temas, textos)
         try:
             async with conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='hino_fts';") as cursor:

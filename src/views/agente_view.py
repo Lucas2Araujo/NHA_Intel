@@ -69,8 +69,17 @@ class AgenteView:
 
         return ft.View(
             route="/agente",
+            bgcolor=ft.Colors.SURFACE,
             appbar=self._build_app_bar(page),
-            controls=view_controls,
+            controls=[
+                ft.SafeArea(
+                    content=ft.Column(
+                        controls=view_controls,
+                        expand=True,
+                    ),
+                    expand=True,
+                ),
+            ],
         )
 
     def _init_controls(self, page: ft.Page) -> None:

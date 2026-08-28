@@ -20,12 +20,19 @@ async def test_home_view_build(in_memory_db):
     view = await home_view_obj.build(mock_page)
     assert isinstance(view, ft.View)
     assert view.route == "/"
+    assert view.bgcolor == ft.Colors.SURFACE
     assert len(view.controls) > 0
+    assert isinstance(view.controls[0], ft.SafeArea)
     assert home_view_obj.list_container is not None
     assert home_view_obj.explore_container is not None
     assert home_view_obj.main_content_container is not None
     assert home_view_obj.list_container.visible is True
     assert home_view_obj.explore_container.visible is False
+    assert home_view_obj.filter_bar is not None
+    # Check that segments have text labels without cluttering icons
+    for seg in home_view_obj.filter_bar.segments:
+        assert seg.icon is None
+        assert isinstance(seg.label, ft.Text)
 
 
 @pytest.mark.asyncio

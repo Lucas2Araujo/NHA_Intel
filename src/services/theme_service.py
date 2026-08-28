@@ -68,6 +68,10 @@ class ThemeService:
         Aplica o tema configurado à página do Flet.
         Se AMOLED: ativa Dark Mode com fundo #000000 e esquema de cores otimizado para OLED.
         Se Sistema: ativa ThemeMode.SYSTEM padrão com transições de tela fluidas.
+
+        IMPORTANTE: page.theme é usado para o modo CLARO e page.dark_theme para o modo ESCURO.
+        Nunca copiar dark_theme → theme, pois isso causa inconsistências quando o Flet
+        resolve tokens semânticos de cor.
         """
         if not page:
             return
@@ -88,25 +92,35 @@ class ThemeService:
         if self.is_amoled:
             page.theme_mode = ft.ThemeMode.DARK
             page.bgcolor = AMOLED_BG_COLOR
+
+            amoled_color_scheme = ft.ColorScheme(
+                surface=AMOLED_BG_COLOR,
+                surface_dim=AMOLED_BG_COLOR,
+                surface_bright=AMOLED_SURFACE_CONTAINER_HIGHEST,
+                surface_container_lowest=AMOLED_BG_COLOR,
+                surface_container_low=AMOLED_SURFACE_COLOR,
+                surface_container=AMOLED_SURFACE_CONTAINER,
+                surface_container_high=AMOLED_SURFACE_CONTAINER_HIGH,
+                surface_container_highest=AMOLED_SURFACE_CONTAINER_HIGHEST,
+                on_surface=ft.Colors.WHITE,
+                on_surface_variant=ft.Colors.GREY_400,
+                primary=ft.Colors.BLUE_400,
+                on_primary=ft.Colors.BLACK,
+                outline=AMOLED_DIVIDER_COLOR,
+            )
+
+            # dark_theme recebe o esquema AMOLED — usado pelo Flet quando theme_mode=DARK
             page.dark_theme = ft.Theme(
                 page_transitions=transitions,
-                color_scheme=ft.ColorScheme(
-                    surface=AMOLED_BG_COLOR,
-                    surface_dim=AMOLED_BG_COLOR,
-                    surface_bright=AMOLED_SURFACE_CONTAINER_HIGHEST,
-                    surface_container_lowest=AMOLED_BG_COLOR,
-                    surface_container_low=AMOLED_SURFACE_COLOR,
-                    surface_container=AMOLED_SURFACE_CONTAINER,
-                    surface_container_high=AMOLED_SURFACE_CONTAINER_HIGH,
-                    surface_container_highest=AMOLED_SURFACE_CONTAINER_HIGHEST,
-                    on_surface=ft.Colors.WHITE,
-                    on_surface_variant=ft.Colors.GREY_400,
-                    primary=ft.Colors.BLUE_400,
-                    on_primary=ft.Colors.BLACK,
-                    outline=AMOLED_DIVIDER_COLOR,
+                color_scheme=amoled_color_scheme,
+                system_overlay_style=ft.SystemOverlayStyle(
+                    status_bar_color=AMOLED_BG_COLOR,
+                    system_navigation_bar_color=AMOLED_BG_COLOR,
                 ),
             )
-            page.theme = page.dark_theme
+
+            # theme (modo claro) fica com o padrão — nunca copiar dark_theme para cá
+            page.theme = ft.Theme(page_transitions=transitions)
 
         else:
             page.theme_mode = ft.ThemeMode.SYSTEM

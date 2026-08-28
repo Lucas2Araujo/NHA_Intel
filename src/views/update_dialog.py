@@ -1,7 +1,8 @@
 """
 Diálogo de Atualização Automática para Flet.
-Exibe informações da nova versão, notas da release, barra de progresso em tempo real
-e executa o disparo da instalação do pacote .apk.
+Exibe informações da nova versão, notas da release formatadas em Markdown,
+identificação de arquitetura de CPU, barra de progresso em tempo real,
+validação de integridade e disparo da instalação do pacote .apk ou fallback no navegador.
 """
 
 import os
@@ -11,35 +12,43 @@ from typing import Dict, Any, Optional
 from src.services.updater_service import UpdaterService
 
 
+async def open_in_browser(page: ft.Page, url: str) -> None:
+    """Abre a URL especificada no navegador padrão do dispositivo."""
+    if not url:
+        return
+    try:
+        if hasattr(page, "launch_url"):
+            await page.launch_url(url)
+        elif hasattr(ft, "UrlLauncher"):
+            await ft.UrlLauncher().launch_url(url)
+    except Exception:
+        pass
+
+
 async def trigger_apk_installation(page: ft.Page, apk_path: str, fallback_url: Optional[str] = None):
     """
-    Dispara a instalação do arquivo .apk no Android / Desktop.
+    Dispara a instalação do arquivo .apk no Android.
     Utiliza page.launch_url para acionar a Intent nativa do PackageInstaller no Android.
+    Se não for possível abrir localmente, aciona o fallback para o navegador.
     """
     launched = False
-    
-    # 1. Tenta disparar o instalador via URI local
+
+    # 1. Tenta disparar o instalador via URI local (Intent do Android)
     if apk_path and os.path.exists(apk_path):
         local_uri = f"file://{os.path.abspath(apk_path)}"
         try:
-            if hasattr(ft, "UrlLauncher"):
-                await ft.UrlLauncher().launch_url(local_uri)
-                launched = True
-            elif hasattr(page, "launch_url"):
+            if hasattr(page, "launch_url"):
                 await page.launch_url(local_uri)
+                launched = True
+            elif hasattr(ft, "UrlLauncher"):
+                await ft.UrlLauncher().launch_url(local_uri)
                 launched = True
         except Exception:
             launched = False
 
-    # 2. Fallback: se não conseguiu abrir via file:// ou se não existe, abre URL web/direta
+    # 2. Fallback: se não conseguiu abrir via file:// ou se falhou, abre no navegador
     if not launched and fallback_url:
-        try:
-            if hasattr(ft, "UrlLauncher"):
-                await ft.UrlLauncher().launch_url(fallback_url)
-            elif hasattr(page, "launch_url"):
-                await page.launch_url(fallback_url)
-        except Exception:
-            pass
+        await open_in_browser(page, fallback_url)
 
 
 class UpdateDialog:
@@ -61,6 +70,11 @@ class UpdateDialog:
         self.current_version: str = update_info.get("current_version", "")
         self.release_notes: str = update_info.get("release_notes", "").strip()
         self.download_url: Optional[str] = update_info.get("download_url") or update_info.get("html_url")
+        self.html_url: Optional[str] = update_info.get("html_url") or self.download_url
+        self.asset_name: Optional[str] = update_info.get("asset_name")
+        self.asset_size: Optional[int] = update_info.get("asset_size")
+        self.expected_sha256: Optional[str] = update_info.get("expected_sha256")
+        self.detected_arch: str = update_info.get("detected_arch", UpdaterService.get_device_architecture())
 
         self.download_task: Optional[asyncio.Task] = None
         self._dialog_task: Optional[asyncio.Task] = None
@@ -77,6 +91,8 @@ class UpdateDialog:
         self.actions_row.controls = [self.btn_cancel, self.btn_update]
 
     def _close_dialog(self, _e=None) -> None:
+        if self.download_task and not self.download_task.done():
+            self.download_task.cancel()
         if self.page:
             try:
                 self.page.pop_dialog()
@@ -108,7 +124,7 @@ class UpdateDialog:
 
     def _handle_download_success(self, saved_apk_path: str) -> None:
         self.progress_bar.value = 1.0
-        self.status_text.value = "Download concluído! Iniciando instalador..."
+        self.status_text.value = "Download concluído e validado! Iniciando instalador..."
         self.status_text.color = ft.Colors.GREEN_400
         self.actions_row.controls = [
             ft.TextButton("Fechar", on_click=self._close_dialog),
@@ -133,11 +149,16 @@ class UpdateDialog:
         self.status_text.color = ft.Colors.RED_400
         self.actions_row.controls = [
             ft.TextButton("Fechar", on_click=self._close_dialog),
+            ft.OutlinedButton(
+                "Tentar Novamente",
+                icon=ft.Icons.REFRESH,
+                on_click=self._on_click_iniciar_download,
+            ),
             ft.FilledButton(
-                "Baixar pelo Navegador",
+                "Baixar no Navegador",
                 icon=ft.Icons.OPEN_IN_BROWSER,
                 on_click=lambda ev: asyncio.create_task(
-                    trigger_apk_installation(self.page, "", self.download_url)
+                    open_in_browser(self.page, self.download_url or self.html_url or "")
                 ),
             ),
         ]
@@ -148,13 +169,23 @@ class UpdateDialog:
             self.status_text.value = "URL de download indisponível."
             self.status_text.color = ft.Colors.RED_400
             self.status_text.visible = True
+            self.actions_row.controls = [
+                ft.TextButton("Fechar", on_click=self._close_dialog),
+                ft.FilledButton(
+                    "Abrir GitHub",
+                    icon=ft.Icons.OPEN_IN_BROWSER,
+                    on_click=lambda ev: asyncio.create_task(
+                        open_in_browser(self.page, self.html_url or "")
+                    ),
+                ),
+            ]
             self.page.update()
             return
 
         self.progress_bar.visible = True
         self.progress_bar.value = None
         self.status_text.visible = True
-        self.status_text.value = "Iniciando download da atualização..."
+        self.status_text.value = "Iniciando download do APK compatível..."
         self.status_text.color = ft.Colors.BLUE_200
 
         self.actions_row.controls = [
@@ -167,6 +198,9 @@ class UpdateDialog:
                 self.updater_service.download_apk(
                     download_url=self.download_url,
                     on_progress=self._on_progress,
+                    filename=self.asset_name,
+                    expected_size=self.asset_size,
+                    expected_sha256=self.expected_sha256,
                 )
             )
             saved_apk_path = await self.download_task
@@ -179,31 +213,63 @@ class UpdateDialog:
             self._handle_download_error(err)
 
     def _build_version_card(self) -> ft.Container:
+        arch_label = UpdaterService.format_architecture_label(self.detected_arch)
+        
+        info_items = [
+            ft.Container(
+                content=ft.Text(f"CPU: {arch_label}", size=11, weight=ft.FontWeight.W_500, color=ft.Colors.BLUE_300),
+                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGH,
+                padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                border_radius=6,
+            )
+        ]
+
+        if self.asset_size and self.asset_size > 0:
+            size_mb = self.asset_size / (1024 * 1024)
+            info_items.append(
+                ft.Container(
+                    content=ft.Text(f"{size_mb:.1f} MB", size=11, weight=ft.FontWeight.W_500, color=ft.Colors.GREY_300),
+                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGH,
+                    padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                    border_radius=6,
+                )
+            )
+
         return ft.Container(
-            content=ft.Row(
+            content=ft.Column(
                 controls=[
-                    ft.Column(
+                    ft.Row(
                         controls=[
-                            ft.Text("Versão Atual", size=11, color=ft.Colors.GREY_400),
-                            ft.Text(f"v{self.current_version}", weight=ft.FontWeight.BOLD, size=14),
-                        ],
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    ),
-                    ft.Icon(ft.Icons.ARROW_FORWARD, size=18, color=ft.Colors.BLUE_400),
-                    ft.Column(
-                        controls=[
-                            ft.Text("Nova Versão", size=11, color=ft.Colors.GREEN_400),
-                            ft.Text(
-                                f"v{self.latest_version}",
-                                weight=ft.FontWeight.BOLD,
-                                size=14,
-                                color=ft.Colors.GREEN_400,
+                            ft.Column(
+                                controls=[
+                                    ft.Text("Versão Atual", size=11, color=ft.Colors.GREY_400),
+                                    ft.Text(f"v{self.current_version}", weight=ft.FontWeight.BOLD, size=14),
+                                ],
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                            ),
+                            ft.Icon(ft.Icons.ARROW_FORWARD, size=18, color=ft.Colors.BLUE_400),
+                            ft.Column(
+                                controls=[
+                                    ft.Text("Nova Versão", size=11, color=ft.Colors.GREEN_400),
+                                    ft.Text(
+                                        f"v{self.latest_version}",
+                                        weight=ft.FontWeight.BOLD,
+                                        size=14,
+                                        color=ft.Colors.GREEN_400,
+                                    ),
+                                ],
+                                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                             ),
                         ],
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        alignment=ft.MainAxisAlignment.SPACE_AROUND,
+                    ),
+                    ft.Row(
+                        controls=info_items,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        spacing=8,
                     ),
                 ],
-                alignment=ft.MainAxisAlignment.SPACE_AROUND,
+                spacing=8,
             ),
             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
             border_radius=8,
@@ -218,7 +284,13 @@ class UpdateDialog:
         )
         return ft.Container(
             content=ft.Column(
-                controls=[ft.Text(notes_content, size=12, selectable=True)],
+                controls=[
+                    ft.Markdown(
+                        notes_content,
+                        selectable=True,
+                        extension_set=ft.MarkdownExtensionSet.GITHUB_WEB,
+                    )
+                ],
                 scroll=ft.ScrollMode.AUTO,
             ),
             height=160,
