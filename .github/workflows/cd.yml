@@ -30,6 +30,7 @@ jobs:
           tag_prefix: v
           release_branches: main,master
           fetch_all_tags: true
+          custom_release_rules: "feat:minor:🚀 Novas Funcionalidades,fix:patch:🐛 Correções de Bugs,perf:patch:⚡ Melhorias de Performance,refactor:patch:♻️ Refatoração,docs:none:📚 Documentação,style:none:💄 Estilo de Código,chore:none:🔧 Tarefas e Manutenção,ci:none:🤖 CI/CD"
 
       - name: Set up Java 17 (JDK)
         uses: actions/setup-java@v4

@@ -23,12 +23,14 @@ async def test_home_view_build(in_memory_db):
     assert view.bgcolor == ft.Colors.SURFACE
     assert len(view.controls) > 0
     assert isinstance(view.controls[0], ft.SafeArea)
+    assert view.controls[0].maintain_bottom_view_padding is True
     assert home_view_obj.list_container is not None
     assert home_view_obj.explore_container is not None
     assert home_view_obj.main_content_container is not None
     assert home_view_obj.list_container.visible is True
     assert home_view_obj.explore_container.visible is False
     assert home_view_obj.filter_bar is not None
+    assert home_view_obj.filter_bar.show_selected_icon is False
     # Check that segments have text labels without cluttering icons
     for seg in home_view_obj.filter_bar.segments:
         assert seg.icon is None
@@ -251,16 +253,25 @@ async def test_home_view_recentes_tab_shows_only_clicked_hinos(in_memory_db):
     assert home_view_obj.current_filter == "recentes"
     # Apenas o container de estado vazio
     assert len(home_view_obj.list_container.controls) == 1
+    assert home_view_obj.sort_button.visible is False
 
-    # 2. Registrar acesso apenas ao hino 2 (simulando clique/visualização de letra)
+    # 2. Registrar acesso a múltiplos hinos em ordem não sequencial: hino 3, depois 1, depois 2
+    await hist_repo.add_acesso(3)
+    await asyncio.sleep(0.01)
+    await hist_repo.add_acesso(1)
+    await asyncio.sleep(0.01)
     await hist_repo.add_acesso(2)
 
-    # 3. Recarregar aba recentes
+    # 3. Recarregar aba recentes mesmo com ordenação em num_asc ou title_asc
+    home_view_obj.current_sort = "num_asc"
     await home_view_obj._on_filter_select(mock_event)
-    assert len(home_view_obj.list_container.controls) == 1
-    tile = home_view_obj.list_container.controls[0]
-    assert isinstance(tile, ft.ListTile)
-    assert "Ó Adorai o Senhor" in tile.title.value
+    assert len(home_view_obj.list_container.controls) == 3
+    # A ordem deve ser estritamente cronológica decrescente: 2 (mais recente), 1, 3 (mais antigo)
+    tiles = home_view_obj.list_container.controls
+    assert "Ó Adorai o Senhor" in tiles[0].title.value  # hino 2
+    assert "Santo, Santo, Santo!" in tiles[1].title.value  # hino 1
+    assert "O Deus Eterno Reina" in tiles[2].title.value  # hino 3
+    assert home_view_obj.sort_button.visible is False
 
     # 4. Digitar na busca com a aba recentes aberta deve redirecionar para busca global (todos)
     mock_search_event = MagicMock()
@@ -268,6 +279,7 @@ async def test_home_view_recentes_tab_shows_only_clicked_hinos(in_memory_db):
     home_view_obj._on_search_change(mock_search_event)
     assert home_view_obj.current_filter == "todos"
     assert home_view_obj.filter_bar.selected == ["todos"]
+    assert home_view_obj.sort_button.visible is True
 
 
 @pytest.mark.asyncio
@@ -286,6 +298,7 @@ async def test_home_view_category_search_and_tab_switch(in_memory_db):
     assert home_view_obj.current_filter == "categoria"
     assert home_view_obj.active_category == "Adoração"
     assert home_view_obj.active_filter_banner.visible is True
+    assert home_view_obj.sort_button.visible is True
 
     # 2. Busca termo dentro da categoria
     mock_search = MagicMock()
@@ -302,12 +315,14 @@ async def test_home_view_category_search_and_tab_switch(in_memory_db):
     assert home_view_obj.current_filter == "explorar"
     assert home_view_obj.active_category is None
     assert home_view_obj.active_filter_banner.visible is False
+    assert home_view_obj.sort_button.visible is False
 
     # 4. Troca de aba para "Todos"
     mock_tab_event.control.selected = ["todos"]
     await home_view_obj._on_filter_select(mock_tab_event)
     assert home_view_obj.current_filter == "todos"
     assert home_view_obj.active_category is None
+    assert home_view_obj.sort_button.visible is True
 
 
 @pytest.mark.asyncio
@@ -326,11 +341,16 @@ async def test_home_view_show_about_dialog(in_memory_db):
     mock_page.show_dialog.assert_called_once()
     bs = mock_page.show_dialog.call_args[0][0]
     assert isinstance(bs, ft.BottomSheet)
+    assert bs.scrollable is True
+    assert bs.show_drag_handle is True
+    assert bs.use_safe_area is True
+    assert bs.maintain_bottom_view_insets_padding is True
     assert bs.content is not None
 
     # Verifica se os componentes do diálogo estão presentes
     dialog_col = bs.content.content
     assert isinstance(dialog_col, ft.Column)
+    assert dialog_col.scroll == ft.ScrollMode.AUTO
     
     # Encontra o container com o botão do GitHub e o switch AMOLED
     github_button_found = False

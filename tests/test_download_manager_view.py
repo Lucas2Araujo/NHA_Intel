@@ -19,3 +19,4 @@ def test_download_manager_view_build(in_memory_db, tmp_path):
     assert view.bgcolor == ft.Colors.SURFACE
     assert len(view.controls) > 0
     assert isinstance(view.controls[0], ft.SafeArea)
+    assert view.controls[0].maintain_bottom_view_padding is True

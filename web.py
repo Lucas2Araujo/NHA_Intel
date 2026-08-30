@@ -59,7 +59,7 @@ def _set_window_icon_if_exists(page: ft.Page, asset_icon: Path) -> None:
 
 def _setup_assets_and_theme(page: ft.Page, theme_service: Optional[ThemeService] = None) -> None:
     """Configura título, ícones, fontes e tema da aplicação."""
-    page.title = f"Hinário Inteligente v{APP_VERSION}"
+    page.title = f"Hinário Inteligente v{APP_VERSION} (Web)"
 
     root_dir = Path(__file__).resolve().parent
     asset_icon = root_dir / "assets" / "icon.ico"
@@ -109,7 +109,7 @@ def _build_loading_view(progress_val: Optional[float] = None) -> ft.View:
                                 padding=ft.Padding.all(16),
                             ),
                             ft.Text(
-                                "Hinário Inteligente",
+                                "Hinário Inteligente (Web)",
                                 size=20,
                                 weight=ft.FontWeight.BOLD,
                                 text_align=ft.TextAlign.CENTER,
@@ -249,10 +249,11 @@ async def _check_updates_background(page: ft.Page, updater_service: UpdaterServi
 
 async def main(page: ft.Page):
     """
-    Ponto de entrada assíncrono do aplicativo Hinário Inteligente em Flet (0.85+).
-    Exibe imediatamente a tela de loading/splash adaptativa, inicializa as conexões
-    aiosqlite, restaura preferências (incluindo AMOLED) e carrega as views com fluidez.
+    Ponto de entrada assíncrono do aplicativo Hinário Inteligente em Flet (versão Web).
+    Inicializa todas as conexões aos bancos de dados SQLite (hinario.db, ARA.sqlite,
+    hinario_comparativo.db, hinario_antigo.db) e restaura preferências e rotas.
     """
+    # Inicialização de todos os bancos de dados
     db_connection = DatabaseConnection(db_path="hinario.db")
     biblia_connection = DatabaseConnection(db_path="ARA.sqlite", read_only=True)
     comparativo_connection = DatabaseConnection(db_path="hinario_comparativo.db", read_only=True)
@@ -261,7 +262,7 @@ async def main(page: ft.Page):
     theme_service = ThemeService(db_connection)
     _setup_assets_and_theme(page, theme_service)
 
-    # 1. Renderiza IMEDIATAMENTE a tela de loading minimalista (elimina tela branca em ARMv7)
+    # 1. Renderiza IMEDIATAMENTE a tela de loading minimalista
     page.views.clear()
     page.views.append(_build_loading_view())
     page.update()
@@ -270,6 +271,7 @@ async def main(page: ft.Page):
     await theme_service.load_preferences()
     theme_service.apply_theme(page)
 
+    # Repositórios e Serviços com todos os bancos integrados
     hino_repository = HinoRepository(db_connection)
     favorito_repository = FavoritoRepository(db_connection)
     historico_repository = HistoricoRepository(db_connection)
@@ -342,7 +344,7 @@ async def main(page: ft.Page):
     if not page.route or page.route == "/loading":
         page.route = "/"
 
-    # 3. Transiciona suavemente para a rota inicial (HomeView)
+    # 3. Transiciona para a rota inicial (HomeView)
     await route_change(None)
 
     # 4. Dispara a verificação assíncrona de atualizações em segundo plano
@@ -352,5 +354,15 @@ async def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(main, assets_dir="assets")
+    # Configuração de porta e host para execução web
+    port = int(os.environ.get("PORT", 8550))
+    host = os.environ.get("HOST", "127.0.0.1")
+    print(f"Iniciando Hinário Inteligente Web em http://{host}:{port} ...")
+    ft.run(
+        main,
+        view=ft.AppView.WEB_BROWSER,
+        assets_dir="assets",
+        host=host,
+        port=port,
+    )
 

@@ -19,3 +19,6 @@ def test_agente_view_build(in_memory_db):
     assert isinstance(view, ft.View)
     assert view.route == "/agente"
     assert len(view.controls) > 0
+    assert isinstance(view.controls[0], ft.SafeArea)
+    assert view.controls[0].maintain_bottom_view_padding is True
+    assert agente_view_obj.tab_bar.show_selected_icon is False

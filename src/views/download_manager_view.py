@@ -140,6 +140,7 @@ class DownloadManagerView:
             ),
             controls=[
                 ft.SafeArea(
+                    maintain_bottom_view_padding=True,
                     content=ft.Container(
                         content=ft.Column(
                             controls=[

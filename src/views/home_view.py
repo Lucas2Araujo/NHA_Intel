@@ -165,11 +165,12 @@ class HomeView:
         self.filter_bar = ft.SegmentedButton(
             selected=[self.current_filter],
             allow_empty_selection=True,
+            show_selected_icon=False,
             segments=[
-                ft.Segment(value="todos", label=ft.Text("Todos")),
-                ft.Segment(value="favoritos", label=ft.Text("Favoritos")),
-                ft.Segment(value="recentes", label=ft.Text("Recentes")),
-                ft.Segment(value="explorar", label=ft.Text("Explorar")),
+                ft.Segment(value="todos", label=ft.Text("Todos", size=13)),
+                ft.Segment(value="favoritos", label=ft.Text("Favoritos", size=13)),
+                ft.Segment(value="recentes", label=ft.Text("Recentes", size=13)),
+                ft.Segment(value="explorar", label=ft.Text("Explorar", size=13)),
             ],
             on_change=self._on_filter_select,
             expand=True,
@@ -225,6 +226,7 @@ class HomeView:
             ),
             controls=[
                 ft.SafeArea(
+                    maintain_bottom_view_padding=True,
                     content=ft.Column(
                         controls=[
                             ft.Container(
@@ -240,7 +242,6 @@ class HomeView:
                             ft.Container(
                                 content=ft.Row(
                                     controls=[self.filter_bar],
-                                    scroll=ft.ScrollMode.AUTO,
                                 ),
                                 alignment=ft.Alignment.CENTER,
                                 padding=ft.Padding.symmetric(horizontal=16, vertical=4),
@@ -314,6 +315,10 @@ class HomeView:
         )
 
         bs = ft.BottomSheet(
+            scrollable=True,
+            show_drag_handle=True,
+            use_safe_area=True,
+            maintain_bottom_view_insets_padding=True,
             content=ft.Container(
                 content=ft.Column(
                     controls=[
@@ -390,11 +395,12 @@ class HomeView:
                             spacing=10,
                         ),
                     ],
+                    scroll=ft.ScrollMode.AUTO,
                     tight=True,
                     spacing=12,
                 ),
-                padding=ft.Padding.only(left=20, top=20, right=20, bottom=40),
-            )
+                padding=ft.Padding.only(left=20, top=10, right=20, bottom=30),
+            ),
         )
         self.page.show_dialog(bs)
 
@@ -756,6 +762,8 @@ class HomeView:
         self.current_filter = "explorar"
         if self.filter_bar:
             self.filter_bar.selected = ["explorar"]
+        if self.sort_button:
+            self.sort_button.visible = False
         self._show_content_view("explorar")
         await self._load_explore_data()
         if self.page:
@@ -768,6 +776,8 @@ class HomeView:
         self.current_filter = "todos"
         if self.filter_bar:
             self.filter_bar.selected = ["todos"]
+        if self.sort_button:
+            self.sort_button.visible = True
         self._show_content_view("list")
         await self._load_current_filter_data("")
         if self.page:
@@ -781,6 +791,8 @@ class HomeView:
         self.active_tema = None
         if self.filter_bar:
             self.filter_bar.selected = ["explorar"]
+        if self.sort_button:
+            self.sort_button.visible = True
         self._show_content_view("list")
 
         await self._load_current_filter_data("")
@@ -795,6 +807,8 @@ class HomeView:
         self.active_category = None
         if self.filter_bar:
             self.filter_bar.selected = ["explorar"]
+        if self.sort_button:
+            self.sort_button.visible = True
         self._show_content_view("list")
 
         await self._load_current_filter_data("")
@@ -808,23 +822,31 @@ class HomeView:
                 term = search_term.lower().strip()
                 hinos = [h for h in hinos if term in h.numero.lower() or term in h.titulo.lower()]
             self._update_filter_banner(len(hinos))
+            sorted_hinos = self._sort_hinos(hinos)
         elif self.current_filter == "tema" and self.active_tema:
             hinos = await self.hino_repository.search_by_tema(self.active_tema)
             if search_term and search_term.strip():
                 term = search_term.lower().strip()
                 hinos = [h for h in hinos if term in h.numero.lower() or term in h.titulo.lower()]
             self._update_filter_banner(len(hinos))
+            sorted_hinos = self._sort_hinos(hinos)
         elif self.current_filter == "favoritos":
             self._update_filter_banner(0)
             hinos = await self._fetch_filtered_favoritos(search_term)
+            sorted_hinos = self._sort_hinos(hinos)
         elif self.current_filter == "recentes":
             self._update_filter_banner(0)
             hinos = await self._fetch_filtered_recentes(search_term)
+            # Na aba Recentes, preserva estritamente a ordem cronológica do mais recente para o mais antigo
+            sorted_hinos = hinos
         else:
             self._update_filter_banner(0)
             hinos = await self.hino_repository.search(search_term)
+            sorted_hinos = self._sort_hinos(hinos)
 
-        sorted_hinos = self._sort_hinos(hinos)
+        if self.sort_button:
+            self.sort_button.visible = self.current_filter not in ("recentes", "explorar")
+
         self._render_hino_tiles(sorted_hinos)
 
     async def _fetch_filtered_favoritos(self, search_term: str) -> List[Hino]:
@@ -867,6 +889,8 @@ class HomeView:
                 self.active_filter_banner.visible = False
             if self.filter_bar:
                 self.filter_bar.selected = ["todos"]
+            if self.sort_button:
+                self.sort_button.visible = True
             self._show_content_view("list")
 
         if self.search_field:

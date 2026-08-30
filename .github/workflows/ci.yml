@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [ "main", "master" ]
 
+permissions:
+  contents: write
+
 jobs:
   test:
     name: Run Async Unit Test Suite
@@ -28,3 +31,30 @@ jobs:
       - name: Run Pytest Test Suite
         run: |
           pytest -v
+
+      - name: Update Dynamic Test Count in README
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          TOTAL_TESTS=$(pytest --collect-only -q | grep -E "^tests/.*::" | wc -l)
+          echo "Total de testes detectados: $TOTAL_TESTS"
+          python -c "
+          import re
+          count = '$TOTAL_TESTS'
+          with open('README.md', 'r', encoding='utf-8') as f:
+              content = f.read()
+          content = re.sub(r'Testes-[0-9]+%20passando', f'Testes-{count}%20passando', content)
+          content = re.sub(r'\*\*[0-9]+ testes assíncronos\*\*', f'**{count} testes assíncronos**', content)
+          content = re.sub(r'[0-9]+ testes unitários', f'{count} testes unitários', content)
+          content = re.sub(r'completa de [0-9]+ testes', f'completa de {count} testes', content)
+          with open('README.md', 'w', encoding='utf-8') as f:
+              f.write(content)
+          "
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if ! git diff --quiet HEAD README.md; then
+            git commit -m "docs: atualizar contagem de testes no README para $TOTAL_TESTS [skip ci]"
+            git push
+          else
+            echo "README.md já está atualizado com a contagem de testes."
+          fi

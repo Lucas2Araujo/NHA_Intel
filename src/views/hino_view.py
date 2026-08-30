@@ -316,6 +316,7 @@ class HinoView:
             ),
             controls=[
                 ft.SafeArea(
+                    maintain_bottom_view_padding=True,
                     content=ft.Container(
                         content=scroll_column,
                         expand=True,

@@ -73,6 +73,7 @@ class AgenteView:
             appbar=self._build_app_bar(page),
             controls=[
                 ft.SafeArea(
+                    maintain_bottom_view_padding=True,
                     content=ft.Column(
                         controls=view_controls,
                         expand=True,
@@ -159,6 +160,7 @@ class AgenteView:
 
         self.tab_bar = ft.SegmentedButton(
             selected=[self.current_tab],
+            show_selected_icon=False,
             segments=[
                 ft.Segment(
                     value="novo",

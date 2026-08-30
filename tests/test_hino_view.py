@@ -28,6 +28,7 @@ async def test_hino_view_build_success(in_memory_db):
     assert view.bgcolor == ft.Colors.SURFACE
     assert len(view.controls) > 0
     assert isinstance(view.controls[0], ft.SafeArea)
+    assert view.controls[0].maintain_bottom_view_padding is True
     assert view_obj.letra_text is not None
     assert view_obj.font_size == 18
 
