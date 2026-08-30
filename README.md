@@ -5,7 +5,7 @@
 [![CI Test Suite](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/ci.yml/badge.svg)](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/ci.yml)
 [![CD Android Split APKs](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/cd.yml/badge.svg)](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/cd.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/Lucas2Araujo/NHA_Intel?color=blue&label=Vers%C3%A3o&style=flat-square)](https://github.com/Lucas2Araujo/NHA_Intel/releases/latest)
-[![Testes Automatizados](https://img.shields.io/badge/Testes-86%20passando-brightgreen?style=flat-square&logo=pytest&logoColor=white)](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/ci.yml)
+[![Testes Automatizados](https://img.shields.io/badge/Testes-90%20passando-brightgreen?style=flat-square&logo=pytest&logoColor=white)](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%20%7C%203.14-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Flet 0.85+](https://img.shields.io/badge/Flet-0.85%2B-5c2d91?style=flat-square&logo=flutter&logoColor=white)](https://flet.dev/)
 [![SQLite FTS5](https://img.shields.io/badge/SQLite-FTS5%20Inside-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
@@ -59,7 +59,7 @@ A aplicação integra **Busca Full-Text FTS5** insensível a acentos, **Hinário
 | **Bíblia Integrada** | SQLite (ARA) | Base bíblica Almeida Revista e Atualizada para consulta imediata de versículos |
 | **Comparador** | SQLite + Diff Engine | Base comparativa com mapeamento entre versões do hinário |
 | **Temas & Visual** | ThemeService | Gestão de temas (Sistema, Claro, Escuro e AMOLED puro) |
-| **Testes** | `pytest` & `pytest-asyncio` | 86 testes unitários e de integração com banco em memória (`:memory:`) |
+| **Testes** | `pytest` & `pytest-asyncio` | 90 testes unitários e de integração com banco em memória (`:memory:`) |
 | **CI/CD** | GitHub Actions | Esteira de testes contínuos e compilação automatizada de APKs Split por ABI |
 
 ---
@@ -261,7 +261,7 @@ python main.py
 ## 🧪 Testes e Qualidade de Código
 
 ### Executar a Suíte de Testes (Pytest)
-O projeto conta com **86 testes assíncronos** cobrindo repositórios, serviços, views, comparador de versões, persistência e integridade do banco:
+O projeto conta com **90 testes assíncronos** cobrindo repositórios, serviços, views, comparador de versões, persistência e integridade do banco:
 ```bash
 pytest -v
 ```
@@ -285,7 +285,7 @@ O repositório possui fluxos de automação contínua via **GitHub Actions**:
 
 1. **Integração Contínua (CI - `.github/workflows/ci.yml`)**:
    - Disparada em todo `push` ou `pull_request` para as branches `main` e `master`.
-   - Executa a suíte completa de 86 testes unitários e de integração no ambiente Linux com Python 3.14.
+   - Executa a suíte completa de 90 testes unitários e de integração no ambiente Linux com Python 3.14.
    - Sincroniza dinamicamente a contagem de testes no `README.md` a cada push na branch principal.
 
 2. **Entrega Contínua (CD - `.github/workflows/cd.yml`)**:
