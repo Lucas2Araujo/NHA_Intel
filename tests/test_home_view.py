@@ -21,7 +21,7 @@ async def test_home_view_build(in_memory_db):
 
     view = await home_view_obj.build(mock_page)
     assert isinstance(view, ft.View)
-    assert view.route == "/"
+    assert view.route == "/novo"
     assert view.bgcolor == ft.Colors.SURFACE
     assert len(view.controls) > 0
     assert isinstance(view.controls[0], ft.SafeArea)
@@ -37,6 +37,21 @@ async def test_home_view_build(in_memory_db):
     for seg in home_view_obj.filter_bar.segments:
         assert seg.icon is None
         assert isinstance(seg.label, ft.Text)
+
+
+@pytest.mark.asyncio
+async def test_home_view_build_antigo_edition(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo, edition="antigo")
+    mock_page = MagicMock(spec=ft.Page)
+
+    view = await home_view_obj.build(mock_page)
+    assert isinstance(view, ft.View)
+    assert view.route == "/antigo"
+    assert "Hinário Tradicional" in mock_page.title
 
 
 @pytest.mark.asyncio

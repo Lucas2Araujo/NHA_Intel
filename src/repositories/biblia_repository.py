@@ -2,6 +2,8 @@ import re
 import unicodedata
 from typing import Optional, List, Dict, Tuple, Any
 
+from pathlib import Path
+
 from src.database.connection import DatabaseConnection
 from src.models.biblia import PassagemBiblica, Versiculo
 
@@ -397,47 +399,162 @@ SINGLE_CHAPTER_BOOKS: set[int] = {
     65,
 }  # Obadias, Filemom, 2 João, 3 João, Judas
 
+BIBLE_VERSION_NAMES: dict[str, str] = {
+    "ARA": "Almeida Revista e Atualizada",
+    "NVI": "Nova Versão Internacional",
+    "NTLH": "Nova Tradução na Linguagem de Hoje",
+    "KJA": "King James Atualizada",
+    "AS21": "Almeida Século 21",
+}
+
 
 class BibliaRepository:
     """
-    Repositório assíncrono para consulta de textos bíblicos no banco SQLite ARA.sqlite.
+    Repositório assíncrono para consulta de textos bíblicos em bancos SQLite (ex: ARA.sqlite, NVI.sqlite).
+    Suporta descoberta dinâmica de múltiplas versões da Bíblia na pasta assets/biblias e chaveamento de versões.
     Opera estritamente em modo de leitura com queries parametrizadas (?).
     """
 
-    def __init__(self, db_connection: DatabaseConnection | None = None):
-        if db_connection is None:
-            self.db_connection = DatabaseConnection(
-                db_path="ARA.sqlite", read_only=True
-            )
-        else:
-            self.db_connection = db_connection
-        self._book_names: dict[int, str] = {}
+    DEFAULT_VERSION = "ARA"
+
+    def __init__(
+        self,
+        db_connection: DatabaseConnection | None = None,
+        default_version: str = DEFAULT_VERSION,
+    ):
+        self.active_version: str = (
+            (default_version or self.DEFAULT_VERSION).strip().upper()
+        )
+        self._connections: dict[str, DatabaseConnection] = {}
+        if db_connection is not None:
+            self._connections[self.active_version] = db_connection
+
+        self._book_names: dict[str, dict[int, str]] = {}
         self._passagem_cache: dict[str, PassagemBiblica | None] = {}
 
+    @classmethod
+    def get_version_name(cls, version: str) -> str:
+        """Retorna o nome completo e descritivo da versão bíblica."""
+        v = (version or "").strip().upper()
+        return BIBLE_VERSION_NAMES.get(v, v)
+
+    @classmethod
+    def get_available_versions_with_names(cls) -> list[tuple[str, str]]:
+        """Retorna lista de tuplas (código, nome_completo) das versões disponíveis."""
+        versions = cls.get_available_versions()
+        return [(v, cls.get_version_name(v)) for v in versions]
+
+    @property
+    def db_connection(self) -> DatabaseConnection:
+        """Retorna a conexão ativa para a versão corrente (compatibilidade legada)."""
+        return self._get_connection(self.active_version)
+
+    @db_connection.setter
+    def db_connection(self, conn: DatabaseConnection) -> None:
+        self._connections[self.active_version] = conn
+
+    @staticmethod
+    def get_available_versions() -> list[str]:
+        """
+        Descobre dinamicamente as versões da Bíblia disponíveis nos diretórios de assets e dados.
+        Retorna uma lista ordenada com os nomes das versões (ex: ['ARA', 'NVI']), mantendo 'ARA' como prioritária.
+        """
+        versions: set[str] = set()
+        module_dir = Path(__file__).resolve().parent.parent  # src
+        root_dir = module_dir.parent  # project root
+
+        candidate_dirs = [
+            root_dir / "assets" / "biblias",
+            root_dir / "assets",
+            module_dir / "assets" / "biblias",
+            module_dir / "assets",
+            module_dir / "database" / "data" / "biblias",
+            module_dir / "database" / "data",
+            DatabaseConnection._get_user_data_dir() / "biblias",
+            DatabaseConnection._get_user_data_dir(),
+        ]
+
+        ignored_prefixes = ("hinario", "test", "temp", "cache")
+        valid_extensions = {".sqlite", ".db", ".sqlite3"}
+
+        for d in candidate_dirs:
+            if not d.exists() or not d.is_dir():
+                continue
+            try:
+                for item in d.iterdir():
+                    if item.is_file() and item.suffix.lower() in valid_extensions:
+                        name = item.stem
+                        if any(name.lower().startswith(p) for p in ignored_prefixes):
+                            continue
+                        if item.stat().st_size > 0:
+                            versions.add(name.upper())
+            except Exception:
+                pass
+
+        if not versions:
+            return ["ARA"]
+
+        sorted_versions = sorted(versions)
+        if "ARA" in sorted_versions:
+            sorted_versions.remove("ARA")
+            sorted_versions.insert(0, "ARA")
+        return sorted_versions
+
+    def set_version(self, version: str) -> None:
+        """Altera a versão bíblica ativa corrente."""
+        if version and version.strip():
+            self.active_version = version.strip().upper()
+
+    def _get_connection(self, version: str | None = None) -> DatabaseConnection:
+        """Obtém ou instancia a conexão com o banco SQLite da versão especificada."""
+        v = (version or self.active_version or self.DEFAULT_VERSION).strip().upper()
+        if v not in self._connections:
+            self._connections[v] = DatabaseConnection(
+                db_path=f"biblias/{v}.sqlite", read_only=True
+            )
+        return self._connections[v]
+
     def clear_cache(self) -> None:
-        """Limpa os caches em memória."""
+        """Limpa os caches em memória de passagens e nomes de livros."""
         self._book_names.clear()
         self._passagem_cache.clear()
 
-    async def _get_book_names(self) -> dict[int, str]:
-        """Carrega e armazena em cache o mapa de id -> nome canônico dos livros."""
-        if not self._book_names:
+    async def close(self) -> None:
+        """Encerra todas as conexões ativas com os bancos das Bíblias."""
+        for conn in list(self._connections.values()):
             try:
-                conn = await self.db_connection.get_connection()
+                await conn.close()
+            except Exception:
+                pass
+        self._connections.clear()
+
+    async def _get_book_names(self, version: str | None = None) -> dict[int, str]:
+        """Carrega e armazena em cache o mapa de id -> nome canônico dos livros da versão."""
+        v = (version or self.active_version).strip().upper()
+        if v not in self._book_names:
+            names: dict[int, str] = {}
+            try:
+                conn_mgr = self._get_connection(v)
+                conn = await conn_mgr.get_connection()
                 query = "SELECT id, name FROM book ORDER BY id ASC;"
                 async with conn.execute(query) as cursor:
                     rows = await cursor.fetchall()
                 for row in rows:
-                    self._book_names[int(row["id"])] = str(row["name"])
+                    names[int(row["id"])] = str(row["name"])
             except Exception:
                 pass
-        return self._book_names
+            self._book_names[v] = names
+        return self._book_names.get(v, {})
 
     @staticmethod
     def _parse_verse_range(token: str) -> list[int]:
         """Extrai intervalo de versículos 'start-end' se válido."""
         parts = token.split("-")
-        if len(parts) == 2 and parts[0].strip().isdigit() and parts[1].strip().isdigit():
+        if (
+            len(parts) == 2
+            and parts[0].strip().isdigit()
+            and parts[1].strip().isdigit()
+        ):
             start, end = int(parts[0].strip()), int(parts[1].strip())
             if start <= end:
                 return list(range(start, end + 1))
@@ -480,7 +597,9 @@ class BibliaRepository:
             if sep in num_str:
                 ch_part, _, v_part = num_str.partition(sep)
                 if ch_part.strip().isdigit():
-                    return int(ch_part.strip()), cls._parse_verses_sequence(v_part.strip())
+                    return int(ch_part.strip()), cls._parse_verses_sequence(
+                        v_part.strip()
+                    )
         return None
 
     @classmethod
@@ -571,17 +690,22 @@ class BibliaRepository:
             "verses": verses,
         }
 
-    async def buscar_passagem(self, referencia: str) -> PassagemBiblica | None:
+    async def buscar_passagem(
+        self, referencia: str, versao: str | None = None
+    ) -> PassagemBiblica | None:
         """
-        Consulta o banco de dados da Bíblia e retorna os versículos correspondentes
-        à referência bíblica informada. Utiliza cache LRU em memória (máximo 30 itens).
+        Consulta o banco de dados da Bíblia da versão especificada e retorna os versículos
+        correspondentes à referência bíblica informada. Utiliza cache LRU em memória (máximo 50 itens).
         """
         if not referencia:
             return None
 
         clean_ref = referencia.strip()
-        if clean_ref in self._passagem_cache:
-            return self._passagem_cache[clean_ref]
+        v = (versao or self.active_version or self.DEFAULT_VERSION).strip().upper()
+        cache_key = f"{v}:{clean_ref}"
+
+        if cache_key in self._passagem_cache:
+            return self._passagem_cache[cache_key]
 
         parsed = self.parse_referencia(clean_ref)
         if not parsed:
@@ -591,30 +715,31 @@ class BibliaRepository:
         chapter = parsed["chapter"]
         verses = parsed["verses"]
 
-        book_names = await self._get_book_names()
+        book_names = await self._get_book_names(v)
         canonical_book_name = book_names.get(book_id, parsed["book_name"])
 
-        conn = await self.db_connection.get_connection()
-
-        if verses:
-            placeholders = ",".join("?" * len(verses))
-            query = f"""
-                SELECT verse, text 
-                FROM verse 
-                WHERE book_id = ? AND chapter = ? AND verse IN ({placeholders})
-                ORDER BY verse ASC;
-            """
-            params = [book_id, chapter] + verses
-        else:
-            query = """
-                SELECT verse, text 
-                FROM verse 
-                WHERE book_id = ? AND chapter = ?
-                ORDER BY verse ASC;
-            """
-            params = [book_id, chapter]
-
         try:
+            conn_mgr = self._get_connection(v)
+            conn = await conn_mgr.get_connection()
+
+            if verses:
+                placeholders = ",".join("?" * len(verses))
+                query = f"""
+                    SELECT verse, text 
+                    FROM verse 
+                    WHERE book_id = ? AND chapter = ? AND verse IN ({placeholders})
+                    ORDER BY verse ASC;
+                """
+                params = [book_id, chapter] + verses
+            else:
+                query = """
+                    SELECT verse, text 
+                    FROM verse 
+                    WHERE book_id = ? AND chapter = ?
+                    ORDER BY verse ASC;
+                """
+                params = [book_id, chapter]
+
             async with conn.execute(query, params) as cursor:
                 rows = await cursor.fetchall()
 
@@ -649,10 +774,77 @@ class BibliaRepository:
                 capitulo=chapter,
                 versiculos=versiculos,
             )
-            if len(self._passagem_cache) >= 30:
+            if len(self._passagem_cache) >= 50:
                 first_key = next(iter(self._passagem_cache))
                 del self._passagem_cache[first_key]
-            self._passagem_cache[clean_ref] = passagem
+            self._passagem_cache[cache_key] = passagem
+            return passagem
+        except Exception:
+            return None
+
+    async def buscar_capitulo_completo(
+        self, referencia: str, versao: str | None = None
+    ) -> PassagemBiblica | None:
+        """
+        Consulta todos os versículos do capítulo associado a uma dada referência bíblica.
+        Ideal para fornecer contexto de leitura completo ao usuário.
+        """
+        if not referencia:
+            return None
+
+        clean_ref = referencia.strip()
+        parsed = self.parse_referencia(clean_ref)
+        if not parsed:
+            return None
+
+        book_id = parsed["book_id"]
+        chapter = parsed["chapter"]
+        v = (versao or self.active_version or self.DEFAULT_VERSION).strip().upper()
+        cache_key = f"{v}:full:{book_id}:{chapter}"
+
+        if cache_key in self._passagem_cache:
+            return self._passagem_cache[cache_key]
+
+        book_names = await self._get_book_names(v)
+        canonical_book_name = book_names.get(book_id, parsed["book_name"])
+
+        try:
+            conn_mgr = self._get_connection(v)
+            conn = await conn_mgr.get_connection()
+
+            query = """
+                SELECT verse, text 
+                FROM verse 
+                WHERE book_id = ? AND chapter = ?
+                ORDER BY verse ASC;
+            """
+            async with conn.execute(query, (book_id, chapter)) as cursor:
+                rows = await cursor.fetchall()
+
+            if not rows:
+                return None
+
+            versiculos = [
+                Versiculo(
+                    livro=canonical_book_name,
+                    capitulo=chapter,
+                    numero=int(row["verse"]),
+                    texto=str(row["text"]).strip(),
+                )
+                for row in rows
+            ]
+
+            passagem = PassagemBiblica(
+                referencia=f"{canonical_book_name} {chapter}",
+                livro=canonical_book_name,
+                capitulo=chapter,
+                versiculos=versiculos,
+            )
+
+            if len(self._passagem_cache) >= 50:
+                first_key = next(iter(self._passagem_cache))
+                del self._passagem_cache[first_key]
+            self._passagem_cache[cache_key] = passagem
             return passagem
         except Exception:
             return None

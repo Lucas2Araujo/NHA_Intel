@@ -171,10 +171,129 @@ async def test_biblia_cache_lifecycle():
     repo = BibliaRepository(db_conn)
     p1 = await repo.buscar_passagem("João 3:16")
     assert p1 is not None
-    assert "João 3:16" in repo._passagem_cache
+    assert "ARA:João 3:16" in repo._passagem_cache
     assert await repo.buscar_passagem("João 3:16") is p1
 
     repo.clear_cache()
     assert len(repo._passagem_cache) == 0
     assert len(repo._book_names) == 0
-    await db_conn.close()
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_biblia_multi_version_discovery_and_query():
+    versions = BibliaRepository.get_available_versions()
+    assert isinstance(versions, list)
+    assert len(versions) >= 1
+    assert "ARA" in versions
+    assert versions[0] == "ARA"
+
+    # Testa chaveamento e fallback
+    db_conn_ara = DatabaseConnection(db_path=":memory:", read_only=True)
+    conn_ara = await db_conn_ara.get_connection()
+    await conn_ara.execute(
+        "CREATE TABLE book (id INTEGER PRIMARY KEY, name VARCHAR(50));"
+    )
+    await conn_ara.execute(
+        "CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);"
+    )
+    await conn_ara.execute("INSERT INTO book VALUES (43, 'João');")
+    await conn_ara.execute(
+        "INSERT INTO verse VALUES (1, 43, 3, 16, 'Texto ARA: Porque Deus amou o mundo');"
+    )
+    await conn_ara.commit()
+
+    db_conn_nvi = DatabaseConnection(db_path=":memory:", read_only=True)
+    conn_nvi = await db_conn_nvi.get_connection()
+    await conn_nvi.execute(
+        "CREATE TABLE book (id INTEGER PRIMARY KEY, name VARCHAR(50));"
+    )
+    await conn_nvi.execute(
+        "CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);"
+    )
+    await conn_nvi.execute("INSERT INTO book VALUES (43, 'João');")
+    await conn_nvi.execute(
+        "INSERT INTO verse VALUES (1, 43, 3, 16, 'Texto NVI: Porque Deus tanto amou o mundo');"
+    )
+    await conn_nvi.commit()
+
+    repo = BibliaRepository(db_conn_ara, default_version="ARA")
+    repo._connections["NVI"] = db_conn_nvi
+
+    # Busca padrão ARA
+    p_ara = await repo.buscar_passagem("João 3:16")
+    assert p_ara is not None
+    assert "Texto ARA" in p_ara.versiculos[0].texto
+
+    # Busca específica NVI
+    p_nvi = await repo.buscar_passagem("João 3:16", versao="NVI")
+    assert p_nvi is not None
+    assert "Texto NVI" in p_nvi.versiculos[0].texto
+
+    # Chaveamento de versão padrão
+    repo.set_version("NVI")
+    assert repo.active_version == "NVI"
+    p_nvi_active = await repo.buscar_passagem("João 3:16")
+    assert p_nvi_active is not None
+    assert "Texto NVI" in p_nvi_active.versiculos[0].texto
+
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_biblia_version_names_and_descriptions():
+    assert BibliaRepository.get_version_name("ARA") == "Almeida Revista e Atualizada"
+    assert BibliaRepository.get_version_name("NVI") == "Nova Versão Internacional"
+    assert (
+        BibliaRepository.get_version_name("NTLH")
+        == "Nova Tradução na Linguagem de Hoje"
+    )
+    assert BibliaRepository.get_version_name("KJA") == "King James Atualizada"
+    assert BibliaRepository.get_version_name("AS21") == "Almeida Século 21"
+    assert BibliaRepository.get_version_name("DESCONHECIDA") == "DESCONHECIDA"
+
+    version_tuples = BibliaRepository.get_available_versions_with_names()
+    assert isinstance(version_tuples, list)
+    assert len(version_tuples) >= 1
+    assert version_tuples[0][0] == "ARA"
+    assert version_tuples[0][1] == "Almeida Revista e Atualizada"
+
+
+@pytest.mark.asyncio
+async def test_biblia_buscar_capitulo_completo():
+    db_conn = DatabaseConnection(db_path=":memory:", read_only=True)
+    conn = await db_conn.get_connection()
+    await conn.execute("CREATE TABLE book (id INTEGER PRIMARY KEY, name VARCHAR(50));")
+    await conn.execute(
+        "CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);"
+    )
+    await conn.execute("INSERT INTO book VALUES (19, 'Salmos');")
+    await conn.executemany(
+        "INSERT INTO verse VALUES (?, 19, 23, ?, ?);",
+        [
+            (1, 1, "O SENHOR é o meu pastor; nada me faltará."),
+            (2, 2, "Ele me faz repousar em pastos verdejantes."),
+            (3, 3, "Refrigera a minha alma."),
+            (4, 4, "Ainda que eu ande pelo vale da sombra da morte..."),
+            (5, 5, "Preparas uma mesa perante mim..."),
+            (6, 6, "Certamente que a bondade e a misericórdia me seguirão..."),
+        ],
+    )
+    await conn.commit()
+
+    repo = BibliaRepository(db_conn)
+
+    # Busca a partir de um versículo ou intervalo, mas solicita o capítulo completo
+    passagem = await repo.buscar_capitulo_completo("Salmos 23:1-2")
+    assert passagem is not None
+    assert passagem.referencia == "Salmos 23"
+    assert len(passagem.versiculos) == 6
+    assert passagem.versiculos[0].numero == 1
+    assert passagem.versiculos[-1].numero == 6
+    assert "bondade e a misericórdia" in passagem.versiculos[-1].texto
+
+    # Referência vazia ou inválida
+    assert await repo.buscar_capitulo_completo("") is None
+    assert await repo.buscar_capitulo_completo("Invalido 99:99") is None
+
+    await repo.close()

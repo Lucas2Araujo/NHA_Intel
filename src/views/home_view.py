@@ -76,6 +76,7 @@ class HomeView:
         historico_repository: HistoricoRepository,
         updater_service: UpdaterService | None = None,
         theme_service: ThemeService | None = None,
+        edition: str = "novo",
     ):
         self.hino_repository = hino_repository
         self.favorito_repository = favorito_repository
@@ -84,6 +85,7 @@ class HomeView:
         self.theme_service = theme_service or ThemeService(
             hino_repository.db_connection
         )
+        self.edition: str = edition
         self._search_task: asyncio.Task | None = None
         self._sort_task: asyncio.Task | None = None
         self._chunk_render_task: asyncio.Task | None = None
@@ -103,7 +105,13 @@ class HomeView:
 
     async def build(self, page: ft.Page, initial_search: str = "") -> ft.View:
         self.page = page
-        self.page.title = f"Hinário Inteligente - v{APP_VERSION}"
+        edition_title = (
+            "Hinário Novo" if self.edition == "novo" else "Hinário Tradicional"
+        )
+        self.page.title = f"{edition_title} - v{APP_VERSION}"
+
+        if self.theme_service:
+            self.theme_service.apply_theme(page, edition=self.edition)
 
         if initial_search:
             self.current_search = initial_search
@@ -201,21 +209,33 @@ class HomeView:
             padding=ft.Padding.symmetric(horizontal=4, vertical=4),
         )
 
+        badge_year = "2022" if self.edition == "novo" else "1996"
+        badge_color = (
+            ft.Colors.BLUE_200 if self.edition == "novo" else ft.Colors.AMBER_300
+        )
+
         return ft.View(
-            route="/",
+            route=f"/{self.edition}",
             bgcolor=ft.Colors.SURFACE,
             appbar=ft.AppBar(
+                leading=ft.IconButton(
+                    ft.Icons.SWAP_HORIZ,
+                    tooltip="Trocar Hinário",
+                    on_click=lambda e: asyncio.create_task(self._navigate("/")),
+                ),
                 title=ft.Row(
                     controls=[
-                        ft.Text("Hinário", weight=ft.FontWeight.BOLD),
+                        ft.Text(edition_title, weight=ft.FontWeight.BOLD),
                         ft.Container(
                             content=ft.Text(
-                                f"v{APP_VERSION}",
+                                badge_year,
                                 size=11,
-                                color=ft.Colors.BLUE_200,
+                                color=badge_color,
                                 weight=ft.FontWeight.BOLD,
                             ),
-                            padding=ft.Padding.only(left=4),
+                            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                            border_radius=4,
+                            padding=ft.Padding.symmetric(horizontal=6, vertical=2),
                         ),
                     ],
                     alignment=ft.MainAxisAlignment.CENTER,
@@ -453,7 +473,9 @@ class HomeView:
     async def _on_amoled_toggle(self, enabled: bool) -> None:
         """Manipula a alternância do Modo AMOLED."""
         if self.theme_service and self.page:
-            await self.theme_service.toggle_amoled(self.page, enabled)
+            await self.theme_service.toggle_amoled(
+                self.page, enabled, edition=self.edition
+            )
 
     def _show_snack(self, message: str, duration: int = 3000) -> None:
         """Exibe um SnackBar de forma segura compatível com o Flet."""
@@ -544,6 +566,16 @@ class HomeView:
                 seen_ids.add(h_id)
                 unique_hinos.append(h)
 
+        num_color = (
+            ft.Colors.BLUE_200
+            if self.edition == "novo"
+            else (
+                ft.Colors.PURPLE_200
+                if (self.theme_service and self.theme_service.is_amoled)
+                else ft.Colors.AMBER_300
+            )
+        )
+
         tiles: list[ft.Control] = [
             ft.ListTile(
                 leading=ft.Container(
@@ -551,7 +583,7 @@ class HomeView:
                         format_hino_number(hino.numero),
                         weight=ft.FontWeight.BOLD,
                         size=14,
-                        color=ft.Colors.BLUE_200,
+                        color=num_color,
                     ),
                     width=55,
                     alignment=ft.Alignment.CENTER,
@@ -562,7 +594,7 @@ class HomeView:
                     size=16,
                 ),
                 on_click=lambda e=None, h_id=hino.id: asyncio.create_task(
-                    self._navigate(f"/hino/{h_id}")
+                    self._navigate(f"/{self.edition}/hino/{h_id}")
                 ),
             )
             for hino in unique_hinos

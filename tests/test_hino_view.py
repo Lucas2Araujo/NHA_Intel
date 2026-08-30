@@ -9,6 +9,8 @@ from src.repositories.hino_repository import HinoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.views.hino_view import (
     DEFAULT_FONT_FAMILY,
+    HELVETICA_FONT_FAMILY,
+    MONTSERRAT_FONT_FAMILY,
     OPENDYSLEXIC_FONT_FAMILY,
     TIMES_NEW_ROMAN_FONT_FAMILY,
     HinoView,
@@ -26,13 +28,27 @@ async def test_hino_view_build_success(in_memory_db):
 
     view = await view_obj.build(mock_page)
     assert isinstance(view, ft.View)
-    assert view.route == "/hino/1"
+    assert view.route == "/novo/hino/1"
     assert view.bgcolor == ft.Colors.SURFACE
     assert len(view.controls) > 0
     assert isinstance(view.controls[0], ft.SafeArea)
     assert view.controls[0].maintain_bottom_view_padding is True
     assert view_obj.letra_text is not None
     assert view_obj.font_size == 18
+
+
+@pytest.mark.asyncio
+async def test_hino_view_build_antigo_edition(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    view_obj = HinoView(1, hino_repo, fav_repo, hist_repo, edition="antigo")
+    mock_page = MagicMock(spec=ft.Page)
+
+    view = await view_obj.build(mock_page)
+    assert isinstance(view, ft.View)
+    assert view.route == "/antigo/hino/1"
 
 
 @pytest.mark.asyncio
@@ -46,7 +62,7 @@ async def test_hino_view_build_not_found(in_memory_db):
 
     view = await view_obj.build(mock_page)
     assert isinstance(view, ft.View)
-    assert view.route == "/hino/999"
+    assert view.route == "/novo/hino/999"
 
 
 @pytest.mark.asyncio
@@ -78,6 +94,12 @@ async def test_hino_view_font_accessibility_methods(in_memory_db):
 
     view_obj._set_font_family(mock_page, TIMES_NEW_ROMAN_FONT_FAMILY)
     assert view_obj.selected_font == TIMES_NEW_ROMAN_FONT_FAMILY
+
+    view_obj._set_font_family(mock_page, HELVETICA_FONT_FAMILY)
+    assert view_obj.selected_font == HELVETICA_FONT_FAMILY
+
+    view_obj._set_font_family(mock_page, MONTSERRAT_FONT_FAMILY)
+    assert view_obj.selected_font == MONTSERRAT_FONT_FAMILY
 
     view_obj._reset_font(mock_page)
     assert view_obj.selected_font == DEFAULT_FONT_FAMILY
@@ -148,6 +170,7 @@ async def test_hino_view_abrir_modal_leitura_biblica_success(in_memory_db):
     hist_repo = HistoricoRepository(in_memory_db)
 
     mock_biblia_repo = MagicMock()
+    mock_biblia_repo.get_available_versions.return_value = ["ARA", "NVI"]
     passagem = PassagemBiblica(
         referencia="João 3:16",
         livro="João",
@@ -183,19 +206,14 @@ async def test_hino_view_abrir_modal_leitura_biblica_success(in_memory_db):
     mock_page.show_dialog.assert_called_once()
     dialog_arg = mock_page.show_dialog.call_args[0][0]
     assert isinstance(dialog_arg, ft.BottomSheet)
-    mock_biblia_repo.buscar_passagem.assert_called_once_with("João 3:16")
+    mock_biblia_repo.buscar_passagem.assert_called_with("João 3:16", versao="ARA")
 
-    # Verifica que não há botão de fechar no topo (cabeçalho)
+    # Verifica que há o seletor Dropdown no cabeçalho
     header_row = dialog_arg.content.content.controls[0]
-    assert not any(
-        isinstance(ctrl, ft.IconButton) and ctrl.icon == ft.Icons.CLOSE
-        for ctrl in header_row.controls
-    )
-
-    # Verifica que o botão do rodapé é "Fechar"
-    footer_row = dialog_arg.content.content.controls[-1]
-    assert isinstance(footer_row.controls[0], ft.TextButton)
-    assert footer_row.controls[0].content == "Fechar"
+    dropdown = header_row.controls[1]
+    assert isinstance(dropdown, ft.Dropdown)
+    assert len(dropdown.options) == 2
+    assert dropdown.value == "ARA"
 
     # Teste 2: Aberto a partir do modal de informações (from_info_modal=True)
     mock_page.show_dialog.reset_mock()
@@ -221,6 +239,7 @@ async def test_hino_view_abrir_modal_leitura_biblica_not_found(in_memory_db):
     hist_repo = HistoricoRepository(in_memory_db)
 
     mock_biblia_repo = MagicMock()
+    mock_biblia_repo.get_available_versions.return_value = ["ARA"]
     mock_biblia_repo.buscar_passagem = AsyncMock(return_value=None)
 
     view_obj = HinoView(
@@ -240,6 +259,165 @@ async def test_hino_view_abrir_modal_leitura_biblica_not_found(in_memory_db):
 
 
 @pytest.mark.asyncio
+async def test_hino_view_abrir_modal_leitura_biblica_interactive_features(in_memory_db):
+    from src.models.biblia import PassagemBiblica, Versiculo
+
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    mock_biblia_repo = MagicMock()
+    mock_biblia_repo.get_available_versions.return_value = ["ARA", "NVI"]
+    mock_biblia_repo.get_version_name.side_effect = lambda v: (
+        "Almeida Revista e Atualizada" if v == "ARA" else v
+    )
+
+    passagem_isaias = PassagemBiblica(
+        referencia="Isaías 6:1-3",
+        livro="Isaías",
+        capitulo=6,
+        versiculos=[
+            Versiculo(
+                livro="Isaías",
+                capitulo=6,
+                numero=1,
+                texto="No ano da morte do rei Uzias...",
+            ),
+            Versiculo(
+                livro="Isaías",
+                capitulo=6,
+                numero=2,
+                texto="Serafins estavam por cima dele...",
+            ),
+            Versiculo(
+                livro="Isaías",
+                capitulo=6,
+                numero=3,
+                texto="E clamavam: Santo, santo, santo...",
+            ),
+        ],
+    )
+    passagem_isaias_full = PassagemBiblica(
+        referencia="Isaías 6",
+        livro="Isaías",
+        capitulo=6,
+        versiculos=[
+            Versiculo(
+                livro="Isaías",
+                capitulo=6,
+                numero=1,
+                texto="No ano da morte do rei Uzias...",
+            ),
+            Versiculo(
+                livro="Isaías",
+                capitulo=6,
+                numero=2,
+                texto="Serafins estavam por cima dele...",
+            ),
+            Versiculo(
+                livro="Isaías",
+                capitulo=6,
+                numero=3,
+                texto="E clamavam: Santo, santo, santo...",
+            ),
+            Versiculo(
+                livro="Isaías",
+                capitulo=6,
+                numero=4,
+                texto="As bases das portas tremeram...",
+            ),
+        ],
+    )
+    passagem_apoc = PassagemBiblica(
+        referencia="Apocalipse 4:8",
+        livro="Apocalipse",
+        capitulo=4,
+        versiculos=[
+            Versiculo(
+                livro="Apocalipse",
+                capitulo=4,
+                numero=8,
+                texto="E os quatro seres viventes...",
+            ),
+        ],
+    )
+
+    mock_biblia_repo.buscar_passagem = AsyncMock(
+        side_effect=lambda ref, versao=None: (
+            passagem_apoc if "Apocalipse" in ref else passagem_isaias
+        )
+    )
+    mock_biblia_repo.buscar_capitulo_completo = AsyncMock(
+        return_value=passagem_isaias_full
+    )
+
+    view_obj = HinoView(
+        1,
+        hino_repo,
+        fav_repo,
+        hist_repo,
+        biblia_repository=mock_biblia_repo,
+        edition="antigo",
+    )
+    view_obj.relacionados = {
+        "temas": ["Santidade"],
+        "textos_biblicos": ["Apocalipse 4:8"],
+    }
+
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.height = 800
+    mock_page.overlay = []
+
+    hino = await hino_repo.get_by_id(1)
+
+    await view_obj._abrir_modal_leitura_biblica(
+        mock_page, "Isaías 6:1-3", from_info_modal=False, hino=hino
+    )
+
+    mock_page.show_dialog.assert_called_once()
+    dialog_arg = mock_page.show_dialog.call_args[0][0]
+    controls = dialog_arg.content.content.controls
+
+    # 1. Verifica header e barra de chips de múltiplas referências
+    header_row = controls[0]
+    ref_chips_container = controls[1]
+    assert len(ref_chips_container.content.controls) > 0
+    chips_row = ref_chips_container.content.controls[0].content.controls[1]
+    assert len(chips_row.controls) == 2  # Isaías 6:1-3 (Base) e Apocalipse 4:8
+
+    # 2. Testa alternância de referência ao clicar no chip do Apocalipse
+    chip_apoc = chips_row.controls[1]
+    await chip_apoc.on_click(MagicMock())
+    mock_biblia_repo.buscar_passagem.assert_called_with("Apocalipse 4:8", versao="ARA")
+
+    # 3. Testa ação de copiar passagem para o clipboard
+    action_bar = controls[5]
+    copy_btn = action_bar.content.controls[0].controls[0]
+    with patch("flet.Clipboard.set", new_callable=AsyncMock) as mock_clipboard_set:
+        await copy_btn.on_click(MagicMock())
+        mock_clipboard_set.assert_called_once()
+        assert "Apocalipse 4:8" in mock_clipboard_set.call_args[0][0]
+        assert view_obj._snackbar is not None
+
+    # 4. Testa alternância para ver capítulo completo
+    chapter_btn = action_bar.content.controls[0].controls[1]
+    await chapter_btn.on_click(MagicMock())
+    mock_biblia_repo.buscar_capitulo_completo.assert_called()
+
+    # 5. Testa botões de zoom in e zoom out
+    font_minus_btn = action_bar.content.controls[1].controls[0]
+    font_indicator = action_bar.content.controls[1].controls[1]
+    font_plus_btn = action_bar.content.controls[1].controls[2]
+
+    old_font_val = font_indicator.value
+    font_plus_btn.on_click(MagicMock())
+    assert font_indicator.value != old_font_val
+
+    font_minus_btn.on_click(MagicMock())
+    assert font_indicator.value == old_font_val
+
+
+@pytest.mark.asyncio
 async def test_hino_view_info_modal_biblia_chips(in_memory_db):
     hino_repo = HinoRepository(in_memory_db)
     fav_repo = FavoritoRepository(in_memory_db)
@@ -255,14 +433,14 @@ async def test_hino_view_info_modal_biblia_chips(in_memory_db):
     view_obj._show_info_modal(mock_page, hino)
     mock_page.show_dialog.assert_called()
 
-    # Testa _on_biblia_click passando from_info_modal=True
-    view_obj._on_biblia_click(
-        mock_page, "Apocalipse 4:8", from_info_modal=True, hino=hino
-    )
+    # Testa _on_biblia_click com referência
+    view_obj._on_biblia_click(mock_page, "Apocalipse 4:8")
     mock_page.pop_dialog.assert_called_once()
     mock_page.run_task.assert_called_once_with(
-        view_obj._abrir_modal_leitura_biblica, mock_page, "Apocalipse 4:8", True, hino
+        view_obj._carregar_biblia_passagem, mock_page
     )
+    assert view_obj.selected_view_mode == "biblia"
+    assert view_obj.active_biblia_ref == "Apocalipse 4:8"
 
     # Testa com referência vazia
     mock_page.overlay = []
@@ -286,7 +464,7 @@ async def test_hino_view_nav_buttons_push_route(in_memory_db):
     assert next_btn.disabled is False
 
     await next_btn.on_click(MagicMock())
-    mock_page.push_route.assert_called_once_with("/hino/2")
+    mock_page.push_route.assert_called_once_with("/novo/hino/2")
 
 
 @pytest.mark.asyncio
@@ -457,3 +635,98 @@ async def test_hino_view_comparativo_inedito(in_memory_db):
     await view_obj.build(mock_page)
     assert view_obj.comparativo.status_comparacao == "NOVO_INEDITO"
     assert view_obj.segmented_button is None  # Não exibe segmented button para inédito
+
+
+@pytest.mark.asyncio
+async def test_hino_view_modo_leitura_biblica_imersiva(in_memory_db):
+    from src.models.biblia import PassagemBiblica, Versiculo
+
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    mock_biblia_repo = MagicMock()
+    mock_biblia_repo.get_available_versions.return_value = ["ARA", "NVI"]
+    mock_biblia_repo.get_version_name.side_effect = lambda v: (
+        "Almeida Revista e Atualizada" if v == "ARA" else v
+    )
+
+    passagem_isaias = PassagemBiblica(
+        referencia="Isaías 6:1-3",
+        livro="Isaías",
+        capitulo=6,
+        versiculos=[
+            Versiculo(
+                livro="Isaías",
+                capitulo=6,
+                numero=1,
+                texto="No ano da morte do rei Uzias...",
+            ),
+            Versiculo(
+                livro="Isaías",
+                capitulo=6,
+                numero=2,
+                texto="Serafins estavam por cima dele...",
+            ),
+        ],
+    )
+    passagem_cap_full = PassagemBiblica(
+        referencia="Isaías 6",
+        livro="Isaías",
+        capitulo=6,
+        versiculos=[
+            Versiculo(
+                livro="Isaías",
+                capitulo=6,
+                numero=1,
+                texto="No ano da morte do rei Uzias...",
+            ),
+            Versiculo(
+                livro="Isaías",
+                capitulo=6,
+                numero=2,
+                texto="Serafins estavam por cima dele...",
+            ),
+            Versiculo(
+                livro="Isaías", capitulo=6, numero=3, texto="Santo, santo, santo!"
+            ),
+        ],
+    )
+
+    mock_biblia_repo.buscar_passagem = AsyncMock(return_value=passagem_isaias)
+    mock_biblia_repo.buscar_capitulo_completo = AsyncMock(
+        return_value=passagem_cap_full
+    )
+
+    view_obj = HinoView(
+        1,
+        hino_repo,
+        fav_repo,
+        hist_repo,
+        biblia_repository=mock_biblia_repo,
+        edition="novo",
+    )
+    mock_page = MagicMock(spec=ft.Page)
+
+    await view_obj.build(mock_page)
+
+    # 1. Alterna para o modo biblia através de _on_biblia_click
+    view_obj._on_biblia_click(mock_page, "Isaías 6:1-3")
+    assert view_obj.selected_view_mode == "biblia"
+    assert view_obj.active_biblia_ref == "Isaías 6:1-3"
+
+    # 2. Carrega a passagem
+    await view_obj._carregar_biblia_passagem(mock_page)
+    assert view_obj.current_biblia_passagem is not None
+    assert view_obj.current_biblia_passagem.referencia == "Isaías 6:1-3"
+
+    # 3. Renderiza o conteúdo bíblico em tela cheia
+    content = view_obj._build_biblia_content()
+    assert isinstance(content, ft.Column)
+    header_toolbar = content.controls[0]
+    assert isinstance(header_toolbar, ft.Container)
+
+    # 4. Alterna para capítulo completo
+    view_obj.is_biblia_full_chapter = True
+    await view_obj._carregar_biblia_passagem(mock_page)
+    assert len(view_obj.current_biblia_passagem.versiculos) == 3

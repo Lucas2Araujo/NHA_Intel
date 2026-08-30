@@ -1,5 +1,6 @@
 import asyncio
 import urllib.parse
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import flet as ft
@@ -19,12 +20,13 @@ from src.repositories.hino_repository import HinoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.services.agente_service import AgenteService
 from src.services.media_service import MediaService
-from src.services.theme_service import ThemeService
+from src.services.theme_service import EDITION_ANTIGO, EDITION_NOVO, ThemeService
 from src.services.updater_service import UpdaterService
 from src.views.agente_view import AgenteView
 from src.views.download_manager_view import DownloadManagerView
 from src.views.hino_view import HinoView
 from src.views.home_view import HomeView
+from src.views.selecao_view import SelecaoView
 from src.views.update_dialog import show_update_dialog
 
 try:
@@ -32,10 +34,23 @@ try:
 except ImportError:
     APP_VERSION = "0.1.0"
 
+ROUTE_SELECAO = "/"
+ROUTE_NOVO = "/novo"
+ROUTE_ANTIGO = "/antigo"
 ROUTE_AGENTE = "/agente"
 ROUTE_DOWNLOADS = "/downloads"
 
 _background_tasks: set[asyncio.Task] = set()
+
+
+@dataclass
+class EditionContext:
+    """Encapsula os repositórios e a lista em cache de IDs para uma edição do hinário."""
+
+    hino_repo: HinoRepository
+    fav_repo: FavoritoRepository
+    hist_repo: HistoricoRepository
+    hino_ids: list[int] = field(default_factory=list)
 
 
 async def _get_hino_ids(
@@ -75,6 +90,8 @@ def _setup_assets_and_theme(
         page.fonts = {
             "OpenDyslexic": "fonts/OpenDyslexic-Regular.otf",
             "Times New Roman": "Times New Roman, serif",
+            "Helvetica": "fonts/Helvetica-World-Regular.ttf",
+            "Montserrat": "fonts/Montserrat-Regular.ttf",
         }
         page.theme_mode = ft.ThemeMode.SYSTEM
         page.theme = ft.Theme(
@@ -162,16 +179,21 @@ async def _render_home_route(
     route_base: str,
     initial_search: str,
     view_cache: dict[str, ft.View],
-    home_view_instance: HomeView,
+    home_novo_instance: HomeView,
+    home_antigo_instance: HomeView,
     target_views: list[ft.View],
 ) -> None:
-    """Renderiza a rota principal (Home)."""
-    coming_from_hino = route_base and not route_base.startswith("/hino/")
-    if "/" not in view_cache or coming_from_hino or initial_search:
-        view_cache["/"] = await home_view_instance.build(
+    """Renderiza a HomeView do Hinário Novo (/novo) ou Hinário Antigo (/antigo)."""
+    if route_base == ROUTE_NOVO:
+        view_cache[ROUTE_NOVO] = await home_novo_instance.build(
             page, initial_search=initial_search
         )
-    target_views.append(view_cache["/"])
+        target_views.append(view_cache[ROUTE_NOVO])
+    elif route_base == ROUTE_ANTIGO:
+        view_cache[ROUTE_ANTIGO] = await home_antigo_instance.build(
+            page, initial_search=initial_search
+        )
+        target_views.append(view_cache[ROUTE_ANTIGO])
 
 
 def _render_agente_route(
@@ -202,34 +224,39 @@ def _render_downloads_route(
 
 async def _render_hino_route(
     page: ft.Page,
-    hino_repository: HinoRepository,
-    favorito_repository: FavoritoRepository,
-    historico_repository: HistoricoRepository,
+    route_base: str,
+    ctx_novo: EditionContext,
+    ctx_antigo: EditionContext,
     media_service: MediaService,
     biblia_repository: BibliaRepository,
-    hino_ids_ordered: list[int],
     target_views: list[ft.View],
     comparativo_repository: ComparativoRepository | None = None,
-    antigo_repository: HinoRepository | None = None,
+    theme_service: ThemeService | None = None,
 ) -> None:
-    """Renderiza a rota detalhada do hino (/hino/{id})."""
-    if not (page.route and page.route.startswith("/hino/")):
+    """Renderiza a rota detalhada do hino (/novo/hino/{id}, /antigo/hino/{id} ou /hino/{id})."""
+    if not route_base.startswith(("/antigo/hino/", "/novo/hino/", "/hino/")):
         return
+
+    is_antigo = route_base.startswith("/antigo/hino/")
+    active_ctx = ctx_antigo if is_antigo else ctx_novo
+    edition = EDITION_ANTIGO if is_antigo else EDITION_NOVO
+
     try:
-        hino_id = int(page.route.split("/")[-1])
-
-        await _get_hino_ids(hino_repository, hino_ids_ordered)
-
+        hino_id = int(route_base.split("/")[-1])
+        await _get_hino_ids(active_ctx.hino_repo, active_ctx.hino_ids)
         hino_view_instance = HinoView(
             hino_id,
-            hino_repository,
-            favorito_repository,
-            historico_repository,
+            active_ctx.hino_repo,
+            active_ctx.fav_repo,
+            active_ctx.hist_repo,
             media_service,
-            hino_ids_list=hino_ids_ordered,
+            hino_ids_list=active_ctx.hino_ids,
             biblia_repository=biblia_repository,
             comparativo_repository=comparativo_repository,
-            antigo_repository=antigo_repository,
+            antigo_repository=ctx_antigo.hino_repo,
+            novo_repository=ctx_novo.hino_repo,
+            edition=edition,
+            theme_service=theme_service,
         )
         built_view = await hino_view_instance.build(page)
         target_views.append(built_view)
@@ -255,21 +282,21 @@ async def _check_updates_background(page: ft.Page, updater_service: UpdaterServi
 
 async def main(page: ft.Page):
     """
-    Ponto de entrada assíncrono do aplicativo Hinário Inteligente em Flet (0.85+).
-    Exibe imediatamente a tela de loading/splash adaptativa, inicializa as conexões
-    aiosqlite, restaura preferências (incluindo AMOLED) e carrega as views com fluidez.
+    Ponto de entrada assíncrono do aplicativo Hinário Inteligente em Flet.
+    Inicializa conexões SQLite (Hinário Novo, Hinário Antigo, Bíblia e Comparativo),
+    restaura preferências e gerencia rotas dinâmicas com suporte a ambos os hinários.
     """
     db_connection = DatabaseConnection(db_path="hinario.db")
+    antigo_connection = DatabaseConnection(db_path="hinario_antigo.db")
     biblia_connection = DatabaseConnection(db_path="ARA.sqlite", read_only=True)
     comparativo_connection = DatabaseConnection(
         db_path="hinario_comparativo.db", read_only=True
     )
-    antigo_connection = DatabaseConnection(db_path="hinario_antigo.db", read_only=True)
 
     theme_service = ThemeService(db_connection)
     _setup_assets_and_theme(page, theme_service)
 
-    # 1. Renderiza IMEDIATAMENTE a tela de loading minimalista (elimina tela branca em ARMv7)
+    # 1. Renderiza IMEDIATAMENTE a tela de loading minimalista
     page.views.clear()
     page.views.append(_build_loading_view())
     page.update()
@@ -278,13 +305,32 @@ async def main(page: ft.Page):
     await theme_service.load_preferences()
     theme_service.apply_theme(page)
 
+    # Repositórios Hinário Novo
     hino_repository = HinoRepository(db_connection)
     favorito_repository = FavoritoRepository(db_connection)
     historico_repository = HistoricoRepository(db_connection)
     culto_repository = CultoRepository(db_connection)
+
+    # Repositórios Hinário Antigo
+    antigo_hino_repo = HinoRepository(antigo_connection)
+    antigo_fav_repo = FavoritoRepository(antigo_connection)
+    antigo_hist_repo = HistoricoRepository(antigo_connection)
+
+    # Contextos estruturados por Edição
+    ctx_novo = EditionContext(
+        hino_repo=hino_repository,
+        fav_repo=favorito_repository,
+        hist_repo=historico_repository,
+    )
+    ctx_antigo = EditionContext(
+        hino_repo=antigo_hino_repo,
+        fav_repo=antigo_fav_repo,
+        hist_repo=antigo_hist_repo,
+    )
+
+    # Bíblia & Comparativo
     biblia_repository = BibliaRepository(biblia_connection)
     comparativo_repository = ComparativoRepository(comparativo_connection)
-    antigo_repository = HinoRepository(antigo_connection)
 
     media_service = MediaService(download_dir="downloads")
     agente_service = AgenteService(hino_repository)
@@ -292,16 +338,27 @@ async def main(page: ft.Page):
 
     view_cache: dict[str, ft.View] = {}
 
-    home_view_instance = HomeView(
+    selecao_view_instance = SelecaoView(
+        theme_service=theme_service, updater_service=updater_service
+    )
+    home_novo_instance = HomeView(
         hino_repository,
         favorito_repository,
         historico_repository,
         updater_service=updater_service,
         theme_service=theme_service,
+        edition=EDITION_NOVO,
+    )
+    home_antigo_instance = HomeView(
+        antigo_hino_repo,
+        antigo_fav_repo,
+        antigo_hist_repo,
+        updater_service=updater_service,
+        theme_service=theme_service,
+        edition=EDITION_ANTIGO,
     )
     agente_view_instance = AgenteView(agente_service, culto_repository)
     download_manager_instance = DownloadManagerView(hino_repository, media_service)
-    hino_ids_ordered: list[int] = []
 
     async def route_change(e=None):
         route = page.route or "/"
@@ -311,22 +368,31 @@ async def main(page: ft.Page):
 
         new_views: list[ft.View] = []
 
+        # Sempre inclui a tela de seleção como base do stack
+        new_views.append(selecao_view_instance.build(page))
+
+        # Renderiza a sub-rota selecionada sobre o stack
         await _render_home_route(
-            page, route_base, initial_search, view_cache, home_view_instance, new_views
+            page,
+            route_base,
+            initial_search,
+            view_cache,
+            home_novo_instance,
+            home_antigo_instance,
+            new_views,
         )
         _render_agente_route(page, view_cache, agente_view_instance, new_views)
         _render_downloads_route(page, view_cache, download_manager_instance, new_views)
         await _render_hino_route(
             page,
-            hino_repository,
-            favorito_repository,
-            historico_repository,
+            route_base,
+            ctx_novo,
+            ctx_antigo,
             media_service,
             biblia_repository,
-            hino_ids_ordered,
             new_views,
             comparativo_repository=comparativo_repository,
-            antigo_repository=antigo_repository,
+            theme_service=theme_service,
         )
 
         page.views.clear()
@@ -346,7 +412,7 @@ async def main(page: ft.Page):
     if not page.route or page.route == "/loading":
         page.route = "/"
 
-    # 3. Transiciona suavemente para a rota inicial (HomeView)
+    # 3. Transiciona para a rota inicial (Seleção de Hinários)
     await route_change(None)
 
     # 4. Dispara a verificação assíncrona de atualizações em segundo plano

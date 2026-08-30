@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shutil
 import sqlite3
@@ -31,23 +32,30 @@ class _AsyncSqliteCompatCursor:
 
     def __await__(self):
         async def _resolve():
+            await asyncio.sleep(0)
             return self
 
         return _resolve().__await__()
 
     async def __aenter__(self):
+        await asyncio.sleep(0)
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        pass
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool | None:
+        """Finaliza o contexto assíncrono do cursor sem suprimir exceções."""
+        await asyncio.sleep(0)
+        return None
 
     async def fetchone(self) -> Any | None:
+        await asyncio.sleep(0)
         return self._raw.fetchone()
 
     async def fetchall(self) -> list[Any]:
+        await asyncio.sleep(0)
         return self._raw.fetchall()
 
     async def fetchmany(self, size: int | None = None) -> list[Any]:
+        await asyncio.sleep(0)
         if size is not None:
             return self._raw.fetchmany(size)
         return self._raw.fetchmany()
@@ -65,15 +73,17 @@ class _AsyncSqliteCompatCursor:
         return self._raw.description
 
     async def close(self) -> None:
+        await asyncio.sleep(0)
         try:
             self._raw.close()
-        except Exception:
+        except OSError:
             pass
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
+        await asyncio.sleep(0)
         row = self._raw.fetchone()
         if row is None:
             raise StopAsyncIteration
@@ -117,22 +127,30 @@ class _AsyncSqliteCompatConnection:
         return _AsyncSqliteCompatCursor(raw_cur)
 
     async def commit(self) -> None:
+        await asyncio.sleep(0)
         self._raw.commit()
 
     async def rollback(self) -> None:
+        await asyncio.sleep(0)
         self._raw.rollback()
 
     async def close(self) -> None:
+        await asyncio.sleep(0)
         try:
             self._raw.close()
-        except Exception:
+        except OSError:
             pass
 
     async def __aenter__(self):
+        await asyncio.sleep(0)
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> bool | None:
         await self.close()
+        return None
+
+
+AsyncConnectionType = aiosqlite.Connection | _AsyncSqliteCompatConnection
 
 
 class DatabaseConnection:
@@ -144,7 +162,7 @@ class DatabaseConnection:
     def __init__(self, db_path: str | None = DEFAULT_DB_NAME, read_only: bool = False):
         self.db_path = self._resolve_db_path(db_path or DEFAULT_DB_NAME)
         self.read_only = read_only
-        self._connection: aiosqlite.Connection | None = None
+        self._connection: AsyncConnectionType | None = None
 
     @staticmethod
     def _resolve_env_db_path() -> str | None:
@@ -220,9 +238,33 @@ class DatabaseConnection:
         elif path_input.exists():
             candidates.append(path_input.resolve())
 
-        project_root = Path(__file__).resolve().parent.parent.parent
-        candidates.append(project_root / filename)
+        # Diretório do próprio módulo (src/database)
+        db_module_dir = Path(__file__).resolve().parent
+        candidates.append(db_module_dir / "data" / filename)
+        candidates.append(db_module_dir / "data" / "biblias" / filename)
+        candidates.append(db_module_dir / "assets" / filename)
+        candidates.append(db_module_dir / "assets" / "biblias" / filename)
+        candidates.append(db_module_dir.parent / "assets" / filename)
+        candidates.append(db_module_dir.parent / "assets" / "biblias" / filename)
+
+        # Raiz do projeto
+        project_root = db_module_dir.parent.parent
+        candidates.append(project_root / "src" / "database" / "data" / filename)
+        candidates.append(
+            project_root / "src" / "database" / "data" / "biblias" / filename
+        )
+        candidates.append(project_root / "src" / "assets" / filename)
+        candidates.append(project_root / "src" / "assets" / "biblias" / filename)
         candidates.append(project_root / "assets" / filename)
+        candidates.append(project_root / "assets" / "biblias" / filename)
+        candidates.append(project_root / filename)
+        candidates.append(project_root / "biblias" / filename)
+
+        if db_path and db_path != filename:
+            candidates.append(project_root / "assets" / db_path)
+            candidates.append(project_root / "src" / "assets" / db_path)
+            candidates.append(project_root / "src" / "database" / "data" / db_path)
+            candidates.append(project_root / db_path)
 
         candidates.extend(DatabaseConnection._gather_env_candidates(filename))
         candidates.extend(DatabaseConnection._gather_sys_candidates(filename))
@@ -231,10 +273,15 @@ class DatabaseConnection:
 
     @staticmethod
     def _find_seed_path(candidates: list[Path]) -> Path | None:
-        """Retorna o primeiro arquivo seed candidato existente em disco."""
+        """Retorna o primeiro arquivo seed candidato existente em disco com dados (> 0 bytes)."""
         for cand in candidates:
             try:
-                if cand and cand.exists() and cand.is_file():
+                if (
+                    cand
+                    and cand.exists()
+                    and cand.is_file()
+                    and cand.stat().st_size > 0
+                ):
                     return cand.resolve()
             except Exception:
                 pass
@@ -321,11 +368,35 @@ class DatabaseConnection:
         """Copia o arquivo seed para o destino com fallback de método de cópia."""
         try:
             shutil.copy2(seed_path, target_path)
-        except Exception:
+        except OSError:
             try:
                 shutil.copyfile(seed_path, target_path)
-            except Exception:
+            except OSError:
                 pass
+
+    @staticmethod
+    def _prepare_user_data_copy(seed_path: Path | None, filename: str) -> Path:
+        """Garante que o banco de dados seja copiado para o diretório gravável do usuário se necessário."""
+        user_dir = DatabaseConnection._get_user_data_dir()
+        target_path = user_dir / filename
+
+        if target_path.exists() and target_path.stat().st_size == 0:
+            try:
+                target_path.unlink()
+            except OSError:
+                pass
+
+        if seed_path and not target_path.exists():
+            DatabaseConnection._copy_seed_file(seed_path, target_path)
+
+        return target_path
+
+    @staticmethod
+    def _should_use_user_dir(seed_path: Path | None) -> bool:
+        """Determina se o banco deve ser colocado no diretório do usuário (ex: Android ou seed somente leitura)."""
+        if DatabaseConnection._is_android_environment():
+            return True
+        return bool(seed_path and not DatabaseConnection._is_writable(seed_path))
 
     @staticmethod
     def _resolve_db_path(db_path: str) -> str:
@@ -344,40 +415,32 @@ class DatabaseConnection:
         candidates = DatabaseConnection._gather_seed_candidates(db_path, filename)
         seed_path = DatabaseConnection._find_seed_path(candidates)
 
-        is_android = DatabaseConnection._is_android_environment()
-
-        # Se no Android ou se o arquivo/pasta do seed não for gravável
-        if is_android or (seed_path and not DatabaseConnection._is_writable(seed_path)):
-            user_dir = DatabaseConnection._get_user_data_dir()
-            target_path = user_dir / filename
-
-            if seed_path and not target_path.exists():
-                DatabaseConnection._copy_seed_file(seed_path, target_path)
-
-            if target_path.exists():
+        if DatabaseConnection._should_use_user_dir(seed_path):
+            target_path = DatabaseConnection._prepare_user_data_copy(
+                seed_path, filename
+            )
+            if target_path.exists() and target_path.stat().st_size > 0:
                 return str(target_path)
 
-        if seed_path:
+        if seed_path and seed_path.exists() and seed_path.stat().st_size > 0:
             return str(seed_path)
 
-        user_dir = DatabaseConnection._get_user_data_dir()
-        return str(user_dir / filename)
+        target_path = DatabaseConnection._prepare_user_data_copy(seed_path, filename)
+        return str(target_path)
 
     def _create_compat_connection(self) -> _AsyncSqliteCompatConnection:
         """Cria uma conexão assíncrona compatível via sqlite3 nativo sem criar threads de SO."""
         if self.read_only:
             try:
                 raw_conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
-            except Exception:
+            except OSError:
                 raw_conn = sqlite3.connect(self.db_path)
         else:
             raw_conn = sqlite3.connect(self.db_path)
         raw_conn.row_factory = sqlite3.Row
         return _AsyncSqliteCompatConnection(raw_conn)
 
-    async def get_connection(
-        self,
-    ) -> aiosqlite.Connection | _AsyncSqliteCompatConnection:
+    async def get_connection(self) -> AsyncConnectionType:
         """
         Retorna/abre uma conexão assíncrona ativa com o SQLite.
         Configura o row_factory para acesso amigável às colunas.
@@ -385,23 +448,22 @@ class DatabaseConnection:
         Na primeira conexão, executa otimizações (índices, FTS5, limpeza).
         """
         if self._connection is None:
+            conn: AsyncConnectionType
             if _is_single_threaded_env():
-                self._connection = self._create_compat_connection()
+                conn = self._create_compat_connection()
             else:
                 try:
-                    self._connection = await aiosqlite.connect(self.db_path)
-                    self._connection.row_factory = aiosqlite.Row
-                except (RuntimeError, NotImplementedError, Exception):
+                    conn = await aiosqlite.connect(self.db_path)
+                    conn.row_factory = aiosqlite.Row
+                except Exception:
                     # Se falhar ao iniciar thread (ex: Pyodide no navegador)
-                    self._connection = self._create_compat_connection()
+                    conn = self._create_compat_connection()
 
-            if (
-                not hasattr(self._connection, "row_factory")
-                or self._connection.row_factory is None
-            ):
-                self._connection.row_factory = sqlite3.Row
+            if not hasattr(conn, "row_factory") or conn.row_factory is None:
+                conn.row_factory = sqlite3.Row
 
-            await self._initialize_db(self._connection)
+            await self._initialize_db(conn)
+            self._connection = conn
         return self._connection
 
     @staticmethod
@@ -439,7 +501,7 @@ class DatabaseConnection:
                 pass
 
     @staticmethod
-    async def _initialize_db(conn: aiosqlite.Connection) -> None:
+    async def _initialize_db(conn: AsyncConnectionType) -> None:
         """
         Executa otimizações e manutenção no banco na primeira conexão:
         1. Aplica PRAGMAs de alta velocidade
@@ -532,7 +594,7 @@ class DatabaseConnection:
             await self._connection.close()
             self._connection = None
 
-    async def __aenter__(self) -> aiosqlite.Connection:
+    async def __aenter__(self) -> AsyncConnectionType:
         return await self.get_connection()
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:

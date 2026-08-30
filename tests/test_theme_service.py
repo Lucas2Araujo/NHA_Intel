@@ -47,6 +47,9 @@ def test_theme_service_apply_theme_system(in_memory_db):
     assert mock_page.theme_mode == ft.ThemeMode.SYSTEM
     assert mock_page.bgcolor is None
     assert mock_page.dark_theme is None
+    assert "Helvetica" in mock_page.fonts
+    assert "Montserrat" in mock_page.fonts
+    assert "OpenDyslexic" in mock_page.fonts
 
 
 def test_theme_service_apply_theme_amoled(in_memory_db):
@@ -83,3 +86,34 @@ async def test_theme_service_toggle_amoled(in_memory_db):
     assert mock_page.theme_mode == ft.ThemeMode.SYSTEM
     assert mock_page.bgcolor is None
     mock_page.update.assert_called_once()
+
+
+def test_theme_service_apply_theme_antigo_edition(in_memory_db):
+    from src.services.theme_service import (
+        ANTIGO_AMOLED_BG,
+        ANTIGO_DARK_BG,
+        ANTIGO_DARK_PRIMARY,
+        ANTIGO_LIGHT_BG,
+        ANTIGO_LIGHT_PRIMARY,
+        EDITION_ANTIGO,
+    )
+
+    service = ThemeService(in_memory_db)
+    mock_page = MagicMock(spec=ft.Page)
+
+    # 1. Modo Sistema Hinário Antigo (Claro e Escuro configurados)
+    service.is_amoled = False
+    service.apply_theme(mock_page, edition=EDITION_ANTIGO)
+    assert mock_page.theme_mode == ft.ThemeMode.SYSTEM
+    assert mock_page.theme.color_scheme.surface == ANTIGO_LIGHT_BG
+    assert mock_page.theme.color_scheme.primary == ANTIGO_LIGHT_PRIMARY
+    assert mock_page.dark_theme.color_scheme.surface == ANTIGO_DARK_BG
+    assert mock_page.dark_theme.color_scheme.primary == ANTIGO_DARK_PRIMARY
+
+    # 2. Modo AMOLED Hinário Antigo (Preto Absoluto)
+    service.is_amoled = True
+    service.apply_theme(mock_page, edition=EDITION_ANTIGO)
+    assert mock_page.theme_mode == ft.ThemeMode.DARK
+    assert mock_page.bgcolor == ANTIGO_AMOLED_BG
+    assert mock_page.dark_theme.color_scheme.surface == ANTIGO_AMOLED_BG
+    assert mock_page.dark_theme.color_scheme.primary == ANTIGO_DARK_PRIMARY
