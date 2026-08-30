@@ -4,10 +4,16 @@ from main import _build_loading_view
 
 
 def test_build_loading_view():
-    view = _build_loading_view(0.5)
+    view = _build_loading_view()
     assert isinstance(view, ft.View)
     assert view.route == "/loading"
-    assert view.bgcolor == ft.Colors.SURFACE
+    assert view.bgcolor == ft.Colors.BLACK
     assert len(view.controls) > 0
     assert isinstance(view.controls[0], ft.SafeArea)
     assert view.controls[0].maintain_bottom_view_padding is True
+    container = view.controls[0].content
+    assert isinstance(container, ft.Container)
+    assert container.alignment == ft.Alignment.CENTER
+    assert isinstance(container.content, ft.Image)
+    assert container.content.src == "/icon.png"
+

@@ -107,49 +107,21 @@ def _setup_assets_and_theme(
 
 def _build_loading_view(progress_val: float | None = None) -> ft.View:
     """
-    Constrói a tela de loading/splash minimalista e adaptativa.
-    Exibe o ícone, título e uma barra de progresso suave completando-se da esquerda para a direita.
+    Constrói a tela splash com fundo preto absoluto e o ícone centralizado do app.
     """
     return ft.View(
         route="/loading",
-        bgcolor=ft.Colors.SURFACE,
+        bgcolor=ft.Colors.BLACK,
+        padding=0,
         controls=[
             ft.SafeArea(
                 maintain_bottom_view_padding=True,
                 content=ft.Container(
-                    content=ft.Column(
-                        controls=[
-                            ft.Container(
-                                content=ft.Icon(
-                                    ft.Icons.LIBRARY_MUSIC,
-                                    size=48,
-                                    color=ft.Colors.BLUE_400,
-                                ),
-                                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                                border_radius=16,
-                                padding=ft.Padding.all(16),
-                            ),
-                            ft.Text(
-                                "Hinário Inteligente",
-                                size=20,
-                                weight=ft.FontWeight.BOLD,
-                                text_align=ft.TextAlign.CENTER,
-                            ),
-                            ft.Container(
-                                content=ft.ProgressBar(
-                                    value=progress_val,
-                                    width=200,
-                                    height=4,
-                                    border_radius=2,
-                                    color=ft.Colors.BLUE_400,
-                                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                                ),
-                                padding=ft.Padding.only(top=16),
-                            ),
-                        ],
-                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                        alignment=ft.MainAxisAlignment.CENTER,
-                        spacing=12,
+                    content=ft.Image(
+                        src="/icon.png",
+                        width=128,
+                        height=128,
+                        fit=ft.BoxFit.CONTAIN,
                     ),
                     alignment=ft.Alignment.CENTER,
                     expand=True,
@@ -158,6 +130,10 @@ def _build_loading_view(progress_val: float | None = None) -> ft.View:
             ),
         ],
     )
+
+
+_build_splash_view = _build_loading_view
+
 
 
 def _parse_route_query(route: str) -> tuple[str, str]:

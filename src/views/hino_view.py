@@ -36,6 +36,368 @@ MSG_LETRA_NAO_DISPONIVEL = "Letra não disponível no banco local."
 MSG_HINO_NAO_ENCONTRADO = "Hino correspondente não encontrado."
 
 
+class _BibliaModalSession:
+    """Controlador e construtor do BottomSheet de leitura bíblica."""
+
+    def __init__(
+        self,
+        view: "HinoView",
+        page: ft.Page,
+        referencia: str,
+        from_info_modal: bool = False,
+        hino: Hino | None = None,
+    ) -> None:
+        self.view = view
+        self.page = page
+        self.referencia = referencia
+        self.from_info_modal = from_info_modal
+        self.target_hino = hino or getattr(view, "current_hino", None)
+        self.current_ref = referencia
+        self.is_full_chapter = False
+        self.font_size = view.font_size
+        self.current_passagem: PassagemBiblica | None = None
+        self.is_expanded = False
+
+        self.accent_color = (
+            ft.Colors.PURPLE_200 if view.edition == "antigo" else ft.Colors.BLUE_200
+        )
+        self.verse_num_color = (
+            ft.Colors.PURPLE_300 if view.edition == "antigo" else ft.Colors.TEAL_300
+        )
+
+        versoes = view.biblia_repository.get_available_versions()
+        if (
+            not view.selected_biblia_version
+            or view.selected_biblia_version not in versoes
+        ):
+            view.selected_biblia_version = versoes[0] if versoes else "ARA"
+        self.selected_version = view.selected_biblia_version
+
+        self.all_refs = view._gather_hino_biblical_refs(self.target_hino, referencia)
+
+        self._build_components()
+
+    def _build_components(self) -> None:
+        self.title_text = ft.Text(
+            self.current_ref,
+            weight=ft.FontWeight.BOLD,
+            size=17,
+            color=self.accent_color,
+            expand=True,
+        )
+
+        self.loading_indicator = ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.ProgressRing(width=36, height=36, stroke_width=3),
+                    ft.Text(
+                        "Carregando passagem bíblica...",
+                        size=14,
+                        color=ft.Colors.GREY_400,
+                    ),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=12,
+            ),
+            padding=ft.Padding.symmetric(vertical=40),
+            alignment=ft.Alignment.CENTER,
+        )
+
+        self.verses_container = ft.Column(
+            controls=[self.loading_indicator],
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            spacing=8,
+        )
+
+        versoes = self.view.biblia_repository.get_available_versions()
+        self.version_dropdown = ft.Dropdown(
+            options=[ft.dropdown.Option(key=v, text=v) for v in versoes],
+            value=self.selected_version,
+            width=92,
+            height=36,
+            text_size=13,
+            content_padding=ft.Padding.symmetric(horizontal=8, vertical=2),
+            dense=True,
+            border_radius=8,
+            tooltip="Versão da Bíblia",
+            on_select=self._on_versao_changed,
+        )
+
+        self.expand_btn = ft.IconButton(
+            ft.Icons.FULLSCREEN,
+            icon_size=20,
+            tooltip="Expandir leitura (Tela Cheia)",
+            on_click=self._toggle_expand,
+        )
+
+        self.copy_btn = ft.OutlinedButton(
+            "Copiar",
+            icon=ft.Icons.CONTENT_COPY,
+            style=ft.ButtonStyle(
+                padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                text_style=ft.TextStyle(size=12),
+            ),
+            tooltip="Copiar passagem com referência para a área de transferência",
+            on_click=self._copiar_passagem,
+        )
+
+        self.chapter_toggle_btn = ft.OutlinedButton(
+            BTN_CAPITULO_COMPLETO,
+            icon=ft.Icons.AUTO_STORIES,
+            style=ft.ButtonStyle(
+                padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                text_style=ft.TextStyle(size=12),
+            ),
+            tooltip="Alternar entre versículos do hino e o capítulo completo",
+            on_click=self._toggle_capitulo,
+        )
+
+        self.font_indicator = ft.Text(
+            f"{self.font_size}pt", size=12, weight=ft.FontWeight.BOLD
+        )
+
+        self.font_minus_btn = ft.IconButton(
+            ft.Icons.REMOVE_CIRCLE_OUTLINE,
+            icon_size=18,
+            tooltip="Diminuir tamanho da letra",
+            on_click=self._zoom_out,
+        )
+        self.font_plus_btn = ft.IconButton(
+            ft.Icons.ADD_CIRCLE_OUTLINE,
+            icon_size=18,
+            tooltip="Aumentar tamanho da letra",
+            on_click=self._zoom_in,
+        )
+
+        self.ref_chips_container = ft.Container()
+        self._update_ref_chips()
+
+        self.header_row = ft.Row(
+            controls=[
+                ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.MENU_BOOK, color=self.accent_color, size=22),
+                        self.title_text,
+                    ],
+                    alignment=ft.MainAxisAlignment.START,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    spacing=8,
+                    expand=True,
+                ),
+                self.version_dropdown,
+                self.expand_btn,
+                ft.IconButton(
+                    ft.Icons.CLOSE,
+                    icon_size=20,
+                    tooltip="Fechar",
+                    on_click=self._close_dialog,
+                ),
+            ],
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=4,
+        )
+
+        self.action_bar = self.view._build_biblia_modal_action_bar(
+            self.copy_btn,
+            self.chapter_toggle_btn,
+            self.font_minus_btn,
+            self.font_indicator,
+            self.font_plus_btn,
+        )
+
+        button_label = "Voltar para Informações" if self.from_info_modal else "Fechar"
+        button_icon = ft.Icons.ARROW_BACK if self.from_info_modal else ft.Icons.CLOSE
+        self.footer_row = ft.Row(
+            controls=[
+                ft.TextButton(
+                    button_label, icon=button_icon, on_click=self._close_dialog
+                )
+            ],
+            alignment=ft.MainAxisAlignment.END,
+        )
+
+        self.modal_body = ft.Container(
+            content=ft.Column(
+                controls=[
+                    self.header_row,
+                    self.ref_chips_container,
+                    ft.Divider(height=1),
+                    ft.Container(
+                        content=self.verses_container,
+                        expand=True,
+                        padding=ft.Padding.symmetric(vertical=4),
+                    ),
+                    ft.Divider(height=1),
+                    self.action_bar,
+                    ft.Divider(height=1),
+                    self.footer_row,
+                ],
+                spacing=6,
+                expand=True,
+            ),
+            padding=ft.Padding.only(left=20, top=16, right=20, bottom=30),
+            height=(
+                min(self.page.height * 0.85, 620)
+                if self.page and self.page.height
+                else 520
+            ),
+        )
+
+    def _render_loaded_verses(self) -> None:
+        if not self.current_passagem or not self.current_passagem.versiculos:
+            return
+        font_fam = FONT_FAMILY_MAP.get(self.view.selected_font)
+        self.verses_container.controls = self.view._build_verse_rows(
+            self.current_passagem.versiculos,
+            self.font_size,
+            font_fam,
+            self.verse_num_color,
+        )
+
+    async def carregar_versiculos(self, versao_alvo: str) -> None:
+        self.verses_container.controls = [self.loading_indicator]
+        self.page.update()
+
+        try:
+            if self.is_full_chapter:
+                passagem = await self.view.biblia_repository.buscar_capitulo_completo(
+                    self.current_ref, versao=versao_alvo
+                )
+            else:
+                passagem = await self.view.biblia_repository.buscar_passagem(
+                    self.current_ref, versao=versao_alvo
+                )
+        except Exception:
+            passagem = None
+
+        self.current_passagem = passagem
+
+        if passagem and passagem.versiculos:
+            self.title_text.value = passagem.referencia
+            self.chapter_toggle_btn.content = (
+                BTN_APENAS_VERSICULOS if self.is_full_chapter else BTN_CAPITULO_COMPLETO
+            )
+            self.chapter_toggle_btn.icon = (
+                ft.Icons.FILTER_LIST if self.is_full_chapter else ft.Icons.AUTO_STORIES
+            )
+            self.copy_btn.disabled = False
+            self._render_loaded_verses()
+        else:
+            self.title_text.value = self.current_ref
+            self.copy_btn.disabled = True
+            self.verses_container.controls = [
+                self.view._build_biblia_error_container(self.current_ref, versao_alvo)
+            ]
+        self.page.update()
+
+    async def _on_versao_changed(self, e) -> None:
+        nova_versao = e.control.value
+        if not nova_versao:
+            return
+        self.selected_version = nova_versao
+        self.view.selected_biblia_version = nova_versao
+        self.view.biblia_repository.set_version(nova_versao)
+        if self.view._save_pref_task and not self.view._save_pref_task.done():
+            self.view._save_pref_task.cancel()
+        self.view._save_pref_task = self.view._create_background_task(
+            self.view._save_preferences()
+        )
+        await self.carregar_versiculos(nova_versao)
+
+    def _close_dialog(self, ev=None) -> None:
+        self.page.pop_dialog()
+        if self.from_info_modal:
+            self.view._show_info_modal(self.page, self.target_hino)
+
+    def _toggle_expand(self, ev=None) -> None:
+        self.is_expanded = not self.is_expanded
+        if self.is_expanded:
+            self.modal_body.height = (
+                max(400, self.page.height * 0.94)
+                if self.page and self.page.height
+                else 720
+            )
+            self.expand_btn.icon = ft.Icons.FULLSCREEN_EXIT
+            self.expand_btn.tooltip = "Recolher leitura"
+        else:
+            self.modal_body.height = (
+                min(self.page.height * 0.75, 540)
+                if self.page and self.page.height
+                else 450
+            )
+            self.expand_btn.icon = ft.Icons.FULLSCREEN
+            self.expand_btn.tooltip = "Expandir leitura (Tela Cheia)"
+        self.page.update()
+
+    async def _on_chip_selected(self, e, ref_target: str) -> None:
+        if self.current_ref != ref_target:
+            self.current_ref = ref_target
+            self.is_full_chapter = False
+            self._update_ref_chips()
+            await self.carregar_versiculos(self.selected_version)
+
+    def _update_ref_chips(self) -> None:
+        base_ref = self.target_hino.texto_base if self.target_hino else None
+        chips = self.view._build_biblia_modal_ref_chips(
+            self.all_refs,
+            self.current_ref,
+            base_ref,
+            self.accent_color,
+            self._on_chip_selected,
+        )
+        self.ref_chips_container.content = (
+            ft.Column(controls=chips, spacing=0) if chips else ft.Container()
+        )
+
+    async def _copiar_passagem(self, ev=None) -> None:
+        passagem = self.current_passagem
+        if not passagem or not passagem.versiculos:
+            return
+        texto_copia = f"{passagem.texto_formatado}\n\n({passagem.referencia} - {self.selected_version})"
+        try:
+            await ft.Clipboard().set(texto_copia)
+        except Exception:
+            pass
+        self.view._show_snackbar(
+            self.page, f"Passagem '{passagem.referencia}' copiada!"
+        )
+
+    async def _toggle_capitulo(self, ev=None) -> None:
+        self.is_full_chapter = not self.is_full_chapter
+        if self.is_full_chapter and not self.is_expanded:
+            self.is_expanded = True
+            self.modal_body.height = (
+                max(400, self.page.height * 0.94)
+                if self.page and self.page.height
+                else 720
+            )
+            self.expand_btn.icon = ft.Icons.FULLSCREEN_EXIT
+            self.expand_btn.tooltip = "Recolher leitura"
+        await self.carregar_versiculos(self.selected_version)
+
+    def _zoom_in(self, ev=None) -> None:
+        if self.font_size < 36:
+            self.font_size += 2
+            self.font_indicator.value = f"{self.font_size}pt"
+            self._render_loaded_verses()
+            self.page.update()
+
+    def _zoom_out(self, ev=None) -> None:
+        if self.font_size > 12:
+            self.font_size -= 2
+            self.font_indicator.value = f"{self.font_size}pt"
+            self._render_loaded_verses()
+            self.page.update()
+
+    async def show(self) -> None:
+        bs = ft.BottomSheet(content=self.modal_body)
+        self.page.show_dialog(bs)
+        await self.carregar_versiculos(self.selected_version)
+
+
 class HinoView:
     """
     View responsável por exibir assincronamente a letra e os detalhes de um hino específico.
@@ -336,7 +698,7 @@ class HinoView:
         await self._init_data_and_preferences(page, hino)
 
         self.letra_text = ft.Text(
-            hino.letra if hino.letra else "Letra não disponível para este hino.",
+            hino.letra if hino.letra else MSG_LETRA_NAO_DISPONIVEL,
             size=self.font_size,
             text_align=ft.TextAlign.CENTER,
             weight=ft.FontWeight.W_400,
@@ -717,342 +1079,15 @@ class HinoView:
             self._show_snackbar(page, "Referência bíblica inválida.")
             return
 
-        ref_clean = referencia.strip()
         await self._load_preferences()
-
-        target_hino = hino or getattr(self, "current_hino", None)
-        all_refs = self._gather_hino_biblical_refs(target_hino, ref_clean)
-
-        current_ref_holder = [ref_clean]
-        is_full_chapter_holder = [False]
-        current_font_size_holder = [self.font_size]
-        current_passagem_holder: list[PassagemBiblica | None] = [None]
-        is_expanded_holder = [False]
-
-        accent_color = (
-            ft.Colors.PURPLE_200 if self.edition == "antigo" else ft.Colors.BLUE_200
+        session = _BibliaModalSession(
+            view=self,
+            page=page,
+            referencia=referencia.strip(),
+            from_info_modal=from_info_modal,
+            hino=hino,
         )
-        verse_num_color = (
-            ft.Colors.PURPLE_300 if self.edition == "antigo" else ft.Colors.TEAL_300
-        )
-
-        versoes_disponiveis = self.biblia_repository.get_available_versions()
-        if (
-            not self.selected_biblia_version
-            or self.selected_biblia_version not in versoes_disponiveis
-        ):
-            self.selected_biblia_version = (
-                versoes_disponiveis[0] if versoes_disponiveis else "ARA"
-            )
-
-        title_text = ft.Text(
-            ref_clean,
-            weight=ft.FontWeight.BOLD,
-            size=17,
-            color=accent_color,
-            expand=True,
-        )
-
-        loading_indicator = ft.Container(
-            content=ft.Column(
-                controls=[
-                    ft.ProgressRing(width=36, height=36, stroke_width=3),
-                    ft.Text(
-                        "Carregando passagem bíblica...",
-                        size=14,
-                        color=ft.Colors.GREY_400,
-                    ),
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                alignment=ft.MainAxisAlignment.CENTER,
-                spacing=12,
-            ),
-            padding=ft.Padding.symmetric(vertical=40),
-            alignment=ft.Alignment.CENTER,
-        )
-
-        verses_container = ft.Column(
-            controls=[loading_indicator],
-            scroll=ft.ScrollMode.AUTO,
-            expand=True,
-            spacing=8,
-        )
-
-        def _render_loaded_verses():
-            passagem = current_passagem_holder[0]
-            if not passagem or not passagem.versiculos:
-                return
-            font_fam = FONT_FAMILY_MAP.get(self.selected_font)
-            verses_container.controls = self._build_verse_rows(
-                passagem.versiculos,
-                current_font_size_holder[0],
-                font_fam,
-                verse_num_color,
-            )
-
-        async def _carregar_versiculos(versao_alvo: str):
-            verses_container.controls = [loading_indicator]
-            page.update()
-
-            ref_to_search = current_ref_holder[0]
-            try:
-                if is_full_chapter_holder[0]:
-                    passagem = await self.biblia_repository.buscar_capitulo_completo(
-                        ref_to_search, versao=versao_alvo
-                    )
-                else:
-                    passagem = await self.biblia_repository.buscar_passagem(
-                        ref_to_search, versao=versao_alvo
-                    )
-            except Exception:
-                passagem = None
-
-            current_passagem_holder[0] = passagem
-
-            if passagem and passagem.versiculos:
-                title_text.value = passagem.referencia
-                chapter_toggle_btn.content = (
-                    BTN_APENAS_VERSICULOS
-                    if is_full_chapter_holder[0]
-                    else BTN_CAPITULO_COMPLETO
-                )
-                chapter_toggle_btn.icon = (
-                    ft.Icons.FILTER_LIST
-                    if is_full_chapter_holder[0]
-                    else ft.Icons.AUTO_STORIES
-                )
-                copy_btn.disabled = False
-                _render_loaded_verses()
-            else:
-                title_text.value = ref_to_search
-                copy_btn.disabled = True
-                verses_container.controls = [
-                    self._build_biblia_error_container(ref_to_search, versao_alvo)
-                ]
-            page.update()
-
-        async def _on_versao_changed(e):
-            nova_versao = e.control.value
-            if not nova_versao:
-                return
-            self.selected_biblia_version = nova_versao
-            self.biblia_repository.set_version(nova_versao)
-            if self._save_pref_task and not self._save_pref_task.done():
-                self._save_pref_task.cancel()
-            self._save_pref_task = self._create_background_task(
-                self._save_preferences()
-            )
-            await _carregar_versiculos(nova_versao)
-
-        version_dropdown = ft.Dropdown(
-            options=[ft.dropdown.Option(key=v, text=v) for v in versoes_disponiveis],
-            value=self.selected_biblia_version,
-            width=92,
-            height=36,
-            text_size=13,
-            content_padding=ft.Padding.symmetric(horizontal=8, vertical=2),
-            dense=True,
-            border_radius=8,
-            tooltip="Versão da Bíblia",
-            on_select=_on_versao_changed,
-        )
-
-        def _close_dialog(ev):
-            page.pop_dialog()
-            if from_info_modal:
-                self._show_info_modal(page, target_hino)
-
-        def _toggle_expand(ev):
-            is_expanded_holder[0] = not is_expanded_holder[0]
-            if is_expanded_holder[0]:
-                modal_body.height = (
-                    max(400, page.height * 0.94) if page and page.height else 720
-                )
-                expand_btn.icon = ft.Icons.FULLSCREEN_EXIT
-                expand_btn.tooltip = "Recolher leitura"
-            else:
-                modal_body.height = (
-                    min(page.height * 0.75, 540) if page and page.height else 450
-                )
-                expand_btn.icon = ft.Icons.FULLSCREEN
-                expand_btn.tooltip = "Expandir leitura (Tela Cheia)"
-            page.update()
-
-        expand_btn = ft.IconButton(
-            ft.Icons.FULLSCREEN,
-            icon_size=20,
-            tooltip="Expandir leitura (Tela Cheia)",
-            on_click=_toggle_expand,
-        )
-
-        header_row = ft.Row(
-            controls=[
-                ft.Row(
-                    controls=[
-                        ft.Icon(ft.Icons.MENU_BOOK, color=accent_color, size=22),
-                        title_text,
-                    ],
-                    alignment=ft.MainAxisAlignment.START,
-                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                    spacing=8,
-                    expand=True,
-                ),
-                version_dropdown,
-                expand_btn,
-                ft.IconButton(
-                    ft.Icons.CLOSE,
-                    icon_size=20,
-                    tooltip="Fechar",
-                    on_click=_close_dialog,
-                ),
-            ],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=4,
-        )
-
-        ref_chips_container = ft.Container()
-
-        async def _on_chip_selected(e, ref_target: str):
-            if current_ref_holder[0] != ref_target:
-                current_ref_holder[0] = ref_target
-                is_full_chapter_holder[0] = False
-                _update_ref_chips()
-                await _carregar_versiculos(self.selected_biblia_version)
-
-        def _update_ref_chips():
-            base_ref = target_hino.texto_base if target_hino else None
-            chips = self._build_biblia_modal_ref_chips(
-                all_refs,
-                current_ref_holder[0],
-                base_ref,
-                accent_color,
-                _on_chip_selected,
-            )
-            ref_chips_container.content = (
-                ft.Column(controls=chips, spacing=0) if chips else ft.Container()
-            )
-
-        _update_ref_chips()
-
-        async def _copiar_passagem(ev):
-            passagem = current_passagem_holder[0]
-            if not passagem or not passagem.versiculos:
-                return
-            texto_copia = f"{passagem.texto_formatado}\n\n({passagem.referencia} - {self.selected_biblia_version})"
-            try:
-                await ft.Clipboard().set(texto_copia)
-            except Exception:
-                pass
-            self._show_snackbar(page, f"Passagem '{passagem.referencia}' copiada!")
-
-        copy_btn = ft.OutlinedButton(
-            "Copiar",
-            icon=ft.Icons.CONTENT_COPY,
-            style=ft.ButtonStyle(
-                padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-                text_style=ft.TextStyle(size=12),
-            ),
-            tooltip="Copiar passagem com referência para a área de transferência",
-            on_click=_copiar_passagem,
-        )
-
-        async def _toggle_capitulo(ev):
-            is_full_chapter_holder[0] = not is_full_chapter_holder[0]
-            if is_full_chapter_holder[0] and not is_expanded_holder[0]:
-                is_expanded_holder[0] = True
-                modal_body.height = (
-                    max(400, page.height * 0.94) if page and page.height else 720
-                )
-                expand_btn.icon = ft.Icons.FULLSCREEN_EXIT
-                expand_btn.tooltip = "Recolher leitura"
-            await _carregar_versiculos(self.selected_biblia_version)
-
-        chapter_toggle_btn = ft.OutlinedButton(
-            BTN_CAPITULO_COMPLETO,
-            icon=ft.Icons.AUTO_STORIES,
-            style=ft.ButtonStyle(
-                padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-                text_style=ft.TextStyle(size=12),
-            ),
-            tooltip="Alternar entre versículos do hino e o capítulo completo",
-            on_click=_toggle_capitulo,
-        )
-
-        font_indicator = ft.Text(
-            f"{current_font_size_holder[0]}pt", size=12, weight=ft.FontWeight.BOLD
-        )
-
-        def _zoom_in(ev):
-            if current_font_size_holder[0] < 36:
-                current_font_size_holder[0] += 2
-                font_indicator.value = f"{current_font_size_holder[0]}pt"
-                _render_loaded_verses()
-                page.update()
-
-        def _zoom_out(ev):
-            if current_font_size_holder[0] > 12:
-                current_font_size_holder[0] -= 2
-                font_indicator.value = f"{current_font_size_holder[0]}pt"
-                _render_loaded_verses()
-                page.update()
-
-        font_minus_btn = ft.IconButton(
-            ft.Icons.REMOVE_CIRCLE_OUTLINE,
-            icon_size=18,
-            tooltip="Diminuir tamanho da letra",
-            on_click=_zoom_out,
-        )
-        font_plus_btn = ft.IconButton(
-            ft.Icons.ADD_CIRCLE_OUTLINE,
-            icon_size=18,
-            tooltip="Aumentar tamanho da letra",
-            on_click=_zoom_in,
-        )
-
-        action_bar = self._build_biblia_modal_action_bar(
-            copy_btn,
-            chapter_toggle_btn,
-            font_minus_btn,
-            font_indicator,
-            font_plus_btn,
-        )
-
-        button_label = "Voltar para Informações" if from_info_modal else "Fechar"
-        button_icon = ft.Icons.ARROW_BACK if from_info_modal else ft.Icons.CLOSE
-        footer_row = ft.Row(
-            controls=[
-                ft.TextButton(button_label, icon=button_icon, on_click=_close_dialog)
-            ],
-            alignment=ft.MainAxisAlignment.END,
-        )
-
-        modal_body = ft.Container(
-            content=ft.Column(
-                controls=[
-                    header_row,
-                    ref_chips_container,
-                    ft.Divider(height=1),
-                    ft.Container(
-                        content=verses_container,
-                        expand=True,
-                        padding=ft.Padding.symmetric(vertical=4),
-                    ),
-                    ft.Divider(height=1),
-                    action_bar,
-                    ft.Divider(height=1),
-                    footer_row,
-                ],
-                spacing=6,
-                expand=True,
-            ),
-            padding=ft.Padding.only(left=20, top=16, right=20, bottom=30),
-            height=min(page.height * 0.85, 620) if page and page.height else 520,
-        )
-
-        bs = ft.BottomSheet(content=modal_body)
-        page.show_dialog(bs)
-        await _carregar_versiculos(self.selected_biblia_version)
+        await session.show()
 
     def _build_not_found_view(self, page: ft.Page) -> ft.View:
         async def _go_back(e):
@@ -1306,30 +1341,53 @@ class HinoView:
             self.is_biblia_full_chapter = False
             await self._carregar_biblia_passagem(self.page)
 
+    async def _on_inline_versao_changed(self, e) -> None:
+        """Manipula a alteração de versão da Bíblia na barra de ferramentas inline."""
+        nova_versao = e.control.value
+        if not nova_versao:
+            return
+        self.selected_biblia_version = nova_versao
+        self.biblia_repository.set_version(nova_versao)
+        self._save_pref_task = self._create_background_task(self._save_preferences())
+        await self._carregar_biblia_passagem(self.page)
+
+    async def _on_inline_copiar_passagem(self, e) -> None:
+        """Copia a passagem bíblica ativa para a área de transferência."""
+        passagem = self.current_biblia_passagem
+        if not passagem or not passagem.versiculos:
+            return
+        texto_copia = f"{passagem.texto_formatado}\n\n({passagem.referencia} - {self.selected_biblia_version})"
+        try:
+            await ft.Clipboard().set(texto_copia)
+        except Exception:
+            pass
+        if self.page:
+            self._show_snackbar(self.page, f"Passagem '{passagem.referencia}' copiada!")
+
+    async def _on_inline_toggle_capitulo(self, e) -> None:
+        """Alterna entre versículos do hino e o capítulo completo na visualização inline."""
+        self.is_biblia_full_chapter = not self.is_biblia_full_chapter
+        await self._carregar_biblia_passagem(self.page)
+
+    def _on_inline_voltar_letra(self, e) -> None:
+        """Retorna da visualização bíblica para a letra do hino."""
+        self.selected_view_mode = self.edition
+        self._update_content_view(self.page)
+
     def _build_biblia_inline_toolbar(self, accent_color: str) -> ft.Container:
         """Gera a barra de ferramentas do leitor bíblico inline."""
+        ref_title_text = (
+            self.current_biblia_passagem.referencia
+            if self.current_biblia_passagem and self.current_biblia_passagem.referencia
+            else (self.active_biblia_ref or "")
+        )
         ref_title = ft.Text(
-            (
-                self.current_biblia_passagem.referencia
-                if self.current_biblia_passagem
-                else self.active_biblia_ref
-            ),
+            ref_title_text,
             size=18,
             weight=ft.FontWeight.BOLD,
             color=accent_color,
         )
         versoes_disponiveis = self.biblia_repository.get_available_versions()
-
-        async def _on_versao_changed_inline(e):
-            nova_versao = e.control.value
-            if not nova_versao:
-                return
-            self.selected_biblia_version = nova_versao
-            self.biblia_repository.set_version(nova_versao)
-            self._save_pref_task = self._create_background_task(
-                self._save_preferences()
-            )
-            await self._carregar_biblia_passagem(self.page)
 
         version_dropdown = ft.Dropdown(
             options=[ft.dropdown.Option(key=v, text=v) for v in versoes_disponiveis],
@@ -1342,23 +1400,11 @@ class HinoView:
             border_radius=8,
             tooltip="Versão da Bíblia",
             on_select=lambda e: (
-                self.page.run_task(_on_versao_changed_inline, e) if self.page else None
+                self.page.run_task(self._on_inline_versao_changed, e)
+                if self.page
+                else None
             ),
         )
-
-        async def _copiar_passagem_inline(e):
-            passagem = self.current_biblia_passagem
-            if not passagem or not passagem.versiculos:
-                return
-            texto_copia = f"{passagem.texto_formatado}\n\n({passagem.referencia} - {self.selected_biblia_version})"
-            try:
-                await ft.Clipboard().set(texto_copia)
-            except Exception:
-                pass
-            if self.page:
-                self._show_snackbar(
-                    self.page, f"Passagem '{passagem.referencia}' copiada!"
-                )
 
         copy_btn = ft.OutlinedButton(
             "Copiar",
@@ -1369,13 +1415,11 @@ class HinoView:
             ),
             tooltip="Copiar passagem com referência para a área de transferência",
             on_click=lambda e: (
-                self.page.run_task(_copiar_passagem_inline, e) if self.page else None
+                self.page.run_task(self._on_inline_copiar_passagem, e)
+                if self.page
+                else None
             ),
         )
-
-        async def _toggle_capitulo_inline(e):
-            self.is_biblia_full_chapter = not self.is_biblia_full_chapter
-            await self._carregar_biblia_passagem(self.page)
 
         chapter_toggle_btn = ft.OutlinedButton(
             (
@@ -1394,13 +1438,11 @@ class HinoView:
             ),
             tooltip="Alternar entre versículos do hino e o capítulo completo",
             on_click=lambda e: (
-                self.page.run_task(_toggle_capitulo_inline, e) if self.page else None
+                self.page.run_task(self._on_inline_toggle_capitulo, e)
+                if self.page
+                else None
             ),
         )
-
-        def _voltar_letra(e):
-            self.selected_view_mode = self.edition
-            self._update_content_view(self.page)
 
         left_toolbar_controls: list[ft.Control] = []
         if self.segmented_button is None:
@@ -1413,7 +1455,7 @@ class HinoView:
                         text_style=ft.TextStyle(size=12),
                     ),
                     tooltip="Voltar para a letra do hino",
-                    on_click=_voltar_letra,
+                    on_click=self._on_inline_voltar_letra,
                 )
             )
         left_toolbar_controls.append(ref_title)
@@ -1444,57 +1486,58 @@ class HinoView:
             margin=ft.Margin.only(bottom=8),
         )
 
+    def _build_single_biblia_chip(
+        self, r: str, is_active: bool, is_base: bool, accent_color: str
+    ) -> ft.Control:
+        """Constrói um único chip de navegação bíblica com feedback visual de seleção."""
+        label_prefix = "✦ " if is_base else ""
+        label_suffix = " (Base)" if is_base else ""
+        return ft.Container(
+            content=ft.Text(
+                f"{label_prefix}{r}{label_suffix}",
+                size=11,
+                weight=ft.FontWeight.BOLD if is_active else ft.FontWeight.NORMAL,
+                color=accent_color if is_active else ft.Colors.ON_SURFACE_VARIANT,
+            ),
+            bgcolor=(
+                ft.Colors.with_opacity(0.18, accent_color)
+                if is_active
+                else ft.Colors.SURFACE_CONTAINER_HIGHEST
+            ),
+            border=ft.Border.all(1, accent_color) if is_active else None,
+            border_radius=12,
+            padding=ft.Padding.symmetric(horizontal=10, vertical=5),
+            on_click=lambda e, ref=r: (
+                self.page.run_task(self._on_inline_biblia_ref_selected, e, ref)
+                if self.page
+                else None
+            ),
+            ink=True,
+        )
+
     def _build_biblia_inline_chips(
         self, all_refs: list[str], accent_color: str
     ) -> list[ft.Control]:
         """Gera a linha de chips de referências bíblicas na visualização inline."""
         if len(all_refs) <= 1:
             return []
-        ref_chips: list[ft.Control] = []
-        for r in all_refs:
-            is_active = r == self.active_biblia_ref
-            is_base = bool(
-                self.current_hino
-                and self.current_hino.texto_base
-                and r == self.current_hino.texto_base.strip()
+        base_ref = (
+            self.current_hino.texto_base.strip()
+            if (self.current_hino and self.current_hino.texto_base)
+            else None
+        )
+        chips = [
+            self._build_single_biblia_chip(
+                r=r,
+                is_active=(r == self.active_biblia_ref),
+                is_base=bool(base_ref and r == base_ref),
+                accent_color=accent_color,
             )
-            label_prefix = "✦ " if is_base else ""
-            label_suffix = " (Base)" if is_base else ""
-
-            ref_chips.append(
-                ft.Container(
-                    content=ft.Text(
-                        f"{label_prefix}{r}{label_suffix}",
-                        size=11,
-                        weight=(
-                            ft.FontWeight.BOLD if is_active else ft.FontWeight.NORMAL
-                        ),
-                        color=(
-                            accent_color if is_active else ft.Colors.ON_SURFACE_VARIANT
-                        ),
-                    ),
-                    bgcolor=(
-                        ft.Colors.with_opacity(0.18, accent_color)
-                        if is_active
-                        else ft.Colors.SURFACE_CONTAINER_HIGHEST
-                    ),
-                    border=ft.Border.all(1, accent_color) if is_active else None,
-                    border_radius=12,
-                    padding=ft.Padding.symmetric(horizontal=10, vertical=5),
-                    on_click=lambda e, ref=r: (
-                        self.page.run_task(self._on_inline_biblia_ref_selected, e, ref)
-                        if self.page
-                        else None
-                    ),
-                    ink=True,
-                )
-            )
-
+            for r in all_refs
+        ]
         return [
             ft.Container(
-                content=ft.Row(
-                    controls=ref_chips, scroll=ft.ScrollMode.AUTO, spacing=6
-                ),
+                content=ft.Row(controls=chips, scroll=ft.ScrollMode.AUTO, spacing=6),
                 padding=ft.Padding.only(bottom=10),
             )
         ]
@@ -1603,7 +1646,7 @@ class HinoView:
         if self.hino_antigo:
             num = str(self.hino_antigo.numero or "")
             titulo = self.hino_antigo.titulo or ""
-            letra = self.hino_antigo.letra or "Letra não disponível no banco local."
+            letra = self.hino_antigo.letra or MSG_LETRA_NAO_DISPONIVEL
             return edition_name, num, titulo, letra
 
         if self.comparativo:
@@ -1622,7 +1665,7 @@ class HinoView:
                 edition_name,
                 str(num_val or ""),
                 titulo_val or fallback_title,
-                "Letra não disponível no banco local.",
+                MSG_LETRA_NAO_DISPONIVEL,
             )
 
         return edition_name, "", "", ""
@@ -2311,9 +2354,7 @@ class HinoView:
             spacing=4,
         )
 
-    def _build_biblical_texts_info_control(
-        self, page: ft.Page,
-    ) -> ft.Control | None:
+    def _build_biblical_texts_info_control(self, page: ft.Page) -> ft.Control | None:
         """Gera a seção de chips dos textos bíblicos relacionados."""
         textos_biblicos = self.relacionados.get("textos_biblicos", [])
         if not textos_biblicos:
@@ -2453,7 +2494,7 @@ class HinoView:
             self._build_texto_base_info_control(page, target_hino),
             self._build_category_info_control(page, target_hino),
             self._build_themes_info_control(page),
-            self._build_biblical_texts_info_control(page, target_hino),
+            self._build_biblical_texts_info_control(page),
         ):
             if section:
                 info_items.append(section)
