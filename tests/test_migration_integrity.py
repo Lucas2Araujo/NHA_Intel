@@ -1,10 +1,10 @@
-import os
 import pytest
+
 from src.database.connection import DatabaseConnection
-from src.repositories.hino_repository import HinoRepository
-from src.repositories.favorito_repository import FavoritoRepository
-from src.repositories.historico_repository import HistoricoRepository
 from src.repositories.culto_repository import CultoRepository
+from src.repositories.favorito_repository import FavoritoRepository
+from src.repositories.hino_repository import HinoRepository
+from src.repositories.historico_repository import HistoricoRepository
 
 
 @pytest.mark.asyncio
@@ -77,4 +77,3 @@ async def test_user_tables_in_migrated_database():
         assert len(temas) == 15
     finally:
         await db_conn.close()
-

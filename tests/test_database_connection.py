@@ -1,7 +1,7 @@
 import os
-import tempfile
-from pathlib import Path
+
 import pytest
+
 from src.database.connection import DatabaseConnection
 from src.repositories.hino_repository import HinoRepository
 

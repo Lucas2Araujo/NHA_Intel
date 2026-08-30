@@ -1,4 +1,5 @@
 import flet as ft
+
 from main import _build_loading_view
 
 

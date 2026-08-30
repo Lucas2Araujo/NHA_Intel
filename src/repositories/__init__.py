@@ -2,16 +2,16 @@
 Módulo de repositórios do Hinário App.
 """
 
-from .hino_repository import HinoRepository
-from .favorito_repository import FavoritoRepository
-from .historico_repository import HistoricoRepository
-from .culto_repository import CultoRepository
 from .comparativo_repository import ComparativoRepository
+from .culto_repository import CultoRepository
+from .favorito_repository import FavoritoRepository
+from .hino_repository import HinoRepository
+from .historico_repository import HistoricoRepository
 
 __all__ = [
-    "HinoRepository",
-    "FavoritoRepository",
-    "HistoricoRepository",
-    "CultoRepository",
     "ComparativoRepository",
+    "CultoRepository",
+    "FavoritoRepository",
+    "HinoRepository",
+    "HistoricoRepository",
 ]

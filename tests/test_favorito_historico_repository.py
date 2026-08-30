@@ -1,7 +1,8 @@
 import pytest
+
+from src.database.connection import DatabaseConnection
 from src.repositories.favorito_repository import FavoritoRepository
 from src.repositories.historico_repository import HistoricoRepository
-from src.database.connection import DatabaseConnection
 
 
 @pytest.mark.asyncio

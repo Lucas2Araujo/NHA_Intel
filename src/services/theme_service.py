@@ -5,8 +5,9 @@ com persistência assíncrona na tabela 'preferencias' do SQLite.
 """
 
 import json
+
 import flet as ft
-from typing import Optional
+
 from src.database.connection import DatabaseConnection
 
 PREF_THEME_KEY = "theme_prefs"

@@ -5,9 +5,8 @@ Integra os dados ricos do novo banco (letra_json, metadados em JSON, autores, vi
 às tabelas normalizadas e relacionais necessárias para o app e suas suítes de teste.
 """
 
-import os
-import re
 import json
+import re
 import shutil
 import sqlite3
 from pathlib import Path
@@ -18,23 +17,35 @@ def parse_autores(s: str) -> tuple[str, str]:
     if not s or not s.strip():
         return "", ""
     s_clean = s.strip()
-    m = re.match(
-        r"^(?:Letra:\s*(.*?)\s*\|\s*Música:\s*(.*?)|Música:\s*(.*?)\s*\|\s*Letra:\s*(.*?)|Letra e Música:\s*(.*?)|Letra:\s*(.*?)|Música:\s*(.*?))$",
-        s_clean,
-        re.IGNORECASE,
-    )
-    if m:
-        groups = m.groups()
-        if groups[0] is not None and groups[1] is not None:
-            return groups[0].strip(), groups[1].strip()
-        elif groups[2] is not None and groups[3] is not None:
-            return groups[3].strip(), groups[2].strip()
-        elif groups[4] is not None:
-            return groups[4].strip(), groups[4].strip()
-        elif groups[5] is not None:
-            return groups[5].strip(), ""
-        elif groups[6] is not None:
-            return "", groups[6].strip()
+
+    # Formato combinado: "Letra e Música: ..."
+    if re.match(r"^Letra e M[uú]sica:\s*", s_clean, re.IGNORECASE):
+        val = re.sub(
+            r"^Letra e M[uú]sica:\s*", "", s_clean, flags=re.IGNORECASE
+        ).strip()
+        return val, val
+
+    # Formato com separador "|"
+    if "|" in s_clean:
+        parts = [p.strip() for p in s_clean.split("|", 1)]
+        letra, musica = "", ""
+        for part in parts:
+            if re.match(r"^Letra:\s*", part, re.IGNORECASE):
+                letra = re.sub(r"^Letra:\s*", "", part, flags=re.IGNORECASE).strip()
+            elif re.match(r"^M[uú]sica:\s*", part, re.IGNORECASE):
+                musica = re.sub(
+                    r"^M[uú]sica:\s*", "", part, flags=re.IGNORECASE
+                ).strip()
+        if letra or musica:
+            return letra, musica
+
+    # Formatos simples
+    if re.match(r"^Letra:\s*", s_clean, re.IGNORECASE):
+        return re.sub(r"^Letra:\s*", "", s_clean, flags=re.IGNORECASE).strip(), ""
+
+    if re.match(r"^M[uú]sica:\s*", s_clean, re.IGNORECASE):
+        return "", re.sub(r"^M[uú]sica:\s*", "", s_clean, flags=re.IGNORECASE).strip()
+
     return s_clean, s_clean
 
 
@@ -206,7 +217,9 @@ def migrate():
     cur.execute("DELETE FROM lista_culto;")
     cur.execute("DELETE FROM preferencias;")
     try:
-        cur.execute("DELETE FROM sqlite_sequence WHERE name IN ('hino', 'tema', 'texto_biblico', 'historico', 'lista_culto');")
+        cur.execute(
+            "DELETE FROM sqlite_sequence WHERE name IN ('hino', 'tema', 'texto_biblico', 'historico', 'lista_culto');"
+        )
     except Exception:
         pass
 
@@ -226,15 +239,27 @@ def migrate():
         subcategoria = row["subcategoria"] or ""
         link_video = row["video_url"] or ""
 
-        cur.execute("""
+        cur.execute(
+            """
             INSERT INTO hino (
                 numero, titulo, letra, letra_json, autor_letra, autor_musica, autores,
                 texto_base, categoria, subcategoria, link_video
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            num, titulo, letra_plain, letra_json_val, autor_letra, autor_musica, raw_autores,
-            texto_base, categoria, subcategoria, link_video
-        ))
+        """,
+            (
+                num,
+                titulo,
+                letra_plain,
+                letra_json_val,
+                autor_letra,
+                autor_musica,
+                raw_autores,
+                texto_base,
+                categoria,
+                subcategoria,
+                link_video,
+            ),
+        )
         new_hino_id = cur.lastrowid
         numero_to_new_id[num] = new_hino_id
 
@@ -247,13 +272,18 @@ def migrate():
                     if not t_clean:
                         continue
                     if t_clean not in tema_name_to_id:
-                        cur.execute("INSERT OR IGNORE INTO tema (nome) VALUES (?)", (t_clean,))
+                        cur.execute(
+                            "INSERT OR IGNORE INTO tema (nome) VALUES (?)", (t_clean,)
+                        )
                         cur.execute("SELECT id FROM tema WHERE nome = ?", (t_clean,))
                         t_id = cur.fetchone()["id"]
                         tema_name_to_id[t_clean] = t_id
                     else:
                         t_id = tema_name_to_id[t_clean]
-                    cur.execute("INSERT OR IGNORE INTO hino_tema (hino_id, tema_id) VALUES (?, ?)", (new_hino_id, t_id))
+                    cur.execute(
+                        "INSERT OR IGNORE INTO hino_tema (hino_id, tema_id) VALUES (?, ?)",
+                        (new_hino_id, t_id),
+                    )
             except Exception as e:
                 print(f"[!] Erro ao parsear temas do hino {num}: {e}")
 
@@ -266,13 +296,22 @@ def migrate():
                     if not ref_clean:
                         continue
                     if ref_clean not in texto_ref_to_id:
-                        cur.execute("INSERT OR IGNORE INTO texto_biblico (referencia) VALUES (?)", (ref_clean,))
-                        cur.execute("SELECT id FROM texto_biblico WHERE referencia = ?", (ref_clean,))
+                        cur.execute(
+                            "INSERT OR IGNORE INTO texto_biblico (referencia) VALUES (?)",
+                            (ref_clean,),
+                        )
+                        cur.execute(
+                            "SELECT id FROM texto_biblico WHERE referencia = ?",
+                            (ref_clean,),
+                        )
                         ref_id = cur.fetchone()["id"]
                         texto_ref_to_id[ref_clean] = ref_id
                     else:
                         ref_id = texto_ref_to_id[ref_clean]
-                    cur.execute("INSERT OR IGNORE INTO hino_texto (hino_id, texto_id) VALUES (?, ?)", (new_hino_id, ref_id))
+                    cur.execute(
+                        "INSERT OR IGNORE INTO hino_texto (hino_id, texto_id) VALUES (?, ?)",
+                        (new_hino_id, ref_id),
+                    )
             except Exception as e:
                 print(f"[!] Erro ao parsear textos bíblicos do hino {num}: {e}")
 
@@ -299,7 +338,7 @@ def migrate():
                     new_id = numero_to_new_id[num]
                     cur.execute(
                         "INSERT OR IGNORE INTO favorito (hino_id, data_favoritado) VALUES (?, ?)",
-                        (new_id, fav["data_favoritado"])
+                        (new_id, fav["data_favoritado"]),
                     )
         except Exception as e:
             print(f"[!] Erro ao migrar favoritos: {e}")
@@ -313,7 +352,7 @@ def migrate():
                     new_id = numero_to_new_id[num]
                     cur.execute(
                         "INSERT INTO historico (hino_id, data_acesso) VALUES (?, ?)",
-                        (new_id, hist["data_acesso"])
+                        (new_id, hist["data_acesso"]),
                     )
         except Exception as e:
             print(f"[!] Erro ao migrar histórico: {e}")
@@ -324,14 +363,14 @@ def migrate():
             for l in listas:
                 cur.execute(
                     "INSERT INTO lista_culto (tema_gerador, data_criacao) VALUES (?, ?)",
-                    (l["tema_gerador"], l["data_criacao"])
+                    (l["tema_gerador"], l["data_criacao"]),
                 )
                 new_lista_id = cur.lastrowid
                 old_lista_id = l["id"]
 
                 cur_old.execute(
                     "SELECT hino_id, ordem_execucao FROM item_lista_culto WHERE lista_id = ? ORDER BY ordem_execucao",
-                    (old_lista_id,)
+                    (old_lista_id,),
                 )
                 for item in cur_old.fetchall():
                     old_id = item["hino_id"]
@@ -340,7 +379,7 @@ def migrate():
                         new_id = numero_to_new_id[num]
                         cur.execute(
                             "INSERT OR IGNORE INTO item_lista_culto (lista_id, hino_id, ordem_execucao) VALUES (?, ?, ?)",
-                            (new_lista_id, new_id, item["ordem_execucao"])
+                            (new_lista_id, new_id, item["ordem_execucao"]),
                         )
         except Exception as e:
             print(f"[!] Erro ao migrar listas de culto: {e}")
@@ -350,7 +389,7 @@ def migrate():
             for p in cur_old.fetchall():
                 cur.execute(
                     "INSERT OR REPLACE INTO preferencias (chave, valor) VALUES (?, ?)",
-                    (p["chave"], p["valor"])
+                    (p["chave"], p["valor"]),
                 )
         except Exception as e:
             print(f"[!] Erro ao migrar preferências: {e}")

@@ -3,22 +3,25 @@ Testes unitários e assíncronos para o serviço de atualização UpdaterService
 Cobertura completa: detecção de ABI, seleção de APK, integridade SHA-256, download atômico, cache e UI.
 """
 
-import json
-import asyncio
 import hashlib
-import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import flet as ft
+import pytest
+
 from src.services.updater_service import (
-    UpdaterService,
     ABI_ARM64,
     ABI_ARMV7,
-    ABI_X86_64,
     ABI_X86,
-    ABI_UNIVERSAL,
+    ABI_X86_64,
+    UpdaterService,
 )
-from src.views.update_dialog import show_update_dialog, trigger_apk_installation, open_in_browser
-import flet as ft
+from src.views.update_dialog import (
+    open_in_browser,
+    show_update_dialog,
+    trigger_apk_installation,
+)
 
 
 def test_updater_version_parsing():
@@ -62,10 +65,26 @@ def test_device_architecture_detection():
 def test_select_best_apk_asset_multi_arch():
     """Testa seleção de APK ideal com base na arquitetura do dispositivo."""
     assets = [
-        {"name": "hinario-v0.6.0-armeabi-v7a.apk", "browser_download_url": "https://example.com/armv7.apk", "size": 15000000},
-        {"name": "hinario-v0.6.0-arm64-v8a.apk", "browser_download_url": "https://example.com/arm64.apk", "size": 16000000},
-        {"name": "hinario-v0.6.0-x86_64.apk", "browser_download_url": "https://example.com/x86_64.apk", "size": 17000000},
-        {"name": "checksums.txt", "browser_download_url": "https://example.com/checksums.txt", "size": 256},
+        {
+            "name": "hinario-v0.6.0-armeabi-v7a.apk",
+            "browser_download_url": "https://example.com/armv7.apk",
+            "size": 15000000,
+        },
+        {
+            "name": "hinario-v0.6.0-arm64-v8a.apk",
+            "browser_download_url": "https://example.com/arm64.apk",
+            "size": 16000000,
+        },
+        {
+            "name": "hinario-v0.6.0-x86_64.apk",
+            "browser_download_url": "https://example.com/x86_64.apk",
+            "size": 17000000,
+        },
+        {
+            "name": "checksums.txt",
+            "browser_download_url": "https://example.com/checksums.txt",
+            "size": 256,
+        },
     ]
 
     # Para dispositivo ARM64
@@ -87,8 +106,16 @@ def test_select_best_apk_asset_multi_arch():
 def test_select_best_apk_asset_universal_fallback():
     """Testa fallback para APK universal quando não há binário específico."""
     assets = [
-        {"name": "hinario-v0.6.0-universal.apk", "browser_download_url": "https://example.com/universal.apk", "size": 25000000},
-        {"name": "notes.txt", "browser_download_url": "https://example.com/notes.txt", "size": 100},
+        {
+            "name": "hinario-v0.6.0-universal.apk",
+            "browser_download_url": "https://example.com/universal.apk",
+            "size": 25000000,
+        },
+        {
+            "name": "notes.txt",
+            "browser_download_url": "https://example.com/notes.txt",
+            "size": 100,
+        },
     ]
 
     best = UpdaterService.select_best_apk_asset(assets, current_arch=ABI_ARM64)
@@ -114,7 +141,9 @@ def test_sha256_calculation_and_extraction(tmp_path: Path):
 
     # Extração das notas de release
     release_body = f"Release v0.6.0\nSHA256: {expected_hash}\nNovidades..."
-    extracted_body = UpdaterService.extract_expected_sha256("app.apk", release_body, None)
+    extracted_body = UpdaterService.extract_expected_sha256(
+        "app.apk", release_body, None
+    )
     assert extracted_body == expected_hash
 
 
@@ -147,14 +176,24 @@ async def test_check_for_updates_available_with_arch_selection():
         ],
     }
 
-    with patch.object(service, "_fetch_latest_release_sync", return_value=mock_release_payload), \
-         patch.object(service, "_fetch_checksums_sync", return_value="a" * 64 + "  hinario_v0.6.0_arm64-v8a.apk"):
-        result = await service.check_for_updates(current_version="0.5.0", target_arch="arm64-v8a")
+    with patch.object(
+        service, "_fetch_latest_release_sync", return_value=mock_release_payload
+    ), patch.object(
+        service,
+        "_fetch_checksums_sync",
+        return_value="a" * 64 + "  hinario_v0.6.0_arm64-v8a.apk",
+    ):
+        result = await service.check_for_updates(
+            current_version="0.5.0", target_arch="arm64-v8a"
+        )
 
         assert result["update_available"] is True
         assert result["latest_version"] == "0.6.0"
         assert result["current_version"] == "0.5.0"
-        assert result["download_url"] == "https://github.com/Lucas2Araujo/NHA_Intel/releases/download/v0.6.0/hinario_v0.6.0_arm64.apk"
+        assert (
+            result["download_url"]
+            == "https://github.com/Lucas2Araujo/NHA_Intel/releases/download/v0.6.0/hinario_v0.6.0_arm64.apk"
+        )
         assert result["asset_name"] == "hinario_v0.6.0_arm64-v8a.apk"
         assert result["asset_size"] == 15728640
         assert result["expected_sha256"] == "a" * 64
@@ -168,10 +207,18 @@ async def test_check_for_updates_cache():
     mock_payload = {
         "tag_name": "v0.6.0",
         "body": "Notas",
-        "assets": [{"name": "app.apk", "browser_download_url": "https://example.com/app.apk", "size": 1000}],
+        "assets": [
+            {
+                "name": "app.apk",
+                "browser_download_url": "https://example.com/app.apk",
+                "size": 1000,
+            }
+        ],
     }
 
-    with patch.object(service, "_fetch_latest_release_sync", return_value=mock_payload) as mock_fetch:
+    with patch.object(
+        service, "_fetch_latest_release_sync", return_value=mock_payload
+    ) as mock_fetch:
         res1 = await service.check_for_updates(current_version="0.5.0")
         assert res1["update_available"] is True
         assert mock_fetch.call_count == 1
@@ -182,7 +229,9 @@ async def test_check_for_updates_cache():
         assert mock_fetch.call_count == 1
 
         # Chamada com force_refresh=True deve refazer a requisição
-        res3 = await service.check_for_updates(current_version="0.5.0", force_refresh=True)
+        res3 = await service.check_for_updates(
+            current_version="0.5.0", force_refresh=True
+        )
         assert res3["update_available"] is True
         assert mock_fetch.call_count == 2
 
@@ -191,16 +240,18 @@ async def test_check_for_updates_cache():
 async def test_check_for_updates_rate_limit_error():
     """Testa tratamento amigável de HTTP 403 (Rate Limit)."""
     import urllib.error
+    from email.message import Message
+
     service = UpdaterService()
 
     with patch.object(
         service,
         "_fetch_latest_release_sync",
-        side_effect=urllib.error.HTTPError(
-            "url", 403, "Forbidden", {}, None
-        ),
+        side_effect=urllib.error.HTTPError("url", 403, "Forbidden", Message(), None),
     ):
-        result = await service.check_for_updates(current_version="0.5.0", force_refresh=True)
+        result = await service.check_for_updates(
+            current_version="0.5.0", force_refresh=True
+        )
         assert result["update_available"] is False
         assert "Limite de requisições" in result["error"]
 
@@ -284,18 +335,14 @@ async def test_show_update_dialog_and_launch(tmp_path: Path):
     test_apk = tmp_path / "test.apk"
     test_apk.write_bytes(b"dummy apk")
 
-    page.launch_url = AsyncMock()
-    await trigger_apk_installation(page, str(test_apk), "https://example.com/update.apk")
-    page.launch_url.assert_called_once_with(f"file://{test_apk.resolve()}")
+    with patch("flet.UrlLauncher.launch_url", new_callable=AsyncMock) as mock_launch:
+        await trigger_apk_installation(str(test_apk), "https://example.com/update.apk")
+        mock_launch.assert_called_once_with(f"file://{test_apk.resolve()}")
 
 
 @pytest.mark.asyncio
 async def test_open_in_browser():
     """Testa função utilitária para abrir URL no navegador."""
-    page = MagicMock(spec=ft.Page)
-    page.launch_url = AsyncMock()
-
-    await open_in_browser(page, "https://github.com/Lucas2Araujo/NHA_Intel")
-    page.launch_url.assert_called_once_with("https://github.com/Lucas2Araujo/NHA_Intel")
-
-
+    with patch("flet.UrlLauncher.launch_url", new_callable=AsyncMock) as mock_launch:
+        await open_in_browser("https://github.com/Lucas2Araujo/NHA_Intel")
+        mock_launch.assert_called_once_with("https://github.com/Lucas2Araujo/NHA_Intel")

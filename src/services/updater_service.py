@@ -5,20 +5,20 @@ seleção inteligente de APK por ABI, validação de integridade SHA-256, downlo
 cache em memória e integração com o instalador nativo do Android.
 """
 
-import os
-import sys
-import json
-import time
-import re
+import asyncio
 import hashlib
+import json
+import os
 import platform
+import re
 import subprocess
 import tempfile
-import asyncio
-import urllib.request
+import time
 import urllib.error
+import urllib.request
+from collections.abc import Callable
 from pathlib import Path
-from typing import Dict, Any, Optional, Callable, Tuple, List
+from typing import Any
 
 try:
     from src.version import __version__ as APP_VERSION
@@ -32,6 +32,14 @@ ABI_ARMV7 = "armeabi-v7a"
 ABI_X86_64 = "x86_64"
 ABI_X86 = "x86"
 ABI_UNIVERSAL = "universal"
+
+
+async def _run_sync_or_thread(func, *args, **kwargs):
+    """Executa a função em thread ou síncrona se o ambiente não suportar threads (WebAssembly/Pyodide)."""
+    try:
+        return await asyncio.to_thread(func, *args, **kwargs)
+    except (RuntimeError, NotImplementedError):
+        return func(*args, **kwargs)
 
 
 class UpdaterService:
@@ -53,7 +61,7 @@ class UpdaterService:
         self.cache_ttl_seconds = cache_ttl_seconds
 
         # Cache em memória para mitigar rate-limit do GitHub (60 req/h sem token)
-        self._cached_release_data: Optional[Dict[str, Any]] = None
+        self._cached_release_data: dict[str, Any] | None = None
         self._cache_timestamp: float = 0.0
 
     @staticmethod
@@ -90,9 +98,23 @@ class UpdaterService:
     def _normalize_abi(arch_str: str) -> str:
         """Normaliza aliases de arquitetura para a nomenclatura padrão Android."""
         arch = arch_str.lower().strip()
-        if any(token in arch for token in ("arm64", "aarch64", "armv8", "armv8l", "armv8b")):
+        if any(
+            token in arch for token in ("arm64", "aarch64", "armv8", "armv8l", "armv8b")
+        ):
             return ABI_ARM64
-        elif any(token in arch for token in ("armv7", "armv7l", "armv7b", "armv7a", "armeabi-v7a", "armeabi", "arm32", "arm")):
+        elif any(
+            token in arch
+            for token in (
+                "armv7",
+                "armv7l",
+                "armv7b",
+                "armv7a",
+                "armeabi-v7a",
+                "armeabi",
+                "arm32",
+                "arm",
+            )
+        ):
             return ABI_ARMV7
         elif any(token in arch for token in ("x86_64", "x86-64", "amd64", "x64")):
             return ABI_X86_64
@@ -118,8 +140,8 @@ class UpdaterService:
 
     @classmethod
     def select_best_apk_asset(
-        cls, assets: List[Dict[str, Any]], current_arch: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+        cls, assets: list[dict[str, Any]], current_arch: str | None = None
+    ) -> dict[str, Any] | None:
         """
         Analisa a lista de assets da release e seleciona o melhor APK correspondente
         à arquitetura de CPU do dispositivo.
@@ -142,15 +164,22 @@ class UpdaterService:
 
         target_abi = cls._normalize_abi(current_arch or cls.get_device_architecture())
 
-        def score_asset(asset: Dict[str, Any]) -> int:
+        def score_asset(asset: dict[str, Any]) -> int:
             name = asset.get("name", "").lower()
             # Mapeamento de termos de busca por arquitetura
             is_arm64_asset = any(t in name for t in ("arm64", "aarch64", "armv8"))
-            is_armv7_asset = any(t in name for t in ("armv7", "armeabi", "arm32")) or ("arm" in name and not is_arm64_asset)
-            is_x86_64_asset = any(t in name for t in ("x86_64", "x86-64", "amd64", "x64"))
+            is_armv7_asset = any(t in name for t in ("armv7", "armeabi", "arm32")) or (
+                "arm" in name and not is_arm64_asset
+            )
+            is_x86_64_asset = any(
+                t in name for t in ("x86_64", "x86-64", "amd64", "x64")
+            )
             is_x86_asset = "x86" in name and not is_x86_64_asset
             is_universal = any(t in name for t in ("universal", "fat", "all")) or (
-                not is_arm64_asset and not is_armv7_asset and not is_x86_64_asset and not is_x86_asset
+                not is_arm64_asset
+                and not is_armv7_asset
+                and not is_x86_64_asset
+                and not is_x86_asset
             )
 
             if target_abi == ABI_ARM64:
@@ -191,7 +220,7 @@ class UpdaterService:
         return best_asset
 
     @staticmethod
-    def parse_version_tuple(version_str: str) -> Tuple[int, ...]:
+    def parse_version_tuple(version_str: str) -> tuple[int, ...]:
         """
         Converte uma string de versão (ex: 'v0.5.0', '0.6.1', '1.0.0-rc1')
         em uma tupla de inteiros para comparação numérica consistente.
@@ -218,7 +247,9 @@ class UpdaterService:
         """
         Retorna True se latest_version for estritamente mais recente que current_version.
         """
-        return cls.parse_version_tuple(latest_version) > cls.parse_version_tuple(current_version)
+        return cls.parse_version_tuple(latest_version) > cls.parse_version_tuple(
+            current_version
+        )
 
     @staticmethod
     def calculate_sha256(file_path: Path) -> str:
@@ -231,8 +262,8 @@ class UpdaterService:
 
     @staticmethod
     def extract_expected_sha256(
-        asset_name: str, release_body: str, checksums_content: Optional[str] = None
-    ) -> Optional[str]:
+        asset_name: str, release_body: str, checksums_content: str | None = None
+    ) -> str | None:
         """
         Tenta extrair o hash SHA-256 esperado para o asset a partir do arquivo de checksums
         ou das notas de lançamento (release body).
@@ -257,13 +288,15 @@ class UpdaterService:
             if match:
                 return match.group(1).lower()
             # Procura por padrão genérico "sha256: <hash>"
-            generic_match = re.search(r"sha256\s*[:=]\s*([a-fA-F0-9]{64})", release_body, re.IGNORECASE)
+            generic_match = re.search(
+                r"sha256\s*[:=]\s*([a-fA-F0-9]{64})", release_body, re.IGNORECASE
+            )
             if generic_match:
                 return generic_match.group(1).lower()
 
         return None
 
-    def _fetch_latest_release_sync(self, current_ver: str) -> Dict[str, Any]:
+    def _fetch_latest_release_sync(self, current_ver: str) -> dict[str, Any]:
         """Executa a requisição GET síncrona na API do GitHub com headers apropriados."""
         url = f"https://api.github.com/repos/{self.repo_owner}/{self.repo_name}/releases/latest"
         headers = {
@@ -274,7 +307,11 @@ class UpdaterService:
         with urllib.request.urlopen(req, timeout=self.timeout_seconds) as response:
             if response.status != 200:
                 raise urllib.error.HTTPError(
-                    url, response.status, f"HTTP Error {response.status}", response.headers, None
+                    url,
+                    response.status,
+                    f"HTTP Error {response.status}",
+                    response.headers,
+                    None,
                 )
             data = json.loads(response.read().decode("utf-8"))
             return data
@@ -288,10 +325,10 @@ class UpdaterService:
 
     async def check_for_updates(
         self,
-        current_version: Optional[str] = None,
+        current_version: str | None = None,
         force_refresh: bool = False,
-        target_arch: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        target_arch: str | None = None,
+    ) -> dict[str, Any]:
         """
         Consulta a API do GitHub Releases para verificar se há uma nova versão disponível.
         Usa cache em memória para evitar atingir o limite de 60 req/hora do GitHub.
@@ -329,7 +366,9 @@ class UpdaterService:
             ):
                 data = self._cached_release_data
             else:
-                data = await asyncio.to_thread(self._fetch_latest_release_sync, cur_ver)
+                data = await _run_sync_or_thread(
+                    self._fetch_latest_release_sync, cur_ver
+                )
                 self._cached_release_data = data
                 self._cache_timestamp = now
 
@@ -363,12 +402,18 @@ class UpdaterService:
                 name_low = asset.get("name", "").lower()
                 if any(
                     name_low.endswith(ext)
-                    for ext in ("checksums.txt", "sha256sums", "sha256sums.txt", ".sha256", "hashes.txt")
+                    for ext in (
+                        "checksums.txt",
+                        "sha256sums",
+                        "sha256sums.txt",
+                        ".sha256",
+                        "hashes.txt",
+                    )
                 ):
                     chk_url = asset.get("browser_download_url")
                     if chk_url:
                         try:
-                            checksums_content = await asyncio.to_thread(
+                            checksums_content = await _run_sync_or_thread(
                                 self._fetch_checksums_sync, chk_url
                             )
                         except Exception:
@@ -403,7 +448,9 @@ class UpdaterService:
                     "Tente novamente em alguns minutos ou acesse a página de releases."
                 )
             elif e.code == 404:
-                error_msg = "Nenhuma versão publicada encontrada no repositório (HTTP 404)."
+                error_msg = (
+                    "Nenhuma versão publicada encontrada no repositório (HTTP 404)."
+                )
             else:
                 error_msg = f"Erro no GitHub (HTTP {e.code}): {e.reason}"
 
@@ -441,9 +488,9 @@ class UpdaterService:
         self,
         download_url: str,
         target_path: Path,
-        on_progress: Optional[Callable[[float, int, int], None]] = None,
-        expected_size: Optional[int] = None,
-        expected_sha256: Optional[str] = None,
+        on_progress: Callable[[float, int, int], None] | None = None,
+        expected_size: int | None = None,
+        expected_sha256: str | None = None,
     ) -> str:
         """
         Executa o download com streaming síncrono, gravação atômica (.tmp) e validação de integridade.
@@ -510,11 +557,11 @@ class UpdaterService:
     async def download_apk(
         self,
         download_url: str,
-        on_progress: Optional[Callable[[float, int, int], None]] = None,
-        target_dir: Optional[str] = None,
-        filename: Optional[str] = None,
-        expected_size: Optional[int] = None,
-        expected_sha256: Optional[str] = None,
+        on_progress: Callable[[float, int, int], None] | None = None,
+        target_dir: str | None = None,
+        filename: str | None = None,
+        expected_size: int | None = None,
+        expected_sha256: str | None = None,
     ) -> str:
         """
         Baixa o arquivo de atualização (.apk) de forma assíncrona com validação de integridade.
@@ -551,7 +598,7 @@ class UpdaterService:
             if on_progress:
                 loop.call_soon_threadsafe(on_progress, progress, current, total)
 
-        saved_path = await asyncio.to_thread(
+        saved_path = await _run_sync_or_thread(
             self._download_apk_sync,
             download_url,
             target_path,
@@ -560,4 +607,3 @@ class UpdaterService:
             expected_sha256,
         )
         return saved_path
-

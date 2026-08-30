@@ -1,5 +1,3 @@
-from typing import List
-import aiosqlite
 from src.database.connection import DatabaseConnection
 from src.models.hino import Hino
 
@@ -37,7 +35,7 @@ class FavoritoRepository:
             row = await cursor.fetchone()
             return row is not None
 
-    async def get_favoritos(self) -> List[Hino]:
+    async def get_favoritos(self) -> list[Hino]:
         """Retorna a lista de todos os hinos favoritados pelo usuário."""
         query = """
             SELECT h.id, h.numero, h.titulo 
@@ -49,7 +47,7 @@ class FavoritoRepository:
         async with conn.execute(query) as cursor:
             rows = await cursor.fetchall()
 
-        hinos: List[Hino] = []
+        hinos: list[Hino] = []
         for row in rows:
             hinos.append(
                 Hino(id=row["id"], numero=str(row["numero"]), titulo=str(row["titulo"]))

@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import List, Optional
 
 
 @dataclass(frozen=True)
@@ -10,8 +9,13 @@ class Versiculo:
 
     livro: str
     capitulo: int
-    versiculo: int
+    numero: int
     texto: str
+
+    @property
+    def versiculo(self) -> int:
+        """Alias para manter compatibilidade com acessos legados."""
+        return self.numero
 
 
 @dataclass(frozen=True)
@@ -23,9 +27,9 @@ class PassagemBiblica:
     referencia: str
     livro: str
     capitulo: int
-    versiculos: List[Versiculo]
+    versiculos: list[Versiculo]
 
     @property
     def texto_formatado(self) -> str:
         """Retorna o texto de todos os versículos formatado com numeração."""
-        return "\n".join(f"{v.versiculo}. {v.texto}" for v in self.versiculos)
+        return "\n".join(f"{v.numero}. {v.texto}" for v in self.versiculos)

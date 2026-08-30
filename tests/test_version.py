@@ -1,7 +1,6 @@
-import pytest
+import main
 from src.version import __version__
 from src.views.home_view import APP_VERSION as HOME_APP_VERSION
-import main
 
 
 def test_version_defined():
@@ -15,4 +14,3 @@ def test_version_imported_in_views():
     """Valida se a versão é importada corretamente nas views e módulo principal."""
     assert HOME_APP_VERSION == __version__
     assert main.APP_VERSION == __version__
-

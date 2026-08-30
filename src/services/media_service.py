@@ -1,10 +1,9 @@
+import asyncio
 import os
 import re
 import sys
-import shutil
-import asyncio
-import subprocess
-from typing import Optional, Dict, Any, Callable, List, cast
+from collections.abc import Callable
+from typing import Any, cast
 from urllib.parse import quote as url_quote
 
 try:
@@ -32,6 +31,14 @@ _YDL_FORMAT_VIDEO_HD = (
 )
 
 
+async def _run_sync_or_thread(func, *args, **kwargs):
+    """Executa a função em thread ou síncrona se o ambiente não suportar threads (WebAssembly/Pyodide)."""
+    try:
+        return await asyncio.to_thread(func, *args, **kwargs)
+    except (RuntimeError, NotImplementedError):
+        return func(*args, **kwargs)
+
+
 def _resolve_download_root(download_dir: str) -> str:
     """Resolve o diretório raiz de downloads respeitando variáveis de ambiente Android/Flet."""
     if not os.path.isabs(download_dir):
@@ -42,6 +49,7 @@ def _resolve_download_root(download_dir: str) -> str:
         os.makedirs(download_dir, exist_ok=True)
     except Exception:
         import tempfile
+
         download_dir = os.path.join(tempfile.gettempdir(), "hinario_downloads")
         os.makedirs(download_dir, exist_ok=True)
     return download_dir
@@ -49,9 +57,9 @@ def _resolve_download_root(download_dir: str) -> str:
 
 def path_to_file_uri(filepath: str) -> str:
     """
-    Converte um caminho absoluto do sistema de arquivos para uma URI ``file://`` 
+    Converte um caminho absoluto do sistema de arquivos para uma URI ``file://``
     válida e compatível com Flutter/Android (Video).
-    
+
     Exemplo:
         /data/user/0/app/files/downloads/video_sd/hino_1.mp4
         → file:///data/user/0/app/files/downloads/video_sd/hino_1.mp4
@@ -88,7 +96,7 @@ class MediaService:
 
     # ── Sanitização ───────────────────────────────────────────────────
 
-    def _sanitize_url(self, url: Optional[str]) -> str:
+    def _sanitize_url(self, url: str | None) -> str:
         """Sanitiza URLs para evitar injeção de parâmetros e comandos."""
         if not url:
             return ""
@@ -99,14 +107,14 @@ class MediaService:
 
     # ── YouTube Helpers ───────────────────────────────────────────────
 
-    def extract_youtube_id(self, url: Optional[str]) -> Optional[str]:
+    def extract_youtube_id(self, url: str | None) -> str | None:
         """Extrai o ID do vídeo do YouTube de diversos formatos de URL."""
         if not url:
             return None
         match = re.search(r"(?:v=|\/|embed\/|shorts\/)([a-zA-Z0-9_-]{11})", url)
         return match.group(1) if match else None
 
-    def get_embed_url(self, url: Optional[str]) -> Optional[str]:
+    def get_embed_url(self, url: str | None) -> str | None:
         """Retorna a URL formatada para exibição do vídeo embutido (embed)."""
         video_id = self.extract_youtube_id(url)
         if video_id:
@@ -127,7 +135,7 @@ class MediaService:
         path = self.get_local_video_path(hino_id, quality)
         return os.path.isfile(path)
 
-    def get_download_status(self, hino_id: int) -> Dict[str, bool]:
+    def get_download_status(self, hino_id: int) -> dict[str, bool]:
         """Retorna o status de download de vídeo de um hino."""
         return {
             "video_sd": self.is_video_downloaded(hino_id, QUALITY_SD),
@@ -136,7 +144,7 @@ class MediaService:
 
     # ── URIs file:// para Flutter ─────────────────────────────────────
 
-    def get_video_file_uri(self, hino_id: int, quality: str = QUALITY_SD) -> Optional[str]:
+    def get_video_file_uri(self, hino_id: int, quality: str = QUALITY_SD) -> str | None:
         """Retorna a URI file:// do vídeo local, ou None se não baixado."""
         if not self.is_video_downloaded(hino_id, quality):
             return None
@@ -144,7 +152,7 @@ class MediaService:
 
     # ── Extração de Metadados (yt-dlp) ────────────────────────────────
 
-    async def get_stream_url(self, video_url: Optional[str], is_video: bool = False) -> Optional[str]:
+    async def get_stream_url(self, video_url: str | None) -> str | None:
         """
         Retorna a URL direta de streaming usando yt-dlp.
         NOTA: URLs do YouTube expiram rapidamente e podem falhar com 403.
@@ -157,7 +165,7 @@ class MediaService:
             return None
 
         format_str = "best"
-        ydl_opts: Dict[str, Any] = {
+        ydl_opts: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -170,11 +178,11 @@ class MediaService:
                 return info.get("url")
 
         try:
-            return await asyncio.to_thread(_extract)
+            return await _run_sync_or_thread(_extract)
         except Exception:
             return None
 
-    async def get_info(self, video_url: Optional[str]) -> Optional[Dict[str, Any]]:
+    async def get_info(self, video_url: str | None) -> dict[str, Any] | None:
         """Extrai metadados do vídeo de forma assíncrona não-bloqueante."""
         if not yt_dlp:
             return None
@@ -182,7 +190,7 @@ class MediaService:
         if not sanitized_url:
             return None
 
-        ydl_opts: Dict[str, Any] = {
+        ydl_opts: dict[str, Any] = {
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
@@ -201,7 +209,7 @@ class MediaService:
                 }
 
         try:
-            return await asyncio.to_thread(_extract)
+            return await _run_sync_or_thread(_extract)
         except Exception:
             return None
 
@@ -210,10 +218,10 @@ class MediaService:
     async def download_video(
         self,
         hino_id: int,
-        video_url: Optional[str],
+        video_url: str | None,
         quality: str = QUALITY_SD,
-        progress_callback: Optional[Callable[[float], None]] = None,
-    ) -> Optional[str]:
+        progress_callback: Callable[[float], None] | None = None,
+    ) -> str | None:
         """
         Realiza o download do vídeo em SD (480p) ou HD (720p / melhor disponível).
         Prioriza containers MP4 nativos para compatibilidade com Android.
@@ -229,7 +237,9 @@ class MediaService:
         output_path = os.path.join(video_dir, f"hino_{hino_id}.mp4")
         output_template = os.path.join(video_dir, f"hino_{hino_id}.%(ext)s")
 
-        format_str = _YDL_FORMAT_VIDEO_HD if quality == QUALITY_HD else _YDL_FORMAT_VIDEO_SD
+        format_str = (
+            _YDL_FORMAT_VIDEO_HD if quality == QUALITY_HD else _YDL_FORMAT_VIDEO_SD
+        )
 
         def _make_progress_hook(callback):
             def _hook(d):
@@ -238,9 +248,10 @@ class MediaService:
                     downloaded = d.get("downloaded_bytes", 0)
                     if total > 0:
                         callback(downloaded / total)
+
             return _hook
 
-        ydl_opts: Dict[str, Any] = {
+        ydl_opts: dict[str, Any] = {
             "format": format_str,
             "outtmpl": output_template,
             "merge_output_format": "mp4",
@@ -256,21 +267,23 @@ class MediaService:
             return output_path
 
         try:
-            result = await asyncio.to_thread(_download)
+            result = await _run_sync_or_thread(_download)
             if os.path.isfile(result):
                 return result
         except Exception:
             pass
 
         # Fallback: tenta formato genérico "best" como MP4
-        ydl_opts_fallback: Dict[str, Any] = {
+        ydl_opts_fallback: dict[str, Any] = {
             "format": "best[ext=mp4]/best",
             "outtmpl": output_template,
             "quiet": True,
             "no_warnings": True,
         }
         if progress_callback:
-            ydl_opts_fallback["progress_hooks"] = [_make_progress_hook(progress_callback)]
+            ydl_opts_fallback["progress_hooks"] = [
+                _make_progress_hook(progress_callback)
+            ]
 
         def _download_fallback():
             with yt_dlp.YoutubeDL(cast(Any, ydl_opts_fallback)) as ydl:
@@ -278,7 +291,7 @@ class MediaService:
             return output_path
 
         try:
-            result = await asyncio.to_thread(_download_fallback)
+            result = await _run_sync_or_thread(_download_fallback)
             if os.path.isfile(result):
                 return result
         except Exception:
@@ -290,18 +303,16 @@ class MediaService:
 
     async def download_library_batch(
         self,
-        hino_list: List[Dict[str, Any]],
-        media_type: str = "video",
+        hino_list: list[dict[str, Any]],
         quality: str = QUALITY_SD,
-        progress_callback: Optional[Callable[[int, int, Optional[str]], None]] = None,
-        cancel_event: Optional[asyncio.Event] = None,
-    ) -> Dict[str, Any]:
+        progress_callback: Callable[[int, int, str | None], None] | None = None,
+        cancel_event: asyncio.Event | None = None,
+    ) -> dict[str, Any]:
         """
         Realiza o download em lote de uma lista de vídeos de hinos.
 
         Args:
             hino_list: Lista de dicts com 'id' e 'link_video'.
-            media_type: 'video'.
             quality: 'sd' ou 'hd'.
             progress_callback: Chamado com (completed, total, current_title).
             cancel_event: asyncio.Event que, quando setado, cancela o download.
@@ -367,7 +378,7 @@ class MediaService:
 
     # ── Gerenciamento de Armazenamento ────────────────────────────────
 
-    def get_storage_usage(self) -> Dict[str, int]:
+    def get_storage_usage(self) -> dict[str, int]:
         """Retorna o uso de armazenamento em bytes por categoria de vídeo."""
         usage = {"video_sd": 0, "video_hd": 0}
         for category, subdir in [
@@ -382,7 +393,7 @@ class MediaService:
                         usage[category] += os.path.getsize(fp)
         return usage
 
-    def clear_downloads(self, media_type: Optional[str] = None) -> int:
+    def clear_downloads(self, media_type: str | None = None) -> int:
         """
         Remove downloads de vídeos. Se media_type for None, remove tudo.
         Retorna o número de arquivos removidos.
@@ -409,4 +420,3 @@ class MediaService:
                         except Exception:
                             pass
         return count
-

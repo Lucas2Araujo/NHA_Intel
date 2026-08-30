@@ -1,5 +1,3 @@
-from typing import List
-import aiosqlite
 from src.database.connection import DatabaseConnection
 from src.models.hino import Hino
 
@@ -21,7 +19,7 @@ class HistoricoRepository:
             await conn.commit()
             return cursor.rowcount > 0
 
-    async def get_recentes(self, limit: int = 50) -> List[Hino]:
+    async def get_recentes(self, limit: int = 50) -> list[Hino]:
         """Retorna os hinos mais recentemente acessados (sem duplicatas consecutivas)."""
         query = """
             SELECT h.id, h.numero, h.titulo
@@ -38,7 +36,7 @@ class HistoricoRepository:
         async with conn.execute(query, (limit,)) as cursor:
             rows = await cursor.fetchall()
 
-        hinos: List[Hino] = []
+        hinos: list[Hino] = []
         for row in rows:
             hinos.append(
                 Hino(id=row["id"], numero=str(row["numero"]), titulo=str(row["titulo"]))

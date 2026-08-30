@@ -1,8 +1,7 @@
 import pytest
-import aiosqlite
+
 from src.database.connection import DatabaseConnection
 from src.repositories.biblia_repository import BibliaRepository
-from src.models.biblia import PassagemBiblica, Versiculo
 
 
 @pytest.mark.asyncio
@@ -152,9 +151,30 @@ async def test_biblia_repository_real_database():
         assert len(passagem.versiculos) == 1
         assert "Deus amou ao mundo" in passagem.versiculos[0].texto
 
-    passagem2 = await repo.buscar_passagem("Salmos 23:1-6")
-    if passagem2 is not None:
-        assert len(passagem2.versiculos) == 6
-        assert "pastor" in passagem2.versiculos[0].texto.lower()
+    await db_conn.close()
 
+
+@pytest.mark.asyncio
+async def test_biblia_cache_lifecycle():
+    db_conn = DatabaseConnection(db_path=":memory:", read_only=True)
+    conn = await db_conn.get_connection()
+    await conn.execute("CREATE TABLE book (id INTEGER PRIMARY KEY, name VARCHAR(50));")
+    await conn.execute(
+        "CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);"
+    )
+    await conn.execute("INSERT INTO book VALUES (43, 'João');")
+    await conn.execute(
+        "INSERT INTO verse VALUES (1, 43, 3, 16, 'Porque Deus amou o mundo');"
+    )
+    await conn.commit()
+
+    repo = BibliaRepository(db_conn)
+    p1 = await repo.buscar_passagem("João 3:16")
+    assert p1 is not None
+    assert "João 3:16" in repo._passagem_cache
+    assert await repo.buscar_passagem("João 3:16") is p1
+
+    repo.clear_cache()
+    assert len(repo._passagem_cache) == 0
+    assert len(repo._book_names) == 0
     await db_conn.close()

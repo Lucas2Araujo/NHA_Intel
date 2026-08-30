@@ -1,7 +1,9 @@
+from typing import Any
+
 import flet as ft
-from typing import Optional, Dict, Any, List
-from src.services.agente_service import AgenteService
+
 from src.repositories.culto_repository import CultoRepository
+from src.services.agente_service import AgenteService
 
 
 class AgenteView:
@@ -18,27 +20,27 @@ class AgenteView:
     ):
         self.agente_service = agente_service
         self.culto_repository = culto_repository
-        self.playlist_gerada: Optional[Dict[str, Any]] = None
+        self.playlist_gerada: dict[str, Any] | None = None
         self.current_tab: str = "novo"  # "novo" ou "salvos"
         self.num_hinos_value: int = 6  # valor padrão
 
         # Componentes visuais e de controle
-        self.results_container: Optional[ft.Column] = None
-        self.prompt_input: Optional[ft.TextField] = None
-        self.save_button: Optional[ft.FilledButton] = None
-        self.generate_button: Optional[ft.FilledButton] = None
-        self.prompt_card: Optional[ft.Card] = None
-        self.num_hinos_label: Optional[ft.Text] = None
-        self.num_hinos_slider: Optional[ft.Slider] = None
-        self.example_chips: Optional[ft.Row] = None
-        self.tab_bar: Optional[ft.SegmentedButton] = None
+        self.results_container: ft.Column | None = None
+        self.prompt_input: ft.TextField | None = None
+        self.save_button: ft.FilledButton | None = None
+        self.generate_button: ft.FilledButton | None = None
+        self.prompt_card: ft.Card | None = None
+        self.num_hinos_label: ft.Text | None = None
+        self.num_hinos_slider: ft.Slider | None = None
+        self.example_chips: ft.Row | None = None
+        self.tab_bar: ft.SegmentedButton | None = None
 
     def build(self, page: ft.Page) -> ft.View:
         page.title = "Agente Organizador de Cultos - v0.2"
 
         self._init_controls(page)
 
-        scrollable_controls: List[ft.Control] = [
+        scrollable_controls: list[ft.Control] = [
             ctrl
             for ctrl in (self.prompt_card, ft.Divider(height=1), self.results_container)
             if ctrl is not None
@@ -51,7 +53,7 @@ class AgenteView:
             spacing=10,
         )
 
-        view_controls: List[ft.Control] = []
+        view_controls: list[ft.Control] = []
         if self.tab_bar:
             view_controls.append(
                 ft.Container(
@@ -146,9 +148,7 @@ class AgenteView:
             controls=[
                 ft.Chip(
                     label=ft.Text(t, size=12),
-                    on_click=lambda e, theme=t: self._on_chip_click(
-                        page, theme
-                    ),
+                    on_click=lambda e, theme=t: self._on_chip_click(page, theme),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 )
                 for t in example_themes
@@ -179,7 +179,7 @@ class AgenteView:
             expand=True,
         )
 
-        prompt_controls: List[ft.Control] = [
+        prompt_controls: list[ft.Control] = [
             ft.Text(
                 "Defina o Tema Pastoral do Culto:",
                 weight=ft.FontWeight.BOLD,
@@ -197,7 +197,7 @@ class AgenteView:
         if self.prompt_input:
             prompt_controls.append(self.prompt_input)
 
-        slider_controls: List[ft.Control] = [
+        slider_controls: list[ft.Control] = [
             c for c in (self.num_hinos_label, self.num_hinos_slider) if c is not None
         ]
         prompt_controls.append(
@@ -207,7 +207,7 @@ class AgenteView:
             )
         )
 
-        button_controls: List[ft.Control] = [
+        button_controls: list[ft.Control] = [
             c for c in (self.generate_button, self.save_button) if c is not None
         ]
         prompt_controls.append(
@@ -275,9 +275,7 @@ class AgenteView:
 
         tema = self.playlist_gerada.get("tema", "Culto")
         hino_ids = [
-            h.id
-            for h in self.playlist_gerada.get("hinos", [])
-            if h.id is not None
+            h.id for h in self.playlist_gerada.get("hinos", []) if h.id is not None
         ]
 
         lista_id = await self.culto_repository.create_lista_culto(tema, hino_ids)
@@ -292,7 +290,11 @@ class AgenteView:
         page.update()
 
     async def _gerar_playlist(self, page: ft.Page) -> None:
-        tema = self.prompt_input.value if self.prompt_input and self.prompt_input.value else ""
+        tema = (
+            self.prompt_input.value
+            if self.prompt_input and self.prompt_input.value
+            else ""
+        )
 
         if self.results_container:
             self.results_container.controls = [
@@ -317,7 +319,7 @@ class AgenteView:
         self.playlist_gerada = await self.agente_service.sugerir_playlist_culto(
             tema, num_hinos=self.num_hinos_value
         )
-        
+
         self._refresh_novo_culto(page)
         if self.save_button:
             self.save_button.visible = True
@@ -325,31 +327,37 @@ class AgenteView:
 
     def _refresh_novo_culto(self, page: ft.Page):
         blocos = self.playlist_gerada.get("blocos", []) if self.playlist_gerada else []
-        controls: List[ft.Control] = [self._build_bloco_card(item, page) for item in blocos]
-        
+        controls: list[ft.Control] = [
+            self._build_bloco_card(item, page) for item in blocos
+        ]
+
         btn_add = ft.TextButton(
             "+ Adicionar Hino",
             icon=ft.Icons.ADD,
             on_click=lambda e: self._abrir_dialogo_busca_hino(
                 page, lambda h: self._adicionar_em_memoria(page, h)
-            )
+            ),
         )
         controls.append(ft.Container(content=btn_add, alignment=ft.Alignment.CENTER))
-        
+
         if self.results_container:
             self.results_container.controls = controls
         page.update()
 
     def _adicionar_em_memoria(self, page: ft.Page, hino):
         if not self.playlist_gerada:
-            tema_default = self.prompt_input.value if self.prompt_input and self.prompt_input.value else "Culto Ad Hoc"
+            tema_default = (
+                self.prompt_input.value
+                if self.prompt_input and self.prompt_input.value
+                else "Culto Ad Hoc"
+            )
             self.playlist_gerada = {"hinos": [], "blocos": [], "tema": tema_default}
         novo_item = {"bloco": "Hino Adicional", "hino": hino, "justificativa": ""}
         self.playlist_gerada.setdefault("blocos", []).append(novo_item)
         self.playlist_gerada.setdefault("hinos", []).append(hino)
         self._refresh_novo_culto(page)
-        
-    def _substituir_em_memoria(self, page: ft.Page, item: Dict[str, Any], novo_hino):
+
+    def _substituir_em_memoria(self, page: ft.Page, item: dict[str, Any], novo_hino):
         if not self.playlist_gerada:
             return
         item["hino"] = novo_hino
@@ -357,7 +365,7 @@ class AgenteView:
         self.playlist_gerada["hinos"] = [i["hino"] for i in blocos if "hino" in i]
         self._refresh_novo_culto(page)
 
-    def _remover_em_memoria(self, page: ft.Page, item: Dict[str, Any]):
+    def _remover_em_memoria(self, page: ft.Page, item: dict[str, Any]):
         if not self.playlist_gerada:
             return
         blocos = self.playlist_gerada.get("blocos", [])
@@ -366,9 +374,7 @@ class AgenteView:
         self.playlist_gerada["hinos"] = [i["hino"] for i in blocos if "hino" in i]
         self._refresh_novo_culto(page)
 
-    def _build_bloco_card(
-        self, item: Dict[str, Any], page: ft.Page
-    ) -> ft.Card:
+    def _build_bloco_card(self, item: dict[str, Any], page: ft.Page) -> ft.Card:
         hino = item["hino"]
         nome_bloco = item["bloco"]
 
@@ -399,15 +405,20 @@ class AgenteView:
                                         content=ft.Text("Substituir"),
                                         icon=ft.Icons.SWAP_HORIZ,
                                         on_click=lambda e: self._abrir_dialogo_busca_hino(
-                                            page, lambda novo_hino: self._substituir_em_memoria(page, item, novo_hino)
-                                        )
+                                            page,
+                                            lambda novo_hino: self._substituir_em_memoria(
+                                                page, item, novo_hino
+                                            ),
+                                        ),
                                     ),
                                     ft.PopupMenuItem(
                                         content=ft.Text("Remover"),
                                         icon=ft.Icons.DELETE_OUTLINE,
-                                        on_click=lambda e: self._remover_em_memoria(page, item)
+                                        on_click=lambda e: self._remover_em_memoria(
+                                            page, item
+                                        ),
                                     ),
-                                ]
+                                ],
                             ),
                         ),
                     ],
@@ -440,9 +451,7 @@ class AgenteView:
             self._build_salvos_card(lista, page) for lista in listas
         ]
 
-    def _build_salvos_card(
-        self, lista: Dict[str, Any], page: ft.Page
-    ) -> ft.Card:
+    def _build_salvos_card(self, lista: dict[str, Any], page: ft.Page) -> ft.Card:
         l_id = lista["id"]
         tema = lista["tema_gerador"]
         data = lista["data_criacao"]
@@ -451,9 +460,7 @@ class AgenteView:
         return ft.Card(
             content=ft.Container(
                 content=ft.ListTile(
-                    leading=ft.Icon(
-                        ft.Icons.BOOKMARK, color=ft.Colors.AMBER_300
-                    ),
+                    leading=ft.Icon(ft.Icons.BOOKMARK, color=ft.Colors.AMBER_300),
                     title=ft.Text(tema, weight=ft.FontWeight.BOLD, size=15),
                     subtitle=ft.Text(
                         f"Criado em: {data} • {total} hinos",
@@ -469,23 +476,28 @@ class AgenteView:
                             ft.PopupMenuItem(
                                 content=ft.Text("Copiar Lista"),
                                 icon=ft.Icons.CONTENT_COPY,
-                                on_click=lambda ev, l_id=l_id, t=tema: page.run_task(self._copiar_culto, page, l_id, t)
+                                on_click=lambda ev, l_id=l_id, t=tema: page.run_task(
+                                    self._copiar_culto, page, l_id, t
+                                ),
                             ),
                             ft.PopupMenuItem(
                                 content=ft.Text("Renomear"),
                                 icon=ft.Icons.EDIT,
-                                on_click=lambda ev, l_id=l_id, t=tema: self._abrir_dialogo_renomear(page, l_id, t)
+                                on_click=lambda ev, l_id=l_id, t=tema: self._abrir_dialogo_renomear(
+                                    page, l_id, t
+                                ),
                             ),
                             ft.PopupMenuItem(
                                 content=ft.Text("Excluir"),
                                 icon=ft.Icons.DELETE,
-                                on_click=lambda ev, l_id=l_id, t=tema: self._abrir_dialogo_excluir(page, l_id, t)
+                                on_click=lambda ev, l_id=l_id, t=tema: self._abrir_dialogo_excluir(
+                                    page, l_id, t
+                                ),
                             ),
-                        ]
+                        ],
                     ),
                 ),
                 padding=ft.Padding.all(8),
-
             )
         )
 
@@ -501,9 +513,7 @@ class AgenteView:
                         weight=ft.FontWeight.BOLD,
                         size=16,
                     ),
-                    ft.IconButton(
-                        ft.Icons.CLOSE, on_click=lambda e: page.pop_dialog()
-                    ),
+                    ft.IconButton(ft.Icons.CLOSE, on_click=lambda e: page.pop_dialog()),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
@@ -526,25 +536,38 @@ class AgenteView:
                                 content=ft.Text("Substituir"),
                                 icon=ft.Icons.SWAP_HORIZ,
                                 on_click=lambda e, old_h_id=h.id: self._abrir_dialogo_busca_hino(
-                                    page, lambda novo_hino: page.run_task(self._substituir_no_banco, page, lista_id, old_h_id, novo_hino, tema_culto)
-                                )
+                                    page,
+                                    lambda novo_hino: page.run_task(
+                                        self._substituir_no_banco,
+                                        page,
+                                        lista_id,
+                                        old_h_id,
+                                        novo_hino,
+                                        tema_culto,
+                                    ),
+                                ),
                             ),
                             ft.PopupMenuItem(
                                 content=ft.Text("Remover"),
                                 icon=ft.Icons.DELETE_OUTLINE,
-                                on_click=lambda e, l_id=lista_id, h_id=h.id, t=tema_culto: page.run_task(self._remover_hino_culto, page, l_id, h_id, t)
+                                on_click=lambda e, l_id=lista_id, h_id=h.id, t=tema_culto: page.run_task(
+                                    self._remover_hino_culto, page, l_id, h_id, t
+                                ),
                             ),
-                        ]
+                        ],
                     ),
                 )
             )
-        
+
         btn_add = ft.TextButton(
             "+ Adicionar Hino",
             icon=ft.Icons.ADD,
             on_click=lambda e: self._abrir_dialogo_busca_hino(
-                page, lambda novo_hino: page.run_task(self._adicionar_no_banco, page, lista_id, novo_hino, tema_culto)
-            )
+                page,
+                lambda novo_hino: page.run_task(
+                    self._adicionar_no_banco, page, lista_id, novo_hino, tema_culto
+                ),
+            ),
         )
         items.append(ft.Container(content=btn_add, alignment=ft.Alignment.CENTER))
 
@@ -556,7 +579,9 @@ class AgenteView:
         )
         page.show_dialog(bs)
 
-    async def _remover_hino_culto(self, page: ft.Page, lista_id: int, hino_id: int, tema_culto: str) -> None:
+    async def _remover_hino_culto(
+        self, page: ft.Page, lista_id: int, hino_id: int, tema_culto: str
+    ) -> None:
         sucesso = await self.culto_repository.remove_hino_da_lista(lista_id, hino_id)
         if sucesso:
             page.pop_dialog()
@@ -567,32 +592,42 @@ class AgenteView:
             snack.open = True
             page.update()
 
-    async def _substituir_no_banco(self, page: ft.Page, lista_id: int, old_hino_id: int, novo_hino, tema_culto: str):
-        if await self.culto_repository.update_hino_da_lista(lista_id, old_hino_id, novo_hino.id):
+    async def _substituir_no_banco(
+        self, page: ft.Page, lista_id: int, old_hino_id: int, novo_hino, tema_culto: str
+    ):
+        if await self.culto_repository.update_hino_da_lista(
+            lista_id, old_hino_id, novo_hino.id
+        ):
             page.pop_dialog()
             await self._carregar_cultos_salvos(page)
             await self._ver_hinos_culto(page, lista_id, tema_culto)
-            snack = ft.SnackBar(content=ft.Text(f"Hino substituído por '{novo_hino.titulo}'!"))
+            snack = ft.SnackBar(
+                content=ft.Text(f"Hino substituído por '{novo_hino.titulo}'!")
+            )
             page.overlay.append(snack)
             snack.open = True
             page.update()
 
-    async def _adicionar_no_banco(self, page: ft.Page, lista_id: int, novo_hino, tema_culto: str):
+    async def _adicionar_no_banco(
+        self, page: ft.Page, lista_id: int, novo_hino, tema_culto: str
+    ):
         if await self.culto_repository.add_hino_a_lista(lista_id, novo_hino.id):
             page.pop_dialog()
             await self._carregar_cultos_salvos(page)
             await self._ver_hinos_culto(page, lista_id, tema_culto)
-            snack = ft.SnackBar(content=ft.Text(f"Hino '{novo_hino.titulo}' adicionado!"))
+            snack = ft.SnackBar(
+                content=ft.Text(f"Hino '{novo_hino.titulo}' adicionado!")
+            )
             page.overlay.append(snack)
             snack.open = True
             page.update()
 
     def _abrir_dialogo_busca_hino(self, page: ft.Page, on_selected):
         txt_busca = ft.TextField(
-            label="Buscar por número ou nome", 
+            label="Buscar por número ou nome",
             on_change=lambda e: page.run_task(buscar_hinos, e.control.value),
             autofocus=True,
-            expand=True
+            expand=True,
         )
         lista_resultados = ft.ListView(expand=True, spacing=10, height=300)
 
@@ -604,7 +639,7 @@ class AgenteView:
                     ft.ListTile(
                         leading=ft.Text(h.numero, weight=ft.FontWeight.BOLD),
                         title=ft.Text(h.titulo),
-                        on_click=lambda e, hino=h: selecionar(hino)
+                        on_click=lambda e, hino=h: selecionar(hino),
                     )
                 )
             page.update()
@@ -621,9 +656,9 @@ class AgenteView:
             content=ft.Container(
                 content=ft.Column([txt_busca, lista_resultados], tight=True),
                 width=400,
-                padding=10
+                padding=10,
             ),
-            actions=[ft.TextButton("Cancelar", on_click=fechar)]
+            actions=[ft.TextButton("Cancelar", on_click=fechar)],
         )
         page.show_dialog(dlg)
 
@@ -632,19 +667,21 @@ class AgenteView:
         text = f"Culto: {tema_culto}\n\n"
         for i, h in enumerate(hinos, 1):
             text += f"{i}. Hino {h.numero} - {h.titulo}\n"
-        
+
         await ft.Clipboard().set(text)
-        snack = ft.SnackBar(content=ft.Text("Lista copiada para a área de transferência!"))
+        snack = ft.SnackBar(
+            content=ft.Text("Lista copiada para a área de transferência!")
+        )
         page.overlay.append(snack)
         snack.open = True
         page.update()
 
     def _abrir_dialogo_renomear(self, page: ft.Page, lista_id: int, tema_atual: str):
         txt_nome = ft.TextField(value=tema_atual, label="Nome do Culto", expand=True)
-        
+
         def fechar(e):
             page.pop_dialog()
-            
+
         def salvar(e):
             page.pop_dialog()
             page.run_task(self._confirmar_renomear, page, lista_id, txt_nome.value)
@@ -673,17 +710,23 @@ class AgenteView:
     def _abrir_dialogo_excluir(self, page: ft.Page, lista_id: int, tema_culto: str):
         def fechar(e):
             page.pop_dialog()
-            
+
         def deletar(e):
             page.pop_dialog()
             page.run_task(self._confirmar_excluir, page, lista_id)
 
         dlg = ft.AlertDialog(
             title=ft.Text("Excluir Culto"),
-            content=ft.Text(f"Tem certeza que deseja excluir permanentemente a lista '{tema_culto}'?"),
+            content=ft.Text(
+                f"Tem certeza que deseja excluir permanentemente a lista '{tema_culto}'?"
+            ),
             actions=[
                 ft.TextButton("Cancelar", on_click=fechar),
-                ft.TextButton("Excluir", on_click=deletar, style=ft.ButtonStyle(color=ft.Colors.RED_400)),
+                ft.TextButton(
+                    "Excluir",
+                    on_click=deletar,
+                    style=ft.ButtonStyle(color=ft.Colors.RED_400),
+                ),
             ],
             actions_alignment=ft.MainAxisAlignment.END,
         )
@@ -699,10 +742,7 @@ class AgenteView:
         snack.open = True
         page.update()
 
-
-    async def _on_tab_change(
-        self, page: ft.Page, selected: List[str]
-    ) -> None:
+    async def _on_tab_change(self, page: ft.Page, selected: list[str]) -> None:
         if "salvos" in selected:
             self.current_tab = "salvos"
             if self.prompt_card:

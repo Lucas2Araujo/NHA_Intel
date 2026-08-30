@@ -1,4 +1,5 @@
 import pytest
+
 from src.repositories.hino_repository import HinoRepository
 
 
@@ -19,7 +20,6 @@ async def test_get_all_complete_returns_full_metadata(in_memory_db):
     assert hinos[0].numero == "1"
     assert hinos[0].titulo == "Santo, Santo, Santo!"
     assert hinos[0].letra is not None
-
 
 
 @pytest.mark.asyncio
@@ -107,6 +107,7 @@ async def test_search_by_tema_lyrics_text_base(in_memory_db):
     assert len(results_tema) >= 1
     assert any(h.id == 1 for h in results_tema)
 
+
 @pytest.mark.asyncio
 async def test_search_no_duplicates(in_memory_db):
     repository = HinoRepository(in_memory_db)
@@ -115,4 +116,42 @@ async def test_search_no_duplicates(in_memory_db):
     assert len(ids) == len(set(ids))
 
 
+@pytest.mark.asyncio
+async def test_in_memory_cache_lifecycle(in_memory_db):
+    repository = HinoRepository(in_memory_db)
 
+    # 1. get_all cache
+    hinos_1 = await repository.get_all()
+    assert repository._summary_cache is not None
+    hinos_2 = await repository.get_all()
+    assert hinos_1 == hinos_2
+
+    # 2. get_by_id e get_by_numero cache
+    h1 = await repository.get_by_id(1)
+    assert 1 in repository._detail_cache
+    assert await repository.get_by_id(1) is h1
+
+    h_num = await repository.get_by_numero("1")
+    assert "1" in repository._detail_num_cache
+    assert await repository.get_by_numero("1") is h_num
+
+    # 3. get_categorias e get_temas cache
+    cats = await repository.get_categorias()
+    assert repository._categorias_cache is not None
+    assert await repository.get_categorias() == cats
+
+    temas = await repository.get_temas()
+    assert repository._temas_cache is not None
+    assert await repository.get_temas() == temas
+
+    # 4. get_metadados_relacionados cache
+    meta = await repository.get_metadados_relacionados(1)
+    assert 1 in repository._metadados_cache
+    assert await repository.get_metadados_relacionados(1) == meta
+
+    # 5. clear_cache
+    repository.clear_cache()
+    assert repository._summary_cache is None
+    assert repository._num_index is None
+    assert len(repository._detail_cache) == 0
+    assert repository._categorias_cache is None

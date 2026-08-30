@@ -17,13 +17,13 @@ jobs:
 
     steps:
       - name: Checkout Repository Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
 
       - name: Calculate SemVer & Create Git Tag
         id: tag_version
-        uses: mathieudutour/github-tag-action@v6.2
+        uses: mathieudutour/github-tag-action@a22cf08638b34d5badda920f9daf6e72c477b07b # v6.2
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           default_bump: patch
@@ -33,19 +33,19 @@ jobs:
           custom_release_rules: "feat:minor:🚀 Novas Funcionalidades,fix:patch:🐛 Correções de Bugs,perf:patch:⚡ Melhorias de Performance,refactor:patch:♻️ Refatoração,docs:none:📚 Documentação,style:none:💄 Estilo de Código,chore:none:🔧 Tarefas e Manutenção,ci:none:🤖 CI/CD"
 
       - name: Set up Java 17 (JDK)
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@3a4f6e1af504cf6a31855fa899c6aa5355ba6c12 # v4.7.0
         with:
           distribution: 'temurin'
           java-version: '17'
 
       - name: Set up Flutter SDK
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@f2c4f6686ca8e8d6e6d0f28410eeef506ed66aff # v2.18.0
         with:
           flutter-version: '3.44.8'
           cache: true
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
           python-version: "3.11"
           cache: "pip"
@@ -62,8 +62,8 @@ jobs:
 
       - name: Install Python Dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade --only-binary :all: pip
+          pip install --only-binary :all: -r requirements.txt
 
       - name: Run Test Suite Verification
         run: |
@@ -89,22 +89,22 @@ jobs:
           # Mapeamento do APK Normal (64-bit moderno)
           ARM64_APK=$(find build/apk -name "*arm64-v8a*.apk" | head -n 1)
           if [ -n "$ARM64_APK" ]; then
-            cp "$ARM64_APK" "release_apks/Hinario_Inteligente_${TAG}_Android_Normal_arm64.apk"
-            echo "Criado: Hinario_Inteligente_${TAG}_Android_Normal_arm64.apk"
+            cp "$ARM64_APK" "release_apks/Hinario_Inteligente_Android_Normal_arm64.apk"
+            echo "Criado: Hinario_Inteligente_Android_Normal_arm64.apk"
           fi
 
           # Mapeamento do APK Legado (32-bit aparelhos antigos)
           ARMV7_APK=$(find build/apk -name "*armeabi-v7a*.apk" | head -n 1)
           if [ -n "$ARMV7_APK" ]; then
-            cp "$ARMV7_APK" "release_apks/Hinario_Inteligente_${TAG}_Android_Legado_armv7.apk"
-            echo "Criado: Hinario_Inteligente_${TAG}_Android_Legado_armv7.apk"
+            cp "$ARMV7_APK" "release_apks/Hinario_Inteligente_Android_Legado_armv7.apk"
+            echo "Criado: Hinario_Inteligente_Android_Legado_armv7.apk"
           fi
 
           # Mapeamento do APK para Emuladores / x86_64
           X86_64_APK=$(find build/apk -name "*x86_64*.apk" | head -n 1)
           if [ -n "$X86_64_APK" ]; then
-            cp "$X86_64_APK" "release_apks/Hinario_Inteligente_${TAG}_Android_x86_64.apk"
-            echo "Criado: Hinario_Inteligente_${TAG}_Android_x86_64.apk"
+            cp "$X86_64_APK" "release_apks/Hinario_Inteligente_Android_x86_64.apk"
+            echo "Criado: Hinario_Inteligente_Android_x86_64.apk"
           fi
 
           # Fallback de segurança se os nomes variarem
@@ -112,7 +112,7 @@ jobs:
             echo "Fallback: Copiando todos os APKs encontrados..."
             for f in $(find build/apk -name "*.apk"); do
               BASE=$(basename "$f")
-              cp "$f" "release_apks/Hinario_Inteligente_${TAG}_Android_${BASE}"
+              cp "$f" "release_apks/Hinario_Inteligente_Android_${BASE}"
             done
           fi
 
@@ -120,17 +120,22 @@ jobs:
           ls -la release_apks/
 
       - name: Sign APKs with Android Keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release.jks
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > release.jks
           BUILD_TOOLS=$(find $ANDROID_HOME/build-tools -mindepth 1 -maxdepth 1 | sort -V | tail -n 1)
 
           for apk in release_apks/*.apk; do
             echo "Assinando $apk..."
-            $BUILD_TOOLS/apksigner sign \
+            "$BUILD_TOOLS/apksigner" sign \
               --ks release.jks \
-              --ks-key-alias "${{ secrets.ANDROID_KEY_ALIAS }}" \
-              --ks-pass pass:"${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
-              --key-pass pass:"${{ secrets.ANDROID_KEY_PASSWORD }}" \
+              --ks-key-alias "$ANDROID_KEY_ALIAS" \
+              --ks-pass pass:"$ANDROID_KEYSTORE_PASSWORD" \
+              --key-pass pass:"$ANDROID_KEY_PASSWORD" \
               "$apk"
           done
 
@@ -138,13 +143,13 @@ jobs:
           echo "Todos os APKs foram assinados com sucesso!"
 
       - name: Upload Android APK Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9dce8ec1 # v4.6.1
         with:
           name: Hinario_Inteligente_Android_APKs_${{ steps.tag_version.outputs.new_tag }}
           path: release_apks/*.apk
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
         with:
           tag_name: ${{ steps.tag_version.outputs.new_tag }}
           name: Hinário Inteligente ${{ steps.tag_version.outputs.new_tag }}
@@ -153,8 +158,9 @@ jobs:
 
             ---
             ### 📱 Downloads do Aplicativo (Android)
-            * **Normal (Recomendado)**: `Hinario_Inteligente_${{ steps.tag_version.outputs.new_tag }}_Android_Normal_arm64.apk` *(Para a grande maioria dos smartphones modernos - 64 bits)*
-            * **Legado**: `Hinario_Inteligente_${{ steps.tag_version.outputs.new_tag }}_Android_Legado_armv7.apk` *(Para aparelhos Android antigos - 32 bits)*
+            * **Normal (Recomendado)**: `Hinario_Inteligente_Android_Normal_arm64.apk` *(Para a grande maioria dos smartphones modernos - 64 bits)*
+            * **Legado**: `Hinario_Inteligente_Android_Legado_armv7.apk` *(Para aparelhos Android antigos - 32 bits)*
+            * **Emuladores / PCs**: `Hinario_Inteligente_Android_x86_64.apk` *(Para emuladores e computadores - 64 bits)*
           files: release_apks/*.apk
           draft: false
           prerelease: false

@@ -1,11 +1,11 @@
-import pytest
 from unittest.mock import MagicMock
+
 import flet as ft
+import pytest
+
 from src.services.theme_service import (
-    ThemeService,
-    PREF_THEME_KEY,
     AMOLED_BG_COLOR,
-    AMOLED_SURFACE_COLOR,
+    ThemeService,
 )
 
 
@@ -64,7 +64,6 @@ def test_theme_service_apply_theme_amoled(in_memory_db):
     assert mock_page.dark_theme.system_overlay_style.status_bar_color == AMOLED_BG_COLOR
     assert mock_page.theme is not None
     assert mock_page.theme != mock_page.dark_theme
-
 
 
 @pytest.mark.asyncio

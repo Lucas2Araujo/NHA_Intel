@@ -2,7 +2,7 @@
 Módulo de modelos de dados do Hinário App.
 """
 
+from .comparativo import BlocoDiff, EstatisticasDiff, HinoComparativo
 from .hino import Hino
-from .comparativo import HinoComparativo, BlocoDiff, EstatisticasDiff
 
-__all__ = ["Hino", "HinoComparativo", "BlocoDiff", "EstatisticasDiff"]
+__all__ = ["BlocoDiff", "EstatisticasDiff", "Hino", "HinoComparativo"]

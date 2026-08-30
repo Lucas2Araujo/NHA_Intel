@@ -19,9 +19,9 @@
 
 Escolha o pacote APK correspondente à arquitetura do seu dispositivo:
 
-[![Download ARM64](https://img.shields.io/badge/Download%20APK-ARM64--v8a%20(Smartphones%20Modernos)-2ea44f?style=for-the-badge&logo=android&logoColor=white)](https://github.com/Lucas2Araujo/NHA_Intel/releases/latest)
-[![Download ARMv7](https://img.shields.io/badge/Download%20APK-ARMv7%20(Aparelhos%20Legados)-f39c12?style=for-the-badge&logo=android&logoColor=white)](https://github.com/Lucas2Araujo/NHA_Intel/releases/latest)
-[![Download x86_64](https://img.shields.io/badge/Download%20APK-x86__64%20(Emuladores%20e%20PCs)-3498db?style=for-the-badge&logo=android&logoColor=white)](https://github.com/Lucas2Araujo/NHA_Intel/releases/latest)
+[![Download ARM64](https://img.shields.io/badge/Download%20APK-ARM64--v8a%20(Smartphones%20Modernos)-2ea44f?style=for-the-badge&logo=android&logoColor=white)](https://github.com/Lucas2Araujo/NHA_Intel/releases/latest/download/Hinario_Inteligente_Android_Normal_arm64.apk)
+[![Download ARMv7](https://img.shields.io/badge/Download%20APK-ARMv7%20(Aparelhos%20Legados)-f39c12?style=for-the-badge&logo=android&logoColor=white)](https://github.com/Lucas2Araujo/NHA_Intel/releases/latest/download/Hinario_Inteligente_Android_Legado_armv7.apk)
+[![Download x86_64](https://img.shields.io/badge/Download%20APK-x86__64%20(Emuladores%20e%20PCs)-3498db?style=for-the-badge&logo=android&logoColor=white)](https://github.com/Lucas2Araujo/NHA_Intel/releases/latest/download/Hinario_Inteligente_Android_x86_64.apk)
 
 </div>
 

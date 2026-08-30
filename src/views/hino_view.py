@@ -1,15 +1,17 @@
 import asyncio
 import json
+from typing import Any
+
 import flet as ft
-from typing import Optional, Dict, List
-from src.repositories.hino_repository import HinoRepository
-from src.repositories.favorito_repository import FavoritoRepository
-from src.repositories.historico_repository import HistoricoRepository
+
+from src.models.biblia import PassagemBiblica
+from src.models.comparativo import BlocoDiff, EstatisticasDiff, HinoComparativo
+from src.models.hino import Hino
 from src.repositories.biblia_repository import BibliaRepository
 from src.repositories.comparativo_repository import ComparativoRepository
-from src.models.biblia import PassagemBiblica
-from src.models.hino import Hino
-from src.models.comparativo import HinoComparativo, BlocoDiff, EstatisticasDiff
+from src.repositories.favorito_repository import FavoritoRepository
+from src.repositories.hino_repository import HinoRepository
+from src.repositories.historico_repository import HistoricoRepository
 from src.services.media_service import MediaService
 
 DEFAULT_FONT_FAMILY = "Padrão"
@@ -23,7 +25,6 @@ FONT_FAMILY_MAP = {
 }
 
 TOOLTIP_LER_PASSAGEM_BIBLICA = "Ler passagem bíblica"
-
 
 
 class HinoView:
@@ -41,11 +42,11 @@ class HinoView:
         hino_repository: HinoRepository,
         favorito_repository: FavoritoRepository,
         historico_repository: HistoricoRepository,
-        media_service: Optional[MediaService] = None,
-        hino_ids_list: Optional[List[int]] = None,
-        biblia_repository: Optional[BibliaRepository] = None,
-        comparativo_repository: Optional[ComparativoRepository] = None,
-        antigo_repository: Optional[HinoRepository] = None,
+        media_service: MediaService | None = None,
+        hino_ids_list: list[int] | None = None,
+        biblia_repository: BibliaRepository | None = None,
+        comparativo_repository: ComparativoRepository | None = None,
+        antigo_repository: HinoRepository | None = None,
     ):
         self.hino_id = hino_id
         self.hino_repository = hino_repository
@@ -58,32 +59,32 @@ class HinoView:
         self.antigo_repository = antigo_repository
 
         # Estado da visualização comparativa (Hinário Novo vs Antigo)
-        self.comparativo: Optional[HinoComparativo] = None
-        self.hino_antigo: Optional[Hino] = None
+        self.comparativo: HinoComparativo | None = None
+        self.hino_antigo: Hino | None = None
         self.selected_view_mode: str = "novo"  # "novo", "antigo", "comparacao"
-        self.content_container: Optional[ft.Container] = None
-        self.segmented_button: Optional[ft.SegmentedButton] = None
+        self.content_container: ft.Container | None = None
+        self.segmented_button: ft.SegmentedButton | None = None
 
         # Estado interno de acessibilidade de fonte (carregado do banco se existir)
         self.font_size: int = 18
         self.selected_font: str = DEFAULT_FONT_FAMILY
         self.is_custom_font: bool = False
         self._prefs_loaded: bool = False
-        self._save_pref_task: Optional[asyncio.Task] = None
-        self._biblia_task: Optional[asyncio.Task] = None
-        self._nav_task: Optional[asyncio.Task] = None
+        self._save_pref_task: asyncio.Task | None = None
+        self._biblia_task: asyncio.Task | None = None
+        self._nav_task: asyncio.Task | None = None
 
         # Referências aos elementos dinâmicos da interface
-        self.page: Optional[ft.Page] = None
-        self.letra_text: Optional[ft.Text] = None
-        self.font_size_text: Optional[ft.Text] = None
-        self.fav_icon: Optional[ft.IconButton] = None
-        self.youtube_btn: Optional[ft.IconButton] = None
+        self.page: ft.Page | None = None
+        self.letra_text: ft.Text | None = None
+        self.font_size_text: ft.Text | None = None
+        self.fav_icon: ft.IconButton | None = None
+        self.youtube_btn: ft.IconButton | None = None
         self.is_fav: bool = False
-        self.relacionados: Dict[str, List[str]] = {"temas": [], "textos_biblicos": []}
+        self.relacionados: dict[str, list[str]] = {"temas": [], "textos_biblicos": []}
 
         # SnackBar singleton reutilizável (evita acúmulo no overlay)
-        self._snackbar: Optional[ft.SnackBar] = None
+        self._snackbar: ft.SnackBar | None = None
 
     def _calculate_responsive_font_size(self, page: ft.Page) -> int:
         """Calcula o tamanho de fonte responsivo padrão proporcional à altura útil da tela."""
@@ -125,11 +126,13 @@ class HinoView:
     async def _save_preferences(self) -> None:
         """Salva preferências de fonte no banco de dados."""
         try:
-            prefs = json.dumps({
-                "font_size": self.font_size,
-                "font_family": self.selected_font,
-                "is_custom": self.is_custom_font,
-            })
+            prefs = json.dumps(
+                {
+                    "font_size": self.font_size,
+                    "font_family": self.selected_font,
+                    "is_custom": self.is_custom_font,
+                }
+            )
             conn = await self.hino_repository.db_connection.get_connection()
             await conn.execute(
                 "INSERT OR REPLACE INTO preferencias (chave, valor) VALUES (?, ?)",
@@ -145,24 +148,13 @@ class HinoView:
             self.font_size = self._calculate_responsive_font_size(self.page)
             self._update_font(self.page)
 
-    async def build(self, page: ft.Page) -> ft.View:
-        self.page = page
-        self.page.on_resize = self._on_page_resize
-
-        hino: Optional[Hino] = await self.hino_repository.get_by_id(self.hino_id)
-
-        if hino is None:
-            return self._build_not_found_view(page)
-
-        self.current_hino = hino
-
-        # Carrega preferências de fonte persistidas
+    async def _init_data_and_preferences(self, page: ft.Page, hino: Hino) -> None:
+        """Carrega preferências de fonte e executa queries de metadados em paralelo."""
         await self._load_preferences()
 
         if not self.is_custom_font:
             self.font_size = self._calculate_responsive_font_size(page)
 
-        # Executa queries em paralelo para reduzir latência de abertura
         historico_task = self.historico_repository.add_acesso(self.hino_id)
         metadados_task = self.hino_repository.get_metadados_relacionados(self.hino_id)
         favorito_task = self.favorito_repository.is_favorito(self.hino_id)
@@ -176,14 +168,119 @@ class HinoView:
             historico_task, metadados_task, favorito_task, comparativo_task
         )
 
-        # Se houver número antigo e repositório antigo, carrega o hino antigo
-        if self.comparativo and self.comparativo.numero_antigo and self.antigo_repository:
+        if (
+            self.comparativo
+            and self.comparativo.numero_antigo
+            and self.antigo_repository
+        ):
             try:
-                self.hino_antigo = await self.antigo_repository.get_by_numero(self.comparativo.numero_antigo)
+                self.hino_antigo = await self.antigo_repository.get_by_numero(
+                    self.comparativo.numero_antigo
+                )
             except Exception:
                 self.hino_antigo = None
 
-        # Texto da letra do hino
+    def _build_header_container(self, page: ft.Page, hino: Hino) -> ft.Container:
+        """Constrói a seção de cabeçalho do hino (título, texto base, chip comparativo)."""
+        titulo_text = ft.Text(
+            hino.titulo,
+            size=22,
+            weight=ft.FontWeight.BOLD,
+            text_align=ft.TextAlign.CENTER,
+            color=ft.Colors.BLUE_200,
+        )
+
+        header_controls: list[ft.Control] = [titulo_text]
+        chips_controls: list[ft.Control] = []
+
+        if hino.texto_base and hino.texto_base.strip():
+            chips_controls.append(
+                ft.Chip(
+                    label=ft.Text(hino.texto_base, size=12),
+                    leading=ft.Icon(
+                        ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400
+                    ),
+                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                    tooltip=TOOLTIP_LER_PASSAGEM_BIBLICA,
+                    on_click=lambda e, ref=hino.texto_base: self._on_biblia_click(
+                        page, ref, from_info_modal=False, hino=hino
+                    ),
+                )
+            )
+
+        comparativo_chip = self._build_comparativo_chip(page)
+        if comparativo_chip:
+            chips_controls.append(comparativo_chip)
+
+        if chips_controls:
+            header_controls.append(
+                ft.Container(
+                    content=ft.Row(
+                        controls=chips_controls,
+                        alignment=ft.MainAxisAlignment.CENTER,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        wrap=True,
+                        spacing=8,
+                        run_spacing=6,
+                    ),
+                    padding=ft.Padding.only(top=12),
+                )
+            )
+
+        return ft.Container(
+            content=ft.Column(
+                controls=header_controls,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=0,
+            ),
+            padding=ft.Padding.only(top=16, bottom=12, left=20, right=20),
+            alignment=ft.Alignment.CENTER,
+        )
+
+    def _build_bottom_appbar(
+        self, page: ft.Page, youtube_btn: ft.IconButton
+    ) -> ft.BottomAppBar:
+        """Constrói a barra inferior com atalhos de fonte e YouTube."""
+        return ft.BottomAppBar(
+            content=ft.Row(
+                controls=[
+                    ft.Column(
+                        controls=[
+                            ft.IconButton(
+                                ft.Icons.TEXT_FIELDS,
+                                tooltip="Tamanho e Família de Fonte",
+                                on_click=lambda e: self._show_accessibility_modal(page),
+                            ),
+                            ft.Text("Fonte", size=10, text_align=ft.TextAlign.CENTER),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=0,
+                    ),
+                    ft.Column(
+                        controls=[
+                            youtube_btn,
+                            ft.Text("YouTube", size=10, text_align=ft.TextAlign.CENTER),
+                        ],
+                        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=0,
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_AROUND,
+            ),
+            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+        )
+
+    async def build(self, page: ft.Page) -> ft.View:
+        self.page = page
+        self.page.on_resize = self._on_page_resize
+
+        hino: Hino | None = await self.hino_repository.get_by_id(self.hino_id)
+        if hino is None:
+            return self._build_not_found_view(page)
+
+        self.current_hino = hino
+        await self._init_data_and_preferences(page, hino)
+
         self.letra_text = ft.Text(
             hino.letra if hino.letra else "Letra não disponível para este hino.",
             size=self.font_size,
@@ -193,7 +290,6 @@ class HinoView:
             expand=True,
         )
 
-        # Content container que alterna entre Letra Novo, Letra Antigo e Comparação
         self.content_container = ft.Container(
             content=self._render_current_mode_content(),
             padding=ft.Padding.symmetric(vertical=20, horizontal=20),
@@ -201,16 +297,6 @@ class HinoView:
             expand=True,
         )
 
-        # Título do hino no corpo da página
-        titulo_text = ft.Text(
-            hino.titulo,
-            size=22,
-            weight=ft.FontWeight.BOLD,
-            text_align=ft.TextAlign.CENTER,
-            color=ft.Colors.BLUE_200,
-        )
-
-        # Toggle de Favorito
         self.fav_icon = ft.IconButton(
             icon=ft.Icons.FAVORITE if self.is_fav else ft.Icons.FAVORITE_BORDER,
             icon_color=ft.Colors.RED_400 if self.is_fav else None,
@@ -218,56 +304,27 @@ class HinoView:
             on_click=lambda e: page.run_task(self._toggle_favorito, page, hino),
         )
 
-        # Botão de Link Externo do YouTube
         has_youtube = bool(hino.link_video and hino.link_video.strip())
         self.youtube_btn = ft.IconButton(
-            icon=ft.Icons.PLAY_CIRCLE_OUTLINE if hasattr(ft.Icons, "PLAY_CIRCLE_OUTLINE") else ft.Icons.PLAY_ARROW,
+            icon=(
+                ft.Icons.PLAY_CIRCLE_OUTLINE
+                if hasattr(ft.Icons, "PLAY_CIRCLE_OUTLINE")
+                else ft.Icons.PLAY_ARROW
+            ),
             icon_color=ft.Colors.RED_400 if has_youtube else None,
-            tooltip="Assistir no YouTube (Link Externo)" if has_youtube else "Link do YouTube indisponível",
+            tooltip=(
+                "Assistir no YouTube (Link Externo)"
+                if has_youtube
+                else "Link do YouTube indisponível"
+            ),
             disabled=not has_youtube,
             on_click=lambda e: page.run_task(self._open_youtube_link, page, hino),
         )
 
-        # Navegação anterior/próximo
         prev_btn, next_btn = self._build_nav_buttons(page)
+        header_container = self._build_header_container(page, hino)
 
-        # Título na AppBar
-        appbar_title = ft.Text(f"Hino {hino.numero}", weight=ft.FontWeight.BOLD)
-
-        # Controles do Cabeçalho
-        header_controls: list[ft.Control] = [titulo_text]
-        if hino.texto_base and hino.texto_base.strip():
-            header_controls.append(
-                ft.Container(
-                    content=ft.Chip(
-                        label=ft.Text(hino.texto_base, size=12),
-                        leading=ft.Icon(ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400),
-                        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                        tooltip=TOOLTIP_LER_PASSAGEM_BIBLICA,
-                        on_click=lambda e, ref=hino.texto_base: self._on_biblia_click(
-                            page, ref, from_info_modal=False, hino=hino
-                        ),
-                    ),
-                    padding=ft.Padding.only(top=4),
-                )
-            )
-
-        comparativo_chip = self._build_comparativo_chip(page)
-        if comparativo_chip:
-            header_controls.append(comparativo_chip)
-
-        column_controls: list[ft.Control] = [
-            ft.Container(
-                content=ft.Column(
-                    controls=header_controls,
-                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                    spacing=2,
-                ),
-                padding=ft.Padding.symmetric(vertical=15, horizontal=20),
-                alignment=ft.Alignment.CENTER,
-            ),
-        ]
-
+        column_controls: list[ft.Control] = [header_container]
         segmented_btn = self._build_segmented_button(page)
         if segmented_btn:
             column_controls.append(segmented_btn)
@@ -275,15 +332,14 @@ class HinoView:
         column_controls.append(ft.Divider(height=1))
         column_controls.append(self.content_container)
 
-        # Coluna rolável de conteúdo
         scroll_column = ft.Column(
             controls=column_controls,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=0,
             scroll=ft.ScrollMode.AUTO,
             expand=True,
         )
 
-        # Botão voltar usa stack de views
         async def _go_back(e):
             if len(page.views) > 1:
                 page.views.pop()
@@ -296,11 +352,8 @@ class HinoView:
             route=f"/hino/{self.hino_id}",
             bgcolor=ft.Colors.SURFACE,
             appbar=ft.AppBar(
-                leading=ft.IconButton(
-                    ft.Icons.ARROW_BACK,
-                    on_click=_go_back,
-                ),
-                title=appbar_title,
+                leading=ft.IconButton(ft.Icons.ARROW_BACK, on_click=_go_back),
+                title=ft.Text(f"Hino {hino.numero}", weight=ft.FontWeight.BOLD),
                 center_title=True,
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 actions=[
@@ -317,42 +370,11 @@ class HinoView:
             controls=[
                 ft.SafeArea(
                     maintain_bottom_view_padding=True,
-                    content=ft.Container(
-                        content=scroll_column,
-                        expand=True,
-                        padding=0,
-                    ),
+                    content=ft.Container(content=scroll_column, expand=True, padding=0),
                     expand=True,
                 ),
             ],
-            bottom_appbar=ft.BottomAppBar(
-                content=ft.Row(
-                    controls=[
-                        ft.Column(
-                            controls=[
-                                ft.IconButton(
-                                    ft.Icons.TEXT_FIELDS,
-                                    tooltip="Tamanho e Família de Fonte",
-                                    on_click=lambda e: self._show_accessibility_modal(page),
-                                ),
-                                ft.Text("Fonte", size=10, text_align=ft.TextAlign.CENTER),
-                            ],
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                            spacing=0,
-                        ),
-                        ft.Column(
-                            controls=[
-                                self.youtube_btn,
-                                ft.Text("YouTube", size=10, text_align=ft.TextAlign.CENTER),
-                            ],
-                            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                            spacing=0,
-                        ),
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_AROUND,
-                ),
-                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            ),
+            bottom_appbar=self._build_bottom_appbar(page, self.youtube_btn),
         )
 
     def _build_nav_buttons(self, page: ft.Page) -> tuple:
@@ -394,7 +416,7 @@ class HinoView:
         page: ft.Page,
         ref: str,
         from_info_modal: bool = False,
-        hino: Optional[Hino] = None,
+        hino: Hino | None = None,
     ) -> None:
         """Manipula o clique em um chip bíblico, fechando modal aberto se houver e abrindo a leitura."""
         try:
@@ -426,7 +448,7 @@ class HinoView:
         page: ft.Page,
         referencia: str,
         from_info_modal: bool = False,
-        hino: Optional[Hino] = None,
+        hino: Hino | None = None,
     ) -> None:
         """
         Abre um modal responsivo e assíncrono (BottomSheet) para leitura da passagem bíblica informada.
@@ -450,7 +472,11 @@ class HinoView:
             content=ft.Column(
                 controls=[
                     ft.ProgressRing(width=36, height=36, stroke_width=3),
-                    ft.Text("Carregando passagem bíblica...", size=14, color=ft.Colors.GREY_400),
+                    ft.Text(
+                        "Carregando passagem bíblica...",
+                        size=14,
+                        color=ft.Colors.GREY_400,
+                    ),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 alignment=ft.MainAxisAlignment.CENTER,
@@ -480,7 +506,9 @@ class HinoView:
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.MENU_BOOK, color=ft.Colors.GREEN_400, size=22),
+                            ft.Icon(
+                                ft.Icons.MENU_BOOK, color=ft.Colors.GREEN_400, size=22
+                            ),
                             title_text,
                         ],
                         alignment=ft.MainAxisAlignment.START,
@@ -519,7 +547,9 @@ class HinoView:
 
         # Consulta assíncrona da passagem bíblica
         try:
-            passagem: Optional[PassagemBiblica] = await self.biblia_repository.buscar_passagem(ref_clean)
+            passagem: PassagemBiblica | None = (
+                await self.biblia_repository.buscar_passagem(ref_clean)
+            )
         except Exception:
             passagem = None
 
@@ -534,7 +564,7 @@ class HinoView:
                             controls=[
                                 ft.Container(
                                     content=ft.Text(
-                                        str(v.versiculo),
+                                        str(v.numero),
                                         weight=ft.FontWeight.BOLD,
                                         size=13,
                                         color=ft.Colors.GREEN_400,
@@ -563,7 +593,9 @@ class HinoView:
                 ft.Container(
                     content=ft.Column(
                         controls=[
-                            ft.Icon(ft.Icons.AUTO_STORIES, size=48, color=ft.Colors.GREY_500),
+                            ft.Icon(
+                                ft.Icons.AUTO_STORIES, size=48, color=ft.Colors.GREY_500
+                            ),
                             ft.Text(
                                 "Não foi possível carregar a passagem bíblica solicitada.",
                                 size=15,
@@ -630,7 +662,7 @@ class HinoView:
         # Persiste preferências de forma assíncrona (fire-and-forget)
         self._save_pref_task = asyncio.create_task(self._save_preferences())
 
-    def _build_comparativo_chip(self, page: ft.Page) -> Optional[ft.Control]:
+    def _build_comparativo_chip(self, page: ft.Page) -> ft.Control | None:
         """Gera o Chip/Badge informativo de status em relação ao Hinário Antigo."""
         if not self.comparativo:
             return None
@@ -639,37 +671,38 @@ class HinoView:
         num_antigo = self.comparativo.numero_antigo
 
         if status == "IDENTICO":
-            return ft.Container(
-                content=ft.Chip(
-                    label=ft.Text(f"Hino Antigo #{num_antigo} (Letra Idêntica)", size=12),
-                    leading=ft.Icon(ft.Icons.CHECK_CIRCLE_OUTLINE, size=15, color=ft.Colors.GREEN_400),
-                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    tooltip="Letra idêntica ao Hinário Antigo. Clique para alternar.",
-                    on_click=lambda e: self._on_chip_comparativo_click(page),
+            return ft.Chip(
+                label=ft.Text(f"Hino Antigo #{num_antigo} (Letra Idêntica)", size=12),
+                leading=ft.Icon(
+                    ft.Icons.CHECK_CIRCLE_OUTLINE, size=15, color=ft.Colors.GREEN_400
                 ),
-                padding=ft.Padding.only(top=4),
+                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                tooltip="Letra idêntica ao Hinário Antigo. Clique para alternar.",
+                on_click=lambda e: self._on_chip_comparativo_click(page),
             )
         elif status == "MODIFICADO":
             resumo = self.comparativo.resumo_alteracoes or "Letra Modificada"
-            return ft.Container(
-                content=ft.Chip(
-                    label=ft.Text(f"Hino Antigo #{num_antigo} ({resumo})", size=12, weight=ft.FontWeight.W_500),
-                    leading=ft.Icon(ft.Icons.CHANGE_CIRCLE, size=15, color=ft.Colors.AMBER_400),
-                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    tooltip="Letra modificada em relação ao Hinário Antigo. Clique para ver alterações.",
-                    on_click=lambda e: self._on_chip_comparativo_click(page),
+            return ft.Chip(
+                label=ft.Text(
+                    f"Hino Antigo #{num_antigo} ({resumo})",
+                    size=12,
+                    weight=ft.FontWeight.W_500,
                 ),
-                padding=ft.Padding.only(top=4),
+                leading=ft.Icon(
+                    ft.Icons.CHANGE_CIRCLE, size=15, color=ft.Colors.AMBER_400
+                ),
+                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                tooltip="Letra modificada em relação ao Hinário Antigo. Clique para ver alterações.",
+                on_click=lambda e: self._on_chip_comparativo_click(page),
             )
         elif status == "NOVO_INEDITO":
-            return ft.Container(
-                content=ft.Chip(
-                    label=ft.Text("Inédito no Novo Hinário", size=12),
-                    leading=ft.Icon(ft.Icons.AUTO_AWESOME, size=15, color=ft.Colors.PURPLE_300),
-                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    tooltip="Este hino foi adicionado exclusivamente na nova edição.",
+            return ft.Chip(
+                label=ft.Text("Inédito no Novo Hinário", size=12),
+                leading=ft.Icon(
+                    ft.Icons.AUTO_AWESOME, size=15, color=ft.Colors.PURPLE_300
                 ),
-                padding=ft.Padding.only(top=4),
+                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                tooltip="Este hino foi adicionado exclusivamente na nova edição.",
             )
         return None
 
@@ -689,9 +722,12 @@ class HinoView:
             self.segmented_button.selected = [self.selected_view_mode]
         self._update_content_view(page)
 
-    def _build_segmented_button(self, page: ft.Page) -> Optional[ft.Control]:
+    def _build_segmented_button(self, page: ft.Page) -> ft.Control | None:
         """Gera a barra de alternância (SegmentedButton) entre Novo, Antigo e Comparação."""
-        if not self.comparativo or not (self.comparativo.numero_antigo or self.comparativo.status_comparacao == "MODIFICADO"):
+        if not self.comparativo or not (
+            self.comparativo.numero_antigo
+            or self.comparativo.status_comparacao == "MODIFICADO"
+        ):
             return None
 
         segments = [
@@ -729,7 +765,7 @@ class HinoView:
 
         return ft.Container(
             content=self.segmented_button,
-            padding=ft.Padding.symmetric(vertical=6, horizontal=10),
+            padding=ft.Padding.only(top=0, bottom=12, left=10, right=10),
             alignment=ft.Alignment.CENTER,
         )
 
@@ -749,7 +785,7 @@ class HinoView:
             return self._build_comparacao_content()
         return self.letra_text or ft.Text("")
 
-    def _update_content_view(self, page: Optional[ft.Page]) -> None:
+    def _update_content_view(self, page: ft.Page | None) -> None:
         """Atualiza o conteúdo dinâmico da letra/comparação."""
         if self.content_container:
             self.content_container.content = self._render_current_mode_content()
@@ -816,109 +852,96 @@ class HinoView:
             spacing=10,
         )
 
-    def _build_comparacao_content(self) -> ft.Control:
-        """Gera a visualização diff Antes e Depois esteticamente adaptável e acessível."""
-        if not self.comparativo:
-            return ft.Text("Dados de comparação não disponíveis.", italic=True)
+    @staticmethod
+    def _create_diff_stat_chip(
+        icon: Any, label: str, color: Any, is_surface: bool = False
+    ) -> ft.Container:
+        """Cria um chip individual de estatística de diff."""
+        text_color = color if not is_surface else ft.Colors.GREY_400
+        bgcolor = (
+            ft.Colors.SURFACE_CONTAINER_HIGHEST
+            if is_surface
+            else ft.Colors.with_opacity(0.12, color)
+        )
+        weight = ft.FontWeight.BOLD if not is_surface else ft.FontWeight.NORMAL
+        return ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(icon, size=13, color=color),
+                    ft.Text(label, size=11, weight=weight, color=text_color),
+                ],
+                spacing=4,
+                alignment=ft.MainAxisAlignment.CENTER,
+            ),
+            bgcolor=bgcolor,
+            border_radius=8,
+            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+        )
 
-        stats, blocos = self.comparativo.get_parsed_diff()
-        font_fam = FONT_FAMILY_MAP.get(self.selected_font)
-
-        # 1. Painel de Resumo / Estatísticas
-        simil_pct = self.comparativo.similaridade_pct
+    def _build_diff_stats_summary(
+        self, stats: EstatisticasDiff | None, simil_pct: float
+    ) -> ft.Container:
+        """Constrói o cabeçalho com barra de similaridade e chips de estatísticas do diff."""
         summary_chips: list[ft.Control] = []
-
         if stats:
             if stats.linhas_alteradas > 0:
                 summary_chips.append(
-                    ft.Container(
-                        content=ft.Row(
-                            controls=[
-                                ft.Icon(ft.Icons.EDIT, size=13, color=ft.Colors.AMBER_400),
-                                ft.Text(
-                                    f"{stats.linhas_alteradas} alterada(s)",
-                                    size=11,
-                                    weight=ft.FontWeight.BOLD,
-                                    color=ft.Colors.AMBER_400,
-                                ),
-                            ],
-                            spacing=4,
-                            alignment=ft.MainAxisAlignment.CENTER,
-                        ),
-                        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.AMBER),
-                        border_radius=8,
-                        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                    self._create_diff_stat_chip(
+                        ft.Icons.EDIT,
+                        f"{stats.linhas_alteradas} alterada(s)",
+                        ft.Colors.AMBER,
                     )
                 )
             if stats.linhas_adicionadas > 0:
                 summary_chips.append(
-                    ft.Container(
-                        content=ft.Row(
-                            controls=[
-                                ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=13, color=ft.Colors.GREEN_400),
-                                ft.Text(
-                                    f"+{stats.linhas_adicionadas} adicionada(s)",
-                                    size=11,
-                                    weight=ft.FontWeight.BOLD,
-                                    color=ft.Colors.GREEN_400,
-                                ),
-                            ],
-                            spacing=4,
-                            alignment=ft.MainAxisAlignment.CENTER,
-                        ),
-                        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.GREEN),
-                        border_radius=8,
-                        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                    self._create_diff_stat_chip(
+                        ft.Icons.ADD_CIRCLE_OUTLINE,
+                        f"+{stats.linhas_adicionadas} adicionada(s)",
+                        ft.Colors.GREEN,
                     )
                 )
             if stats.linhas_removidas > 0:
                 summary_chips.append(
-                    ft.Container(
-                        content=ft.Row(
-                            controls=[
-                                ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=13, color=ft.Colors.RED_400),
-                                ft.Text(
-                                    f"-{stats.linhas_removidas} removida(s)",
-                                    size=11,
-                                    weight=ft.FontWeight.BOLD,
-                                    color=ft.Colors.RED_400,
-                                ),
-                            ],
-                            spacing=4,
-                            alignment=ft.MainAxisAlignment.CENTER,
-                        ),
-                        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.RED),
-                        border_radius=8,
-                        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                    self._create_diff_stat_chip(
+                        ft.Icons.REMOVE_CIRCLE_OUTLINE,
+                        f"-{stats.linhas_removidas} removida(s)",
+                        ft.Colors.RED,
                     )
                 )
             if stats.linhas_iguais > 0:
                 summary_chips.append(
-                    ft.Container(
-                        content=ft.Row(
-                            controls=[
-                                ft.Icon(ft.Icons.CHECK, size=13, color=ft.Colors.GREY_400),
-                                ft.Text(
-                                    f"{stats.linhas_iguais} inalterada(s)",
-                                    size=11,
-                                    color=ft.Colors.GREY_400,
-                                ),
-                            ],
-                            spacing=4,
-                            alignment=ft.MainAxisAlignment.CENTER,
-                        ),
-                        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                        border_radius=8,
-                        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                    self._create_diff_stat_chip(
+                        ft.Icons.CHECK,
+                        f"{stats.linhas_iguais} inalterada(s)",
+                        ft.Colors.GREY_400,
+                        is_surface=True,
                     )
                 )
 
-        header_summary = ft.Container(
+        chips_row = (
+            [
+                ft.Row(
+                    controls=summary_chips,
+                    wrap=True,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=6,
+                    run_spacing=6,
+                )
+            ]
+            if summary_chips
+            else []
+        )
+
+        return ft.Container(
             content=ft.Column(
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.ANALYTICS_OUTLINED, size=16, color=ft.Colors.BLUE_300),
+                            ft.Icon(
+                                ft.Icons.ANALYTICS_OUTLINED,
+                                size=16,
+                                color=ft.Colors.BLUE_300,
+                            ),
                             ft.Text(
                                 f"Similaridade de Letra: {simil_pct:.1f}%",
                                 weight=ft.FontWeight.BOLD,
@@ -936,19 +959,7 @@ class HinoView:
                         height=5,
                         border_radius=3,
                     ),
-                    *(
-                        [
-                            ft.Row(
-                                controls=summary_chips,
-                                wrap=True,
-                                alignment=ft.MainAxisAlignment.CENTER,
-                                spacing=6,
-                                run_spacing=6,
-                            )
-                        ]
-                        if summary_chips
-                        else []
-                    ),
+                    *chips_row,
                 ],
                 spacing=8,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -956,15 +967,187 @@ class HinoView:
             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
             border_radius=12,
             padding=ft.Padding.symmetric(vertical=10, horizontal=14),
-            margin=ft.Padding.only(bottom=15),
+            margin=ft.Margin.only(bottom=15),
         )
 
+    def _build_diff_block_control(
+        self, b: BlocoDiff, font_fam: str | None
+    ) -> ft.Control | None:
+        """Constrói a representação visual de um bloco de diff (igual, modificado, adicionado, removido)."""
+        if b.tipo == "igual":
+            if not b.texto:
+                return None
+            return ft.Container(
+                content=ft.Text(
+                    b.texto,
+                    size=self.font_size,
+                    font_family=font_fam,
+                    text_align=ft.TextAlign.CENTER,
+                ),
+                padding=ft.Padding.symmetric(vertical=2, horizontal=8),
+                alignment=ft.Alignment.CENTER,
+            )
+
+        if b.tipo == "modificado":
+            antigo_lines = b.antigo or []
+            novo_lines = b.novo or []
+            mod_controls: list[ft.Control] = []
+
+            if antigo_lines:
+                mod_controls.append(
+                    ft.Container(
+                        content=ft.Column(
+                            controls=[
+                                ft.Row(
+                                    controls=[
+                                        ft.Icon(
+                                            ft.Icons.REMOVE_CIRCLE_OUTLINE,
+                                            size=13,
+                                            color=ft.Colors.RED_400,
+                                        ),
+                                        ft.Text(
+                                            "Antes (Antigo):",
+                                            size=11,
+                                            weight=ft.FontWeight.BOLD,
+                                            color=ft.Colors.RED_400,
+                                        ),
+                                    ],
+                                    spacing=4,
+                                ),
+                                *(
+                                    ft.Text(
+                                        f"• {line}",
+                                        size=max(12, self.font_size - 1),
+                                        font_family=font_fam,
+                                        color=ft.Colors.RED_200,
+                                    )
+                                    for line in antigo_lines
+                                ),
+                            ],
+                            spacing=3,
+                        ),
+                        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.RED),
+                        border=ft.Border(left=ft.BorderSide(3, ft.Colors.RED_400)),
+                        border_radius=ft.BorderRadius.only(top_right=8, bottom_right=8),
+                        padding=ft.Padding.all(10),
+                        margin=ft.Margin.symmetric(vertical=2),
+                    )
+                )
+
+            if novo_lines:
+                mod_controls.append(
+                    ft.Container(
+                        content=ft.Column(
+                            controls=[
+                                ft.Row(
+                                    controls=[
+                                        ft.Icon(
+                                            ft.Icons.ADD_CIRCLE_OUTLINE,
+                                            size=13,
+                                            color=ft.Colors.GREEN_400,
+                                        ),
+                                        ft.Text(
+                                            "Depois (Novo):",
+                                            size=11,
+                                            weight=ft.FontWeight.BOLD,
+                                            color=ft.Colors.GREEN_400,
+                                        ),
+                                    ],
+                                    spacing=4,
+                                ),
+                                *(
+                                    ft.Text(
+                                        f"• {line}",
+                                        size=self.font_size,
+                                        font_family=font_fam,
+                                        weight=ft.FontWeight.W_500,
+                                        color=ft.Colors.GREEN_200,
+                                    )
+                                    for line in novo_lines
+                                ),
+                            ],
+                            spacing=3,
+                        ),
+                        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.GREEN),
+                        border=ft.Border(left=ft.BorderSide(3, ft.Colors.GREEN_400)),
+                        border_radius=ft.BorderRadius.only(top_right=8, bottom_right=8),
+                        padding=ft.Padding.all(10),
+                        margin=ft.Margin.symmetric(vertical=2),
+                    )
+                )
+
+            return ft.Container(
+                content=ft.Column(controls=mod_controls, spacing=4),
+                padding=ft.Padding.symmetric(vertical=4),
+            )
+
+        if b.tipo == "adicionado":
+            return ft.Container(
+                content=ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.ADD, size=14, color=ft.Colors.GREEN_400),
+                        ft.Text(
+                            b.texto or "",
+                            size=self.font_size,
+                            font_family=font_fam,
+                            color=ft.Colors.GREEN_200,
+                            weight=ft.FontWeight.W_500,
+                            expand=True,
+                        ),
+                    ],
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
+                bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.GREEN),
+                border=ft.Border(left=ft.BorderSide(3, ft.Colors.GREEN_400)),
+                border_radius=ft.BorderRadius.only(top_right=8, bottom_right=8),
+                padding=ft.Padding.all(8),
+                margin=ft.Margin.symmetric(vertical=2),
+            )
+
+        if b.tipo == "removido":
+            return ft.Container(
+                content=ft.Row(
+                    controls=[
+                        ft.Icon(ft.Icons.REMOVE, size=14, color=ft.Colors.RED_400),
+                        ft.Text(
+                            b.texto or "",
+                            size=self.font_size,
+                            font_family=font_fam,
+                            color=ft.Colors.RED_200,
+                            expand=True,
+                        ),
+                    ],
+                    spacing=6,
+                    vertical_alignment=ft.CrossAxisAlignment.START,
+                ),
+                bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.RED),
+                border=ft.Border(left=ft.BorderSide(3, ft.Colors.RED_400)),
+                border_radius=ft.BorderRadius.only(top_right=8, bottom_right=8),
+                padding=ft.Padding.all(8),
+                margin=ft.Margin.symmetric(vertical=2),
+            )
+
+        return None
+
+    def _build_comparacao_content(self) -> ft.Control:
+        """Gera a visualização diff Antes e Depois esteticamente adaptável e acessível."""
+        if not self.comparativo:
+            return ft.Text("Dados de comparação não disponíveis.", italic=True)
+
+        stats, blocos = self.comparativo.get_parsed_diff()
+        font_fam = FONT_FAMILY_MAP.get(self.selected_font)
+
+        header_summary = self._build_diff_stats_summary(
+            stats, self.comparativo.similaridade_pct
+        )
         diff_controls: list[ft.Control] = [header_summary]
 
         if not blocos:
             diff_controls.append(
                 ft.Text(
-                    self.comparativo.diff_texto or "Nenhuma diferença detalhada encontrada.",
+                    self.comparativo.diff_texto
+                    or "Nenhuma diferença detalhada encontrada.",
                     size=self.font_size,
                     font_family=font_fam,
                     text_align=ft.TextAlign.CENTER,
@@ -977,157 +1160,9 @@ class HinoView:
             )
 
         for b in blocos:
-            if b.tipo == "igual":
-                if b.texto:
-                    diff_controls.append(
-                        ft.Container(
-                            content=ft.Text(
-                                b.texto,
-                                size=self.font_size,
-                                font_family=font_fam,
-                                text_align=ft.TextAlign.CENTER,
-                            ),
-                            padding=ft.Padding.symmetric(vertical=2, horizontal=8),
-                            alignment=ft.Alignment.CENTER,
-                        )
-                    )
-            elif b.tipo == "modificado":
-                antigo_lines = b.antigo or []
-                novo_lines = b.novo or []
-
-                mod_controls = []
-                if antigo_lines:
-                    mod_controls.append(
-                        ft.Container(
-                            content=ft.Column(
-                                controls=[
-                                    ft.Row(
-                                        controls=[
-                                            ft.Icon(ft.Icons.REMOVE_CIRCLE_OUTLINE, size=13, color=ft.Colors.RED_400),
-                                            ft.Text(
-                                                "Antes (Antigo):",
-                                                size=11,
-                                                weight=ft.FontWeight.BOLD,
-                                                color=ft.Colors.RED_400,
-                                            ),
-                                        ],
-                                        spacing=4,
-                                    ),
-                                    *(
-                                        ft.Text(
-                                            f"• {line}",
-                                            size=max(12, self.font_size - 1),
-                                            font_family=font_fam,
-                                            color=ft.Colors.RED_200,
-                                        )
-                                        for line in antigo_lines
-                                    ),
-                                ],
-                                spacing=3,
-                            ),
-                            bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.RED),
-                            border=ft.Border(left=ft.BorderSide(3, ft.Colors.RED_400)),
-                            border_radius=ft.BorderRadius.only(top_right=8, bottom_right=8),
-                            padding=ft.Padding.all(10),
-                            margin=ft.Padding.symmetric(vertical=2),
-                        )
-                    )
-
-                if novo_lines:
-                    mod_controls.append(
-                        ft.Container(
-                            content=ft.Column(
-                                controls=[
-                                    ft.Row(
-                                        controls=[
-                                            ft.Icon(ft.Icons.ADD_CIRCLE_OUTLINE, size=13, color=ft.Colors.GREEN_400),
-                                            ft.Text(
-                                                "Depois (Novo):",
-                                                size=11,
-                                                weight=ft.FontWeight.BOLD,
-                                                color=ft.Colors.GREEN_400,
-                                            ),
-                                        ],
-                                        spacing=4,
-                                    ),
-                                    *(
-                                        ft.Text(
-                                            f"• {line}",
-                                            size=self.font_size,
-                                            font_family=font_fam,
-                                            weight=ft.FontWeight.W_500,
-                                            color=ft.Colors.GREEN_200,
-                                        )
-                                        for line in novo_lines
-                                    ),
-                                ],
-                                spacing=3,
-                            ),
-                            bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.GREEN),
-                            border=ft.Border(left=ft.BorderSide(3, ft.Colors.GREEN_400)),
-                            border_radius=ft.BorderRadius.only(top_right=8, bottom_right=8),
-                            padding=ft.Padding.all(10),
-                            margin=ft.Padding.symmetric(vertical=2),
-                        )
-                    )
-
-                diff_controls.append(
-                    ft.Container(
-                        content=ft.Column(controls=mod_controls, spacing=4),
-                        padding=ft.Padding.symmetric(vertical=4),
-                    )
-                )
-
-            elif b.tipo == "adicionado":
-                diff_controls.append(
-                    ft.Container(
-                        content=ft.Row(
-                            controls=[
-                                ft.Icon(ft.Icons.ADD, size=14, color=ft.Colors.GREEN_400),
-                                ft.Text(
-                                    b.texto or "",
-                                    size=self.font_size,
-                                    font_family=font_fam,
-                                    color=ft.Colors.GREEN_200,
-                                    weight=ft.FontWeight.W_500,
-                                    expand=True,
-                                ),
-                            ],
-                            spacing=6,
-                            vertical_alignment=ft.CrossAxisAlignment.START,
-                        ),
-                        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.GREEN),
-                        border=ft.Border(left=ft.BorderSide(3, ft.Colors.GREEN_400)),
-                        border_radius=ft.BorderRadius.only(top_right=8, bottom_right=8),
-                        padding=ft.Padding.all(8),
-                        margin=ft.Padding.symmetric(vertical=2),
-                    )
-                )
-
-            elif b.tipo == "removido":
-                diff_controls.append(
-                    ft.Container(
-                        content=ft.Row(
-                            controls=[
-                                ft.Icon(ft.Icons.REMOVE, size=14, color=ft.Colors.RED_400),
-                                ft.Text(
-                                    b.texto or "",
-                                    size=self.font_size,
-                                    font_family=font_fam,
-                                    color=ft.Colors.RED_200,
-                                    expand=True,
-                                ),
-                            ],
-                            spacing=6,
-                            vertical_alignment=ft.CrossAxisAlignment.START,
-                        ),
-                        bgcolor=ft.Colors.with_opacity(0.12, ft.Colors.RED),
-                        border=ft.Border(left=ft.BorderSide(3, ft.Colors.RED_400)),
-                        border_radius=ft.BorderRadius.only(top_right=8, bottom_right=8),
-                        padding=ft.Padding.all(8),
-                        margin=ft.Padding.symmetric(vertical=2),
-                    )
-                )
+            block_ctrl = self._build_diff_block_control(b, font_fam)
+            if block_ctrl:
+                diff_controls.append(block_ctrl)
 
         return ft.Column(
             controls=diff_controls,
@@ -1159,11 +1194,13 @@ class HinoView:
 
     def _update_fav_icon_state(self) -> None:
         if self.fav_icon:
-            self.fav_icon.icon = ft.Icons.FAVORITE if self.is_fav else ft.Icons.FAVORITE_BORDER
+            self.fav_icon.icon = (
+                ft.Icons.FAVORITE if self.is_fav else ft.Icons.FAVORITE_BORDER
+            )
             self.fav_icon.icon_color = ft.Colors.RED_400 if self.is_fav else None
             self.fav_icon.tooltip = "Desfavoritar" if self.is_fav else "Favoritar"
 
-    async def _toggle_favorito(self, page: ft.Page, hino: Optional[Hino] = None) -> None:
+    async def _toggle_favorito(self, page: ft.Page, hino: Hino | None = None) -> None:
         target_hino = hino or self.current_hino
         if not target_hino:
             return
@@ -1179,22 +1216,24 @@ class HinoView:
         self._update_fav_icon_state()
         self._show_snackbar(page, msg)
 
-    async def _open_youtube_link(self, page: ft.Page, hino: Optional[Hino] = None) -> None:
+    async def _open_youtube_link(self, page: ft.Page, hino: Hino | None = None) -> None:
         """Abre o link externo do YouTube no navegador ou app nativo."""
         target_hino = hino or self.current_hino
-        if not target_hino or not target_hino.link_video or not target_hino.link_video.strip():
-            self._show_snackbar(page, "Este hino não possui link do YouTube cadastrado.")
+        if (
+            not target_hino
+            or not target_hino.link_video
+            or not target_hino.link_video.strip()
+        ):
+            self._show_snackbar(
+                page, "Este hino não possui link do YouTube cadastrado."
+            )
             return
 
         url = target_hino.link_video.strip()
         try:
             await ft.UrlLauncher().launch_url(url)
         except Exception:
-            try:
-                await page.launch_url(url)
-            except Exception:
-                self._show_snackbar(page, "Não foi possível abrir o link do YouTube.")
-
+            self._show_snackbar(page, "Não foi possível abrir o link do YouTube.")
 
     def _show_accessibility_modal(self, page: ft.Page) -> None:
         self.font_size_text = ft.Text(f"{self.font_size}pt", weight=ft.FontWeight.BOLD)
@@ -1202,7 +1241,10 @@ class HinoView:
         font_radio_group = ft.RadioGroup(
             content=ft.Column(
                 controls=[
-                    ft.Radio(value=DEFAULT_FONT_FAMILY, label=f"{DEFAULT_FONT_FAMILY} (Sans-Serif)"),
+                    ft.Radio(
+                        value=DEFAULT_FONT_FAMILY,
+                        label=f"{DEFAULT_FONT_FAMILY} (Sans-Serif)",
+                    ),
                     ft.Radio(
                         value=TIMES_NEW_ROMAN_FONT_FAMILY,
                         label=f"Serifada ({TIMES_NEW_ROMAN_FONT_FAMILY})",
@@ -1224,8 +1266,15 @@ class HinoView:
                     controls=[
                         ft.Row(
                             controls=[
-                                ft.Text("Acessibilidade de Fonte", weight=ft.FontWeight.BOLD, size=18),
-                                ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()),
+                                ft.Text(
+                                    "Acessibilidade de Fonte",
+                                    weight=ft.FontWeight.BOLD,
+                                    size=18,
+                                ),
+                                ft.IconButton(
+                                    ft.Icons.CLOSE,
+                                    on_click=lambda ev: page.pop_dialog(),
+                                ),
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                         ),
@@ -1244,7 +1293,9 @@ class HinoView:
                                     on_click=lambda e: self._increase_font(page),
                                     tooltip="Aumentar",
                                 ),
-                                ft.TextButton("Resetar", on_click=lambda e: self._reset_font(page)),
+                                ft.TextButton(
+                                    "Resetar", on_click=lambda e: self._reset_font(page)
+                                ),
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             wrap=True,
@@ -1252,7 +1303,9 @@ class HinoView:
                             run_spacing=6,
                         ),
                         ft.Divider(),
-                        ft.Text("Família de Fonte:", weight=ft.FontWeight.BOLD, size=14),
+                        ft.Text(
+                            "Família de Fonte:", weight=ft.FontWeight.BOLD, size=14
+                        ),
                         font_radio_group,
                     ],
                     tight=True,
@@ -1263,8 +1316,6 @@ class HinoView:
             )
         )
         page.show_dialog(bs)
-
-
 
     async def _navigate_search(self, page: ft.Page, term: str) -> None:
         """Fecha o modal e navega para Home com busca FTS pelo termo."""
@@ -1282,7 +1333,11 @@ class HinoView:
 
     def _extract_author_metadata(self, hino: Hino) -> list[tuple[str, str]]:
         """Extrai os pares (rótulo, valor) de autoria do hino."""
-        if hino.autor_letra and hino.autor_musica and hino.autor_letra == hino.autor_musica:
+        if (
+            hino.autor_letra
+            and hino.autor_musica
+            and hino.autor_letra == hino.autor_musica
+        ):
             return [("Letra e Música:", hino.autor_letra)]
 
         metadata = []
@@ -1302,7 +1357,12 @@ class HinoView:
                 items.append(
                     ft.Column(
                         controls=[
-                            ft.Text(label, weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.BLUE_200),
+                            ft.Text(
+                                label,
+                                weight=ft.FontWeight.BOLD,
+                                size=12,
+                                color=ft.Colors.BLUE_200,
+                            ),
                             ft.Text(val, size=14),
                         ],
                         spacing=2,
@@ -1310,16 +1370,25 @@ class HinoView:
                 )
         return items
 
-    def _build_texto_base_info_control(self, page: ft.Page, hino: Hino) -> Optional[ft.Control]:
+    def _build_texto_base_info_control(
+        self, page: ft.Page, hino: Hino
+    ) -> ft.Control | None:
         """Gera o controle de texto base bíblico do hino."""
         if not (hino.texto_base and hino.texto_base.strip()):
             return None
         return ft.Column(
             controls=[
-                ft.Text("Texto Base Bíblico:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.BLUE_200),
+                ft.Text(
+                    "Texto Base Bíblico:",
+                    weight=ft.FontWeight.BOLD,
+                    size=12,
+                    color=ft.Colors.BLUE_200,
+                ),
                 ft.Chip(
                     label=ft.Text(hino.texto_base, size=12),
-                    leading=ft.Icon(ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400),
+                    leading=ft.Icon(
+                        ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400
+                    ),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                     tooltip=TOOLTIP_LER_PASSAGEM_BIBLICA,
                     on_click=lambda e, ref=hino.texto_base: self._on_biblia_click(
@@ -1330,38 +1399,55 @@ class HinoView:
             spacing=4,
         )
 
-    def _build_category_info_control(self, page: ft.Page, hino: Hino) -> Optional[ft.Control]:
+    def _build_category_info_control(
+        self, page: ft.Page, hino: Hino
+    ) -> ft.Control | None:
         """Gera a seção de chips de categoria e subcategoria."""
         cat_chips: list[ft.Control] = []
         if hino.categoria and hino.categoria.strip():
             cat_chips.append(
                 ft.Chip(
                     label=ft.Text(hino.categoria, size=12),
-                    leading=ft.Icon(ft.Icons.FOLDER_OUTLINED, size=16, color=ft.Colors.BLUE_400),
+                    leading=ft.Icon(
+                        ft.Icons.FOLDER_OUTLINED, size=16, color=ft.Colors.BLUE_400
+                    ),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    on_click=lambda e, c=hino.categoria: self._trigger_search_navigation(page, c),
+                    on_click=lambda e, c=hino.categoria: self._trigger_search_navigation(
+                        page, c
+                    ),
                 )
             )
         if hino.subcategoria and hino.subcategoria.strip():
             cat_chips.append(
                 ft.Chip(
                     label=ft.Text(hino.subcategoria, size=12),
-                    leading=ft.Icon(ft.Icons.FOLDER_SPECIAL_OUTLINED, size=16, color=ft.Colors.BLUE_300),
+                    leading=ft.Icon(
+                        ft.Icons.FOLDER_SPECIAL_OUTLINED,
+                        size=16,
+                        color=ft.Colors.BLUE_300,
+                    ),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    on_click=lambda e, sc=hino.subcategoria: self._trigger_search_navigation(page, sc),
+                    on_click=lambda e, sc=hino.subcategoria: self._trigger_search_navigation(
+                        page, sc
+                    ),
                 )
             )
         if not cat_chips:
             return None
         return ft.Column(
             controls=[
-                ft.Text("Categoria:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.BLUE_200),
+                ft.Text(
+                    "Categoria:",
+                    weight=ft.FontWeight.BOLD,
+                    size=12,
+                    color=ft.Colors.BLUE_200,
+                ),
                 ft.Row(controls=cat_chips, wrap=True, spacing=6, run_spacing=6),
             ],
             spacing=4,
         )
 
-    def _build_themes_info_control(self, page: ft.Page) -> Optional[ft.Control]:
+    def _build_themes_info_control(self, page: ft.Page) -> ft.Control | None:
         """Gera a seção de chips dos temas relacionados."""
         temas = self.relacionados.get("temas", [])
         if not temas:
@@ -1369,7 +1455,9 @@ class HinoView:
         tema_chips: list[ft.Control] = [
             ft.Chip(
                 label=ft.Text(t, size=11),
-                leading=ft.Icon(ft.Icons.LABEL_OUTLINED, size=15, color=ft.Colors.AMBER_400),
+                leading=ft.Icon(
+                    ft.Icons.LABEL_OUTLINED, size=15, color=ft.Colors.AMBER_400
+                ),
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 on_click=lambda e, tema=t: self._trigger_search_navigation(page, tema),
             )
@@ -1377,13 +1465,20 @@ class HinoView:
         ]
         return ft.Column(
             controls=[
-                ft.Text("Temas Relacionados:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.AMBER_200),
+                ft.Text(
+                    "Temas Relacionados:",
+                    weight=ft.FontWeight.BOLD,
+                    size=12,
+                    color=ft.Colors.AMBER_200,
+                ),
                 ft.Row(controls=tema_chips, wrap=True, spacing=6, run_spacing=6),
             ],
             spacing=4,
         )
 
-    def _build_biblical_texts_info_control(self, page: ft.Page, hino: Hino) -> Optional[ft.Control]:
+    def _build_biblical_texts_info_control(
+        self, page: ft.Page, hino: Hino
+    ) -> ft.Control | None:
         """Gera a seção de chips dos textos bíblicos relacionados."""
         textos_biblicos = self.relacionados.get("textos_biblicos", [])
         if not textos_biblicos:
@@ -1391,7 +1486,9 @@ class HinoView:
         texto_chips: list[ft.Control] = [
             ft.Chip(
                 label=ft.Text(tb, size=11),
-                leading=ft.Icon(ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400),
+                leading=ft.Icon(
+                    ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400
+                ),
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 tooltip=TOOLTIP_LER_PASSAGEM_BIBLICA,
                 on_click=lambda e, ref=tb: self._on_biblia_click(
@@ -1402,13 +1499,18 @@ class HinoView:
         ]
         return ft.Column(
             controls=[
-                ft.Text("Textos Bíblicos Relacionados:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.GREEN_200),
+                ft.Text(
+                    "Textos Bíblicos Relacionados:",
+                    weight=ft.FontWeight.BOLD,
+                    size=12,
+                    color=ft.Colors.GREEN_200,
+                ),
                 ft.Row(controls=texto_chips, wrap=True, spacing=6, run_spacing=6),
             ],
             spacing=4,
         )
 
-    def _build_comparativo_info_control(self, page: ft.Page, hino: Hino) -> Optional[ft.Control]:
+    def _build_comparativo_info_control(self) -> ft.Control | None:
         """Gera a seção informativa sobre a correspondência com o Hinário Antigo."""
         if not self.comparativo:
             return None
@@ -1416,15 +1518,27 @@ class HinoView:
         items: list[ft.Control] = []
         if self.comparativo.status_comparacao == "NOVO_INEDITO":
             items.append(
-                ft.Text("Hino inédito inserido nesta edição do hinário.", size=13, color=ft.Colors.PURPLE_200)
+                ft.Text(
+                    "Hino inédito inserido nesta edição do hinário.",
+                    size=13,
+                    color=ft.Colors.PURPLE_200,
+                )
             )
         elif self.comparativo.numero_antigo:
             titulo_ant = self.comparativo.titulo_antigo or "(mesmo título)"
             items.append(
                 ft.Row(
                     controls=[
-                        ft.Text("Hinário Antigo:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.BLUE_200),
-                        ft.Text(f"Hino #{self.comparativo.numero_antigo} - {titulo_ant}", size=13),
+                        ft.Text(
+                            "Hinário Antigo:",
+                            weight=ft.FontWeight.BOLD,
+                            size=12,
+                            color=ft.Colors.BLUE_200,
+                        ),
+                        ft.Text(
+                            f"Hino #{self.comparativo.numero_antigo} - {titulo_ant}",
+                            size=13,
+                        ),
                     ],
                     spacing=6,
                     wrap=True,
@@ -1434,8 +1548,15 @@ class HinoView:
                 items.append(
                     ft.Row(
                         controls=[
-                            ft.Text("Similaridade da Letra:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.BLUE_200),
-                            ft.Text(f"{self.comparativo.similaridade_pct:.1f}%", size=13),
+                            ft.Text(
+                                "Similaridade da Letra:",
+                                weight=ft.FontWeight.BOLD,
+                                size=12,
+                                color=ft.Colors.BLUE_200,
+                            ),
+                            ft.Text(
+                                f"{self.comparativo.similaridade_pct:.1f}%", size=13
+                            ),
                         ],
                         spacing=6,
                     )
@@ -1444,8 +1565,15 @@ class HinoView:
                 items.append(
                     ft.Row(
                         controls=[
-                            ft.Text("Resumo de Alterações:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.BLUE_200),
-                            ft.Text(self.comparativo.resumo_alteracoes, size=13, italic=True),
+                            ft.Text(
+                                "Resumo:",
+                                weight=ft.FontWeight.BOLD,
+                                size=12,
+                                color=ft.Colors.BLUE_200,
+                            ),
+                            ft.Text(
+                                self.comparativo.resumo_alteracoes, size=13, italic=True
+                            ),
                         ],
                         spacing=6,
                     )
@@ -1456,13 +1584,18 @@ class HinoView:
 
         return ft.Column(
             controls=[
-                ft.Text("Comparativo com Hinário Antigo:", weight=ft.FontWeight.BOLD, size=12, color=ft.Colors.BLUE_200),
+                ft.Text(
+                    "Comparativo com Hinário Antigo:",
+                    weight=ft.FontWeight.BOLD,
+                    size=12,
+                    color=ft.Colors.BLUE_200,
+                ),
                 *items,
             ],
             spacing=4,
         )
 
-    def _show_info_modal(self, page: ft.Page, hino: Optional[Hino] = None) -> None:
+    def _show_info_modal(self, page: ft.Page, hino: Hino | None = None) -> None:
         target_hino = hino or self.current_hino
         if not target_hino:
             return
@@ -1471,7 +1604,9 @@ class HinoView:
             ft.Row(
                 controls=[
                     ft.Text("Informações do Hino", weight=ft.FontWeight.BOLD, size=18),
-                    ft.IconButton(ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()),
+                    ft.IconButton(
+                        ft.Icons.CLOSE, on_click=lambda ev: page.pop_dialog()
+                    ),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             ),
@@ -1481,7 +1616,7 @@ class HinoView:
         info_items.extend(self._build_info_metadata_items(target_hino))
 
         for section in (
-            self._build_comparativo_info_control(page, target_hino),
+            self._build_comparativo_info_control(),
             self._build_texto_base_info_control(page, target_hino),
             self._build_category_info_control(page, target_hino),
             self._build_themes_info_control(page),
@@ -1491,7 +1626,11 @@ class HinoView:
                 info_items.append(section)
 
         if len(info_items) == 2:
-            info_items.append(ft.Text("Nenhum metadado adicional cadastrado para este hino.", italic=True))
+            info_items.append(
+                ft.Text(
+                    "Nenhum metadado adicional cadastrado para este hino.", italic=True
+                )
+            )
 
         bs = ft.BottomSheet(
             content=ft.Container(

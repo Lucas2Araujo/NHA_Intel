@@ -1,10 +1,12 @@
 import os
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import patch, MagicMock
+
 from src.services.media_service import (
-    MediaService,
-    QUALITY_SD,
     QUALITY_HD,
+    QUALITY_SD,
+    MediaService,
     path_to_file_uri,
 )
 
@@ -201,4 +203,3 @@ async def test_video_file_uri(tmp_path):
     assert uri is not None
     assert uri.startswith("file://")
     assert "hino_1.mp4" in uri
-

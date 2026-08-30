@@ -1,15 +1,17 @@
-import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import flet as ft
-from src.repositories.hino_repository import HinoRepository
-from src.repositories.favorito_repository import FavoritoRepository
-from src.repositories.historico_repository import HistoricoRepository
+import pytest
+
 from src.models.hino import Hino
+from src.repositories.favorito_repository import FavoritoRepository
+from src.repositories.hino_repository import HinoRepository
+from src.repositories.historico_repository import HistoricoRepository
 from src.views.hino_view import (
-    HinoView,
     DEFAULT_FONT_FAMILY,
-    TIMES_NEW_ROMAN_FONT_FAMILY,
     OPENDYSLEXIC_FONT_FAMILY,
+    TIMES_NEW_ROMAN_FONT_FAMILY,
+    HinoView,
 )
 
 
@@ -117,17 +119,24 @@ async def test_hino_view_open_youtube_link(in_memory_db):
 
     hino = await hino_repo.get_by_id(1)
     assert hino is not None
-    hino_with_video = dataclasses.replace(hino, link_video="https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    hino_with_video = dataclasses.replace(
+        hino, link_video="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    )
 
     with patch("flet.UrlLauncher.launch_url", new_callable=AsyncMock) as mock_launch:
         await view_obj._open_youtube_link(mock_page, hino_with_video)
-        mock_launch.assert_called_once_with("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+        mock_launch.assert_called_once_with(
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        )
 
     # Test empty link_video
     hino_empty = dataclasses.replace(hino, link_video="")
     await view_obj._open_youtube_link(mock_page, hino_empty)
     assert view_obj._snackbar is not None
-    assert "indisponível" in view_obj._snackbar.content.value or "não possui link" in view_obj._snackbar.content.value
+    assert (
+        "indisponível" in view_obj._snackbar.content.value
+        or "não possui link" in view_obj._snackbar.content.value
+    )
 
 
 @pytest.mark.asyncio
@@ -147,7 +156,7 @@ async def test_hino_view_abrir_modal_leitura_biblica_success(in_memory_db):
             Versiculo(
                 livro="João",
                 capitulo=3,
-                versiculo=16,
+                numero=16,
                 texto="Porque Deus amou ao mundo de tal maneira...",
             )
         ],
@@ -167,17 +176,22 @@ async def test_hino_view_abrir_modal_leitura_biblica_success(in_memory_db):
     hino = await hino_repo.get_by_id(1)
 
     # Teste 1: Aberto direto da tela do hino (from_info_modal=False)
-    await view_obj._abrir_modal_leitura_biblica(mock_page, "João 3:16", from_info_modal=False, hino=hino)
+    await view_obj._abrir_modal_leitura_biblica(
+        mock_page, "João 3:16", from_info_modal=False, hino=hino
+    )
 
     mock_page.show_dialog.assert_called_once()
     dialog_arg = mock_page.show_dialog.call_args[0][0]
     assert isinstance(dialog_arg, ft.BottomSheet)
     mock_biblia_repo.buscar_passagem.assert_called_once_with("João 3:16")
-    
+
     # Verifica que não há botão de fechar no topo (cabeçalho)
     header_row = dialog_arg.content.content.controls[0]
-    assert not any(isinstance(ctrl, ft.IconButton) and ctrl.icon == ft.Icons.CLOSE for ctrl in header_row.controls)
-    
+    assert not any(
+        isinstance(ctrl, ft.IconButton) and ctrl.icon == ft.Icons.CLOSE
+        for ctrl in header_row.controls
+    )
+
     # Verifica que o botão do rodapé é "Fechar"
     footer_row = dialog_arg.content.content.controls[-1]
     assert isinstance(footer_row.controls[0], ft.TextButton)
@@ -186,12 +200,14 @@ async def test_hino_view_abrir_modal_leitura_biblica_success(in_memory_db):
     # Teste 2: Aberto a partir do modal de informações (from_info_modal=True)
     mock_page.show_dialog.reset_mock()
     with patch.object(view_obj, "_show_info_modal") as mock_show_info:
-        await view_obj._abrir_modal_leitura_biblica(mock_page, "João 3:16", from_info_modal=True, hino=hino)
+        await view_obj._abrir_modal_leitura_biblica(
+            mock_page, "João 3:16", from_info_modal=True, hino=hino
+        )
         dialog_arg_info = mock_page.show_dialog.call_args[0][0]
         footer_btn = dialog_arg_info.content.content.controls[-1].controls[0]
         assert footer_btn.content == "Voltar para Informações"
         assert footer_btn.icon == ft.Icons.ARROW_BACK
-        
+
         # Dispara clique no botão voltar
         footer_btn.on_click(MagicMock())
         mock_page.pop_dialog.assert_called()
@@ -240,7 +256,9 @@ async def test_hino_view_info_modal_biblia_chips(in_memory_db):
     mock_page.show_dialog.assert_called()
 
     # Testa _on_biblia_click passando from_info_modal=True
-    view_obj._on_biblia_click(mock_page, "Apocalipse 4:8", from_info_modal=True, hino=hino)
+    view_obj._on_biblia_click(
+        mock_page, "Apocalipse 4:8", from_info_modal=True, hino=hino
+    )
     mock_page.pop_dialog.assert_called_once()
     mock_page.run_task.assert_called_once_with(
         view_obj._abrir_modal_leitura_biblica, mock_page, "Apocalipse 4:8", True, hino
@@ -274,6 +292,7 @@ async def test_hino_view_nav_buttons_push_route(in_memory_db):
 @pytest.mark.asyncio
 async def test_hino_view_comparativo_identico(in_memory_db):
     import json
+
     from src.models.comparativo import HinoComparativo
 
     hino_repo = HinoRepository(in_memory_db)
@@ -290,12 +309,19 @@ async def test_hino_view_comparativo_identico(in_memory_db):
         status_comparacao="IDENTICO",
         similaridade_pct=100.0,
         resumo_alteracoes="Letra idêntica",
-        diff_json=json.dumps({"similaridade_pct": 100.0, "estatisticas": {}, "blocos": []}),
+        diff_json=json.dumps(
+            {"similaridade_pct": 100.0, "estatisticas": {}, "blocos": []}
+        ),
     )
     mock_comp_repo.get_by_numero_novo = AsyncMock(return_value=comp_identico)
 
     mock_antigo_repo = MagicMock()
-    mock_antigo_hino = Hino(id=18, numero="18", titulo="Santo! Santo! Santo!", letra="Letra antiga do hino 18.")
+    mock_antigo_hino = Hino(
+        id=18,
+        numero="18",
+        titulo="Santo! Santo! Santo!",
+        letra="Letra antiga do hino 18.",
+    )
     mock_antigo_repo.get_by_numero = AsyncMock(return_value=mock_antigo_hino)
 
     view_obj = HinoView(
@@ -331,6 +357,7 @@ async def test_hino_view_comparativo_identico(in_memory_db):
 @pytest.mark.asyncio
 async def test_hino_view_comparativo_modificado_and_diff_rendering(in_memory_db):
     import json
+
     from src.models.comparativo import HinoComparativo
 
     hino_repo = HinoRepository(in_memory_db)
@@ -347,7 +374,11 @@ async def test_hino_view_comparativo_modificado_and_diff_rendering(in_memory_db)
         },
         "blocos": [
             {"tipo": "igual", "texto": "Linha inalterada"},
-            {"tipo": "modificado", "antigo": ["Linha Antiga 1"], "novo": ["Linha Nova 1"]},
+            {
+                "tipo": "modificado",
+                "antigo": ["Linha Antiga 1"],
+                "novo": ["Linha Nova 1"],
+            },
             {"tipo": "adicionado", "texto": "Linha Nova Adicionada"},
             {"tipo": "removido", "texto": "Linha Velha Removida"},
         ],

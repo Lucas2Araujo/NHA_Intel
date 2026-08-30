@@ -1,9 +1,7 @@
-import os
-import shutil
 import asyncio
 import urllib.parse
 from pathlib import Path
-from typing import Dict, List, Optional
+
 import flet as ft
 
 # Registrar plugins do Flet 0.23+ globalmente na raiz
@@ -13,20 +11,20 @@ except ImportError:
     pass
 
 from src.database.connection import DatabaseConnection
-from src.repositories.hino_repository import HinoRepository
-from src.repositories.favorito_repository import FavoritoRepository
-from src.repositories.historico_repository import HistoricoRepository
-from src.repositories.culto_repository import CultoRepository
 from src.repositories.biblia_repository import BibliaRepository
 from src.repositories.comparativo_repository import ComparativoRepository
-from src.services.media_service import MediaService
+from src.repositories.culto_repository import CultoRepository
+from src.repositories.favorito_repository import FavoritoRepository
+from src.repositories.hino_repository import HinoRepository
+from src.repositories.historico_repository import HistoricoRepository
 from src.services.agente_service import AgenteService
-from src.services.updater_service import UpdaterService
+from src.services.media_service import MediaService
 from src.services.theme_service import ThemeService
-from src.views.home_view import HomeView
-from src.views.hino_view import HinoView
+from src.services.updater_service import UpdaterService
 from src.views.agente_view import AgenteView
 from src.views.download_manager_view import DownloadManagerView
+from src.views.hino_view import HinoView
+from src.views.home_view import HomeView
 from src.views.update_dialog import show_update_dialog
 
 try:
@@ -40,7 +38,9 @@ ROUTE_DOWNLOADS = "/downloads"
 _background_tasks: set[asyncio.Task] = set()
 
 
-async def _get_hino_ids(hino_repository: HinoRepository, hino_ids_ordered: List[int]) -> List[int]:
+async def _get_hino_ids(
+    hino_repository: HinoRepository, hino_ids_ordered: list[int]
+) -> list[int]:
     """Carrega a lista ordenada de IDs de hinos (uma vez, lazy)."""
     if not hino_ids_ordered:
         all_hinos = await hino_repository.get_all()
@@ -57,9 +57,13 @@ def _set_window_icon_if_exists(page: ft.Page, asset_icon: Path) -> None:
             pass
 
 
-def _setup_assets_and_theme(page: ft.Page, theme_service: Optional[ThemeService] = None) -> None:
+def _setup_assets_and_theme(
+    page: ft.Page, theme_service: ThemeService | None = None
+) -> None:
     """Configura título, ícones, fontes e tema da aplicação."""
-    page.title = f"Hinário Inteligente v{APP_VERSION}"
+    is_web = getattr(page, "web", False)
+    suffix = " (Web)" if is_web else ""
+    page.title = f"Hinário Inteligente v{APP_VERSION}{suffix}"
 
     root_dir = Path(__file__).resolve().parent
     asset_icon = root_dir / "assets" / "icon.ico"
@@ -84,7 +88,7 @@ def _setup_assets_and_theme(page: ft.Page, theme_service: Optional[ThemeService]
         )
 
 
-def _build_loading_view(progress_val: Optional[float] = None) -> ft.View:
+def _build_loading_view(progress_val: float | None = None) -> ft.View:
     """
     Constrói a tela de loading/splash minimalista e adaptativa.
     Exibe o ícone, título e uma barra de progresso suave completando-se da esquerda para a direita.
@@ -157,9 +161,9 @@ async def _render_home_route(
     page: ft.Page,
     route_base: str,
     initial_search: str,
-    view_cache: Dict[str, ft.View],
+    view_cache: dict[str, ft.View],
     home_view_instance: HomeView,
-    target_views: List[ft.View],
+    target_views: list[ft.View],
 ) -> None:
     """Renderiza a rota principal (Home)."""
     coming_from_hino = route_base and not route_base.startswith("/hino/")
@@ -172,9 +176,9 @@ async def _render_home_route(
 
 def _render_agente_route(
     page: ft.Page,
-    view_cache: Dict[str, ft.View],
+    view_cache: dict[str, ft.View],
     agente_view_instance: AgenteView,
-    target_views: List[ft.View],
+    target_views: list[ft.View],
 ) -> None:
     """Renderiza a rota do Agente Organizador (/agente)."""
     if page.route == ROUTE_AGENTE:
@@ -185,9 +189,9 @@ def _render_agente_route(
 
 def _render_downloads_route(
     page: ft.Page,
-    view_cache: Dict[str, ft.View],
+    view_cache: dict[str, ft.View],
     download_manager_instance: DownloadManagerView,
-    target_views: List[ft.View],
+    target_views: list[ft.View],
 ) -> None:
     """Renderiza a rota do Gerenciador de Downloads (/downloads)."""
     if page.route == ROUTE_DOWNLOADS:
@@ -203,10 +207,10 @@ async def _render_hino_route(
     historico_repository: HistoricoRepository,
     media_service: MediaService,
     biblia_repository: BibliaRepository,
-    hino_ids_ordered: List[int],
-    target_views: List[ft.View],
-    comparativo_repository: Optional[ComparativoRepository] = None,
-    antigo_repository: Optional[HinoRepository] = None,
+    hino_ids_ordered: list[int],
+    target_views: list[ft.View],
+    comparativo_repository: ComparativoRepository | None = None,
+    antigo_repository: HinoRepository | None = None,
 ) -> None:
     """Renderiza a rota detalhada do hino (/hino/{id})."""
     if not (page.route and page.route.startswith("/hino/")):
@@ -236,6 +240,8 @@ async def _render_hino_route(
 async def _check_updates_background(page: ft.Page, updater_service: UpdaterService):
     """Verifica atualizações em segundo plano sem bloquear a inicialização do app."""
     try:
+        if getattr(page, "web", False):
+            return
         # Aguarda a renderização inicial da UI
         await asyncio.sleep(1.5)
         update_info = await updater_service.check_for_updates()
@@ -255,7 +261,9 @@ async def main(page: ft.Page):
     """
     db_connection = DatabaseConnection(db_path="hinario.db")
     biblia_connection = DatabaseConnection(db_path="ARA.sqlite", read_only=True)
-    comparativo_connection = DatabaseConnection(db_path="hinario_comparativo.db", read_only=True)
+    comparativo_connection = DatabaseConnection(
+        db_path="hinario_comparativo.db", read_only=True
+    )
     antigo_connection = DatabaseConnection(db_path="hinario_antigo.db", read_only=True)
 
     theme_service = ThemeService(db_connection)
@@ -282,7 +290,7 @@ async def main(page: ft.Page):
     agente_service = AgenteService(hino_repository)
     updater_service = UpdaterService()
 
-    view_cache: Dict[str, ft.View] = {}
+    view_cache: dict[str, ft.View] = {}
 
     home_view_instance = HomeView(
         hino_repository,
@@ -293,7 +301,7 @@ async def main(page: ft.Page):
     )
     agente_view_instance = AgenteView(agente_service, culto_repository)
     download_manager_instance = DownloadManagerView(hino_repository, media_service)
-    hino_ids_ordered: List[int] = []
+    hino_ids_ordered: list[int] = []
 
     async def route_change(e=None):
         route = page.route or "/"
@@ -301,7 +309,7 @@ async def main(page: ft.Page):
         if "?" in route:
             page.route = route_base
 
-        new_views: List[ft.View] = []
+        new_views: list[ft.View] = []
 
         await _render_home_route(
             page, route_base, initial_search, view_cache, home_view_instance, new_views
@@ -332,10 +340,6 @@ async def main(page: ft.Page):
             page.route = top_view.route
             await route_change(None)
 
-    async def run_background_task(handler, *args, **kwargs):
-        return await asyncio.wrap_future(page.run_task(handler, *args, **kwargs))
-
-    setattr(page, "run_background_task", run_background_task)
     page.on_route_change = route_change
     page.on_view_pop = view_pop
 
@@ -353,4 +357,3 @@ async def main(page: ft.Page):
 
 if __name__ == "__main__":
     ft.run(main, assets_dir="assets")
-

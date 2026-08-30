@@ -1,12 +1,138 @@
 import os
-import sys
 import shutil
+import sqlite3
+import sys
 from pathlib import Path
-import aiosqlite
-from typing import Optional
+from typing import Any
 
+import aiosqlite
 
 DEFAULT_DB_NAME: str = "hinario.db"
+
+
+def _is_single_threaded_env() -> bool:
+    """Detecta se o runtime atual não suporta threads do SO (ex: Pyodide, WASM, Emscripten)."""
+    if sys.platform in ("emscripten", "wasi"):
+        return True
+    if "PYODIDE" in os.environ or "PYODIDE_ROOT" in os.environ:
+        return True
+    return False
+
+
+class _AsyncSqliteCompatCursor:
+    """
+    Cursor assíncrono compatível baseado em sqlite3 síncrono.
+    Permite uso tanto via 'await conn.execute(...)' quanto via 'async with conn.execute(...) as cur:'
+    sem necessidade de threads no sistema operacional (WebAssembly / Pyodide).
+    """
+
+    def __init__(self, raw_cursor: sqlite3.Cursor):
+        self._raw = raw_cursor
+
+    def __await__(self):
+        async def _resolve():
+            return self
+
+        return _resolve().__await__()
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+
+    async def fetchone(self) -> Any | None:
+        return self._raw.fetchone()
+
+    async def fetchall(self) -> list[Any]:
+        return self._raw.fetchall()
+
+    async def fetchmany(self, size: int | None = None) -> list[Any]:
+        if size is not None:
+            return self._raw.fetchmany(size)
+        return self._raw.fetchmany()
+
+    @property
+    def lastrowid(self) -> int | None:
+        return self._raw.lastrowid
+
+    @property
+    def rowcount(self) -> int:
+        return self._raw.rowcount
+
+    @property
+    def description(self) -> Any:
+        return self._raw.description
+
+    async def close(self) -> None:
+        try:
+            self._raw.close()
+        except Exception:
+            pass
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        row = self._raw.fetchone()
+        if row is None:
+            raise StopAsyncIteration
+        return row
+
+
+class _AsyncSqliteCompatConnection:
+    """
+    Conexão assíncrona compatível baseada em sqlite3 síncrono.
+    Provê a mesma interface do aiosqlite.Connection para ambientes sem suporte a threads.
+    """
+
+    def __init__(self, raw_conn: sqlite3.Connection):
+        self._raw = raw_conn
+
+    @property
+    def row_factory(self) -> Any:
+        return self._raw.row_factory
+
+    @row_factory.setter
+    def row_factory(self, val: Any) -> None:
+        self._raw.row_factory = val
+
+    @property
+    def total_changes(self) -> int:
+        return self._raw.total_changes
+
+    def execute(self, sql: str, parameters: Any = ()) -> _AsyncSqliteCompatCursor:
+        if parameters:
+            raw_cur = self._raw.execute(sql, parameters)
+        else:
+            raw_cur = self._raw.execute(sql)
+        return _AsyncSqliteCompatCursor(raw_cur)
+
+    def executemany(self, sql: str, seq_of_parameters: Any) -> _AsyncSqliteCompatCursor:
+        raw_cur = self._raw.executemany(sql, seq_of_parameters)
+        return _AsyncSqliteCompatCursor(raw_cur)
+
+    def executescript(self, sql_script: str) -> _AsyncSqliteCompatCursor:
+        raw_cur = self._raw.executescript(sql_script)
+        return _AsyncSqliteCompatCursor(raw_cur)
+
+    async def commit(self) -> None:
+        self._raw.commit()
+
+    async def rollback(self) -> None:
+        self._raw.rollback()
+
+    async def close(self) -> None:
+        try:
+            self._raw.close()
+        except Exception:
+            pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.close()
 
 
 class DatabaseConnection:
@@ -15,13 +141,13 @@ class DatabaseConnection:
     Suporta conexão física em arquivo ou banco em memória (:memory:).
     """
 
-    def __init__(self, db_path: Optional[str] = DEFAULT_DB_NAME, read_only: bool = False):
+    def __init__(self, db_path: str | None = DEFAULT_DB_NAME, read_only: bool = False):
         self.db_path = self._resolve_db_path(db_path or DEFAULT_DB_NAME)
         self.read_only = read_only
-        self._connection: Optional[aiosqlite.Connection] = None
+        self._connection: aiosqlite.Connection | None = None
 
     @staticmethod
-    def _resolve_env_db_path() -> Optional[str]:
+    def _resolve_env_db_path() -> str | None:
         """Verifica se há caminho configurado via variável de ambiente."""
         env_db = os.environ.get("HINARIO_DB_PATH") or os.environ.get("DB_PATH")
         if env_db and os.path.exists(env_db):
@@ -67,7 +193,7 @@ class DatabaseConnection:
         """Coleta caminhos candidatos baseados em sys e diretório de trabalho atual."""
         candidates: list[Path] = []
         if hasattr(sys, "_MEIPASS"):
-            candidates.append(Path(getattr(sys, "_MEIPASS")) / filename)
+            candidates.append(Path(sys._MEIPASS) / filename)
 
         if sys.argv and sys.argv[0]:
             try:
@@ -104,7 +230,7 @@ class DatabaseConnection:
         return candidates
 
     @staticmethod
-    def _find_seed_path(candidates: list[Path]) -> Optional[Path]:
+    def _find_seed_path(candidates: list[Path]) -> Path | None:
         """Retorna o primeiro arquivo seed candidato existente em disco."""
         for cand in candidates:
             try:
@@ -139,7 +265,7 @@ class DatabaseConnection:
             return False
 
     @staticmethod
-    def _get_platform_user_dir() -> Optional[Path]:
+    def _get_platform_user_dir() -> Path | None:
         """Retorna o diretório de dados do usuário por plataforma desktop/OS."""
         import tempfile
 
@@ -154,7 +280,9 @@ class DatabaseConnection:
                 if str(home) == "/data" or not os.access(home, os.W_OK):
                     base = Path(tempfile.gettempdir())
                 else:
-                    base = Path(os.environ.get("XDG_DATA_HOME", home / ".local" / "share"))
+                    base = Path(
+                        os.environ.get("XDG_DATA_HOME", home / ".local" / "share")
+                    )
                 p = base / "hinario_app"
 
             p.mkdir(parents=True, exist_ok=True)
@@ -235,27 +363,93 @@ class DatabaseConnection:
         user_dir = DatabaseConnection._get_user_data_dir()
         return str(user_dir / filename)
 
-    async def get_connection(self) -> aiosqlite.Connection:
+    def _create_compat_connection(self) -> _AsyncSqliteCompatConnection:
+        """Cria uma conexão assíncrona compatível via sqlite3 nativo sem criar threads de SO."""
+        if self.read_only:
+            try:
+                raw_conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+            except Exception:
+                raw_conn = sqlite3.connect(self.db_path)
+        else:
+            raw_conn = sqlite3.connect(self.db_path)
+        raw_conn.row_factory = sqlite3.Row
+        return _AsyncSqliteCompatConnection(raw_conn)
+
+    async def get_connection(
+        self,
+    ) -> aiosqlite.Connection | _AsyncSqliteCompatConnection:
         """
         Retorna/abre uma conexão assíncrona ativa com o SQLite.
-        Configura o row_factory para aiosqlite.Row para acesso amigável às colunas.
+        Configura o row_factory para acesso amigável às colunas.
+        Suporta aiosqlite (Desktop/Android) e fallback transparente para sqlite3 puro (WebAssembly/Pyodide).
         Na primeira conexão, executa otimizações (índices, FTS5, limpeza).
         """
         if self._connection is None:
-            self._connection = await aiosqlite.connect(self.db_path)
-            self._connection.row_factory = aiosqlite.Row
+            if _is_single_threaded_env():
+                self._connection = self._create_compat_connection()
+            else:
+                try:
+                    self._connection = await aiosqlite.connect(self.db_path)
+                    self._connection.row_factory = aiosqlite.Row
+                except (RuntimeError, NotImplementedError, Exception):
+                    # Se falhar ao iniciar thread (ex: Pyodide no navegador)
+                    self._connection = self._create_compat_connection()
+
+            if (
+                not hasattr(self._connection, "row_factory")
+                or self._connection.row_factory is None
+            ):
+                self._connection.row_factory = sqlite3.Row
+
             await self._initialize_db(self._connection)
         return self._connection
+
+    @staticmethod
+    async def _apply_pragmas(
+        conn: Any, db_path: str = "", read_only: bool = False
+    ) -> None:
+        """
+        Aplica PRAGMAs de alta velocidade adaptativos à arquitetura (ARMv7 32-bit vs 64-bit).
+        - 32-bit (ARMv7 / x86): mmap_size limitado a 16MB e cache_size a 4MB (seguro contra fragmentação de memória virtual).
+        - 64-bit (ARM64 / x86_64): mmap_size de 64MB e cache_size de 16MB.
+        - synchronous = NORMAL e journal_mode = WAL aceleram I/O em memórias flash e eMMC lentos.
+        """
+        is_32bit = sys.maxsize <= 2**32
+        mmap_bytes = 16 * 1024 * 1024 if is_32bit else 64 * 1024 * 1024
+        cache_kib = -4000 if is_32bit else -16000
+
+        pragmas = [
+            f"PRAGMA mmap_size = {mmap_bytes};",
+            f"PRAGMA cache_size = {cache_kib};",
+            "PRAGMA temp_store = MEMORY;",
+            "PRAGMA synchronous = NORMAL;",
+        ]
+        if (
+            not read_only
+            and db_path
+            and db_path != ":memory:"
+            and not db_path.startswith("file:")
+        ):
+            pragmas.insert(0, "PRAGMA journal_mode = WAL;")
+
+        for pragma in pragmas:
+            try:
+                await conn.execute(pragma)
+            except Exception:
+                pass
 
     @staticmethod
     async def _initialize_db(conn: aiosqlite.Connection) -> None:
         """
         Executa otimizações e manutenção no banco na primeira conexão:
-        1. Cria índices de performance (IF NOT EXISTS)
-        2. Cria tabela FTS5 para busca full-text
-        3. Cria tabela de preferências do usuário
-        4. Limpa histórico antigo (> 90 dias)
+        1. Aplica PRAGMAs de alta velocidade
+        2. Cria índices de performance (IF NOT EXISTS)
+        3. Cria tabela FTS5 para busca full-text
+        4. Cria tabela de preferências do usuário
+        5. Limpa histórico antigo (> 90 dias)
         """
+        await DatabaseConnection._apply_pragmas(conn)
+
         # Índices de performance
         index_statements = [
             "CREATE INDEX IF NOT EXISTS idx_historico_hino_data ON historico(hino_id, data_acesso DESC);",
@@ -272,30 +466,11 @@ class DatabaseConnection:
             except Exception:
                 pass
 
-        # Sincronização automática entre metadados e hino (caso metadados seja atualizado externamente)
-        try:
-            await conn.execute("""
-                UPDATE hino
-                SET texto_base = (
-                    SELECT TRIM(m.texto_base)
-                    FROM metadados m
-                    WHERE m.hino_numero = hino.numero
-                )
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM metadados m
-                    WHERE m.hino_numero = hino.numero
-                      AND m.texto_base IS NOT NULL
-                      AND TRIM(m.texto_base) != ''
-                      AND (hino.texto_base IS NULL OR TRIM(hino.texto_base) = '')
-                );
-            """)
-        except Exception:
-            pass
-
         # Tabela FTS5 para busca full-text (letra, categoria, subcategoria, texto_base, autores, temas, textos)
         try:
-            async with conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='hino_fts';") as cursor:
+            async with conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='hino_fts';"
+            ) as cursor:
                 table_info = await cursor.fetchone()
                 if table_info and "temas" not in (table_info[0] or "").lower():
                     await conn.execute("DROP TABLE IF EXISTS hino_fts;")

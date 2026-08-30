@@ -1,5 +1,5 @@
 import pytest_asyncio
-import aiosqlite
+
 from src.database.connection import DatabaseConnection
 
 
@@ -104,9 +104,33 @@ async def in_memory_db():
         INSERT INTO hino (id, numero, titulo, letra, categoria, subcategoria, texto_base) VALUES (?, ?, ?, ?, ?, ?, ?);
     """,
         [
-            (1, "1", "Santo, Santo, Santo!", "Santo, Santo, Santo! Deus Omnipotente!", "Adoração", "Louvor", "Apocalipse 4:8"),
-            (2, "2", "Ó Adorai o Senhor", "Ó adorai o Senhor na beleza da sua santidade.", "Adoração", "Louvor", "Salmo 29:2"),
-            (3, "3", "O Deus Eterno Reina", "O Deus eterno reina, revestiu-se de majestade.", "Adoração", "Majestade", "Salmo 93:1"),
+            (
+                1,
+                "1",
+                "Santo, Santo, Santo!",
+                "Santo, Santo, Santo! Deus Omnipotente!",
+                "Adoração",
+                "Louvor",
+                "Apocalipse 4:8",
+            ),
+            (
+                2,
+                "2",
+                "Ó Adorai o Senhor",
+                "Ó adorai o Senhor na beleza da sua santidade.",
+                "Adoração",
+                "Louvor",
+                "Salmo 29:2",
+            ),
+            (
+                3,
+                "3",
+                "O Deus Eterno Reina",
+                "O Deus eterno reina, revestiu-se de majestade.",
+                "Adoração",
+                "Majestade",
+                "Salmo 93:1",
+            ),
         ],
     )
 
@@ -124,9 +148,11 @@ async def in_memory_db():
     await conn.executemany(
         "INSERT INTO hino_tema (hino_id, tema_id) VALUES (?, ?);",
         [
-            (1, 1), (1, 2),  # Hino 1 -> Adoração, Santidade
-            (2, 1),           # Hino 2 -> Adoração
-            (3, 1), (3, 3),  # Hino 3 -> Adoração, Majestade
+            (1, 1),
+            (1, 2),  # Hino 1 -> Adoração, Santidade
+            (2, 1),  # Hino 2 -> Adoração
+            (3, 1),
+            (3, 3),  # Hino 3 -> Adoração, Majestade
         ],
     )
 

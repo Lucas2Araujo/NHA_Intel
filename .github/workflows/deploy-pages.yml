@@ -25,24 +25,24 @@ jobs:
 
     steps:
       - name: Checkout Repository Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
       - name: Set up Flutter SDK
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@f2c4f6686ca8e8d6e6d0f28410eeef506ed66aff # v2.18.0
         with:
           flutter-version: '3.44.8'
           cache: true
 
       - name: Set up Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@42375524e23c412d93fb67b49958b491fce71c38 # v5.4.0
         with:
           python-version: "3.11"
           cache: "pip"
 
       - name: Install Python Dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python -m pip install --upgrade --only-binary :all: pip
+          pip install --only-binary :all: -r requirements.txt
 
       - name: Clean Temporary Asset Files
         run: |
@@ -53,11 +53,12 @@ jobs:
           flet build web --base-url "/${{ github.event.repository.name }}/" -v
 
       - name: Upload GitHub Pages Artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: build/web
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5
+
 

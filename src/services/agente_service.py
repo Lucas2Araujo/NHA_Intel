@@ -1,7 +1,8 @@
 import re
-from typing import List, Dict, Any, Optional
-from src.repositories.hino_repository import HinoRepository
+from typing import Any
+
 from src.models.hino import Hino
+from src.repositories.hino_repository import HinoRepository
 
 NOMES_BLOCOS_LITURGICOS = [
     "1. Abertura & Adoração",
@@ -27,37 +28,43 @@ class AgenteService:
     def __init__(self, hino_repository: HinoRepository):
         self.hino_repository = hino_repository
         # Cache in-memory de hinos completos para scoring (carregado lazy)
-        self._hinos_completos_cache: Optional[Dict[int, Hino]] = None
+        self._hinos_completos_cache: dict[int, Hino] | None = None
 
-    async def _get_hinos_completos(self) -> Dict[int, Hino]:
-        """Carrega e cacheia todos os hinos com campos completos para scoring em uma única consulta."""
+    async def _fetch_hinos_completos(self) -> dict[int, Hino]:
+        """Busca todos os hinos com dados completos no repositório."""
+        if hasattr(self.hino_repository, "get_all_complete"):
+            all_hinos = await self.hino_repository.get_all_complete()
+            return {h.id: h for h in all_hinos if h.id is not None}
+
+        # Fallback para repositórios sem get_all_complete
+        all_hinos = await self.hino_repository.get_all()
+        result: dict[int, Hino] = {}
+        for h in all_hinos:
+            if h.id is None:
+                continue
+            hino = await self.hino_repository.get_by_id(h.id)
+            if hino:
+                result[h.id] = hino
+        return result
+
+    async def _get_hinos_completos(self) -> dict[int, Hino]:
+        """Carrega e cacheia todos os hinos com campos completos para scoring."""
         if self._hinos_completos_cache is None:
-            if hasattr(self.hino_repository, "get_all_complete"):
-                all_hinos = await self.hino_repository.get_all_complete()
-                self._hinos_completos_cache = {h.id: h for h in all_hinos if h.id is not None}
-            else:
-                all_hinos = await self.hino_repository.get_all()
-                self._hinos_completos_cache = {}
-                for h in all_hinos:
-                    if h.id is not None:
-                        hino_completo = await self.hino_repository.get_by_id(h.id)
-                        if hino_completo:
-                            self._hinos_completos_cache[h.id] = hino_completo
+            self._hinos_completos_cache = await self._fetch_hinos_completos()
         return self._hinos_completos_cache
 
-
-    async def _get_temas_por_hino(self, hino_id: int) -> List[str]:
+    async def _get_temas_por_hino(self, hino_id: int) -> list[str]:
         """Retorna os temas associados a um hino via tabela de junção."""
         metadados = await self.hino_repository.get_metadados_relacionados(hino_id)
         return metadados.get("temas", [])
 
-    def _extrair_palavras_chave(self, prompt: str) -> List[str]:
+    def _extrair_palavras_chave(self, prompt: str) -> list[str]:
         """Extrai palavras-chave relevantes (>2 caracteres) do prompt."""
         prompt_clean = prompt.strip().lower()
         palavras = re.findall(r"\w+", prompt_clean)
         return [p for p in palavras if len(p) > 2]
 
-    async def _gerar_playlist_padrao(self, num_hinos: int) -> Dict[str, Any]:
+    async def _gerar_playlist_padrao(self, num_hinos: int) -> dict[str, Any]:
         """Gera uma playlist padrão de adoração quando o prompt estiver vazio."""
         hinos = await self.hino_repository.search("Santo")
         hinos_selecionados = (
@@ -67,77 +74,84 @@ class AgenteService:
         )
         return self._estruturar_blocos("Culto Geral", hinos_selecionados[:num_hinos])
 
+    def _add_candidate_ids(
+        self,
+        candidatos: list[int],
+        vistos: set[int],
+        hinos: list[Hino],
+        limite: int | None = None,
+    ) -> None:
+        """Adiciona IDs de hinos não duplicados à lista de candidatos."""
+        for h in hinos:
+            if h.id is not None and h.id not in vistos:
+                vistos.add(h.id)
+                candidatos.append(h.id)
+                if limite and len(candidatos) >= limite:
+                    break
+
     async def _buscar_candidatos_ids(
-        self, palavras_relevantes: List[str], num_hinos: int
-    ) -> List[int]:
+        self, palavras_relevantes: list[str], num_hinos: int
+    ) -> list[int]:
         """Busca IDs de hinos candidatos no repositório com base nas palavras-chave."""
-        candidatos_ids: List[int] = []
+        candidatos_ids: list[int] = []
+        vistos: set[int] = set()
+
         for kw in palavras_relevantes:
             resultados = await self.hino_repository.search(kw)
-            for h in resultados:
-                if h.id is not None and h.id not in candidatos_ids:
-                    candidatos_ids.append(h.id)
+            self._add_candidate_ids(candidatos_ids, vistos, resultados)
 
         # Complementa com hinos adicionais se houver poucos candidatos
         if len(candidatos_ids) < num_hinos:
             todos = await self.hino_repository.get_all()
-            for h in todos:
-                if h.id is not None and h.id not in candidatos_ids:
-                    candidatos_ids.append(h.id)
-                if len(candidatos_ids) >= num_hinos * 3:
-                    break
+            self._add_candidate_ids(candidatos_ids, vistos, todos, limite=num_hinos * 3)
 
         return candidatos_ids
 
     async def _carregar_temas_candidatos(
-        self, candidatos_ids: List[int]
-    ) -> Dict[int, List[str]]:
+        self, candidatos_ids: list[int]
+    ) -> dict[int, list[str]]:
         """Carrega os temas dos hinos candidatos."""
-        temas_por_hino: Dict[int, List[str]] = {}
+        temas_por_hino: dict[int, list[str]] = {}
         for hino_id in candidatos_ids[:30]:
             temas_por_hino[hino_id] = await self._get_temas_por_hino(hino_id)
         return temas_por_hino
 
     def _calcular_score_hino(
         self,
-        hino: Optional[Hino],
-        temas_hino: List[str],
-        palavras_relevantes: List[str],
+        hino: Hino | None,
+        temas_hino: list[str],
+        palavras_relevantes: list[str],
     ) -> int:
         """Calcula a pontuação semântica de relevância de um hino."""
         if not hino:
             return 0
 
-        score = 0
-        titulo_lower = hino.titulo.lower()
-        categoria_lower = (hino.categoria or "").lower()
-        subcategoria_lower = (hino.subcategoria or "").lower()
-        texto_base_lower = (hino.texto_base or "").lower()
-        temas_texto = " ".join(t.lower() for t in temas_hino)
+        campos = [
+            (hino.titulo.lower(), 5),
+            ((hino.categoria or "").lower(), 3),
+            ((hino.subcategoria or "").lower(), 3),
+            ((hino.texto_base or "").lower(), 2),
+            (" ".join(t.lower() for t in temas_hino), 4),
+        ]
 
+        score = 0
         for kw in palavras_relevantes:
-            if kw in titulo_lower:
-                score += 5  # Match no título = alta relevância
-            if kw in categoria_lower:
-                score += 3  # Match na categoria
-            if kw in subcategoria_lower:
-                score += 3  # Match na subcategoria
-            if kw in texto_base_lower:
-                score += 2  # Match no texto base
-            if kw in temas_texto:
-                score += 4  # Match nos temas = muito relevante
+            for texto_campo, peso in campos:
+                if kw in texto_campo:
+                    score += peso
 
         return score
 
     def _selecionar_melhores_candidatos(
         self,
-        candidatos_ids: List[int],
-        hinos_completos: Dict[int, Hino],
-        temas_por_hino: Dict[int, List[str]],
-        palavras_relevantes: List[str],
+        candidatos_ids: list[int],
+        hinos_completos: dict[int, Hino],
+        temas_por_hino: dict[int, list[str]],
+        palavras_relevantes: list[str],
         num_hinos: int,
-    ) -> List[Hino]:
+    ) -> list[Hino]:
         """Ranqueia e retorna os N melhores hinos de acordo com o score."""
+
         def get_score(hid: int) -> int:
             return self._calcular_score_hino(
                 hinos_completos.get(hid),
@@ -157,7 +171,7 @@ class AgenteService:
 
     async def sugerir_playlist_culto(
         self, tema_prompt: str, num_hinos: int = 6
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Analisa a intenção pastoral do usuário e sugere uma lista de hinos harmoniosa
         organizada por blocos litúrgicos de um culto.
@@ -172,19 +186,23 @@ class AgenteService:
             return await self._gerar_playlist_padrao(num_hinos)
 
         palavras_relevantes = self._extrair_palavras_chave(tema_prompt)
-        candidatos_ids = await self._buscar_candidatos_ids(palavras_relevantes, num_hinos)
+        candidatos_ids = await self._buscar_candidatos_ids(
+            palavras_relevantes, num_hinos
+        )
         hinos_completos = await self._get_hinos_completos()
         temas_por_hino = await self._carregar_temas_candidatos(candidatos_ids)
 
         hinos_finais = self._selecionar_melhores_candidatos(
-            candidatos_ids, hinos_completos, temas_por_hino, palavras_relevantes, num_hinos
+            candidatos_ids,
+            hinos_completos,
+            temas_por_hino,
+            palavras_relevantes,
+            num_hinos,
         )
 
         return self._estruturar_blocos(tema_prompt.strip(), hinos_finais)
 
-    def _estruturar_blocos(
-        self, tema: str, hinos: List[Hino]
-    ) -> Dict[str, Any]:
+    def _estruturar_blocos(self, tema: str, hinos: list[Hino]) -> dict[str, Any]:
         """Estrutura a lista de hinos selecionados em blocos litúrgicos de um culto."""
         blocos = []
         for i, hino in enumerate(hinos):

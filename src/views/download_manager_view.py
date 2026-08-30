@@ -1,8 +1,10 @@
 import asyncio
+from typing import Any
+
 import flet as ft
-from typing import Optional, List, Dict, Any
+
 from src.repositories.hino_repository import HinoRepository
-from src.services.media_service import MediaService, QUALITY_SD, QUALITY_HD
+from src.services.media_service import QUALITY_HD, QUALITY_SD, MediaService
 
 
 class DownloadManagerView:
@@ -19,17 +21,21 @@ class DownloadManagerView:
     ):
         self.hino_repository = hino_repository
         self.media_service = media_service
-        self._cancel_event: Optional[asyncio.Event] = None
+        self._cancel_event: asyncio.Event | None = None
         self._is_downloading: bool = False
 
     def build(self, page: ft.Page) -> ft.View:
         """Constrói a view do gerenciador de downloads em lote."""
 
         # ── Elementos de UI ──────────────────────────────────────────
-        self.progress_bar = ft.ProgressBar(value=0, width=400, color=ft.Colors.GREEN_400)
+        self.progress_bar = ft.ProgressBar(
+            value=0, width=400, color=ft.Colors.GREEN_400
+        )
         self.progress_text = ft.Text("Pronto para baixar", size=14)
         self.counter_text = ft.Text("0 / 0", size=18, weight=ft.FontWeight.BOLD)
-        self.current_hino_text = ft.Text("", size=12, italic=True, color=ft.Colors.GREY_300)
+        self.current_hino_text = ft.Text(
+            "", size=12, italic=True, color=ft.Colors.GREY_300
+        )
         self.storage_text = ft.Text("", size=12, color=ft.Colors.GREY_400)
         self.result_text = ft.Text("", size=12, visible=False)
 
@@ -92,19 +98,27 @@ class DownloadManagerView:
         clear_section = ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text("Gerenciamento de Armazenamento", weight=ft.FontWeight.BOLD, size=14),
+                    ft.Text(
+                        "Gerenciamento de Armazenamento",
+                        weight=ft.FontWeight.BOLD,
+                        size=14,
+                    ),
                     self.storage_text,
                     ft.Row(
                         controls=[
                             ft.OutlinedButton(
                                 "Limpar Vídeos SD",
                                 icon=ft.Icons.DELETE_OUTLINE,
-                                on_click=lambda e: self._clear_downloads(page, "video_sd"),
+                                on_click=lambda e: self._clear_downloads(
+                                    page, "video_sd"
+                                ),
                             ),
                             ft.OutlinedButton(
                                 "Limpar Vídeos HD",
                                 icon=ft.Icons.DELETE_OUTLINE,
-                                on_click=lambda e: self._clear_downloads(page, "video_hd"),
+                                on_click=lambda e: self._clear_downloads(
+                                    page, "video_hd"
+                                ),
                             ),
                         ],
                         wrap=True,
@@ -218,7 +232,9 @@ class DownloadManagerView:
             media_type, media_type
         )
         # Mostra feedback via snackbar simples
-        snackbar = ft.SnackBar(content=ft.Text(f"{count} arquivo(s) de {label} removidos."))
+        snackbar = ft.SnackBar(
+            content=ft.Text(f"{count} arquivo(s) de {label} removidos.")
+        )
         page.overlay.append(snackbar)
         snackbar.open = True
         page.update()
@@ -229,7 +245,9 @@ class DownloadManagerView:
         """Inicia o download em lote de todos os hinos."""
         if self._is_downloading:
             snackbar = ft.SnackBar(
-                content=ft.Text("Já existe um download em andamento. Aguarde ou cancele.")
+                content=ft.Text(
+                    "Já existe um download em andamento. Aguarde ou cancele."
+                )
             )
             page.overlay.append(snackbar)
             snackbar.open = True
@@ -241,7 +259,7 @@ class DownloadManagerView:
 
         # Carrega lista completa de hinos
         all_hinos = await self.hino_repository.get_all()
-        hino_list: List[Dict[str, Any]] = [
+        hino_list: list[dict[str, Any]] = [
             {"id": h.id, "link_video": h.link_video, "titulo": h.titulo}
             for h in all_hinos
             if h.id is not None
@@ -257,7 +275,7 @@ class DownloadManagerView:
         self.result_text.visible = False
         page.update()
 
-        def _progress_callback(done: int, total_count: int, current_title: Optional[str]):
+        def _progress_callback(done: int, total_count: int, current_title: str | None):
             """Callback chamado pelo MediaService a cada item processado."""
             self.progress_bar.value = done / total_count if total_count > 0 else 0
             self.counter_text.value = f"{done} / {total_count}"
@@ -272,7 +290,6 @@ class DownloadManagerView:
         # Executa download em lote
         result = await self.media_service.download_library_batch(
             hino_list=hino_list,
-            media_type=media_type,
             quality=quality,
             progress_callback=_progress_callback,
             cancel_event=self._cancel_event,

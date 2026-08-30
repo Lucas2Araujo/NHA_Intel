@@ -1,6 +1,7 @@
-import pytest
 from unittest.mock import MagicMock
+
 import flet as ft
+
 from src.repositories.hino_repository import HinoRepository
 from src.services.media_service import MediaService
 from src.views.download_manager_view import DownloadManagerView

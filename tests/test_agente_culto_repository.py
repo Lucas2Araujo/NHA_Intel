@@ -1,8 +1,9 @@
 import pytest
+
+from src.database.connection import DatabaseConnection
 from src.repositories.culto_repository import CultoRepository
 from src.repositories.hino_repository import HinoRepository
 from src.services.agente_service import AgenteService
-from src.database.connection import DatabaseConnection
 
 
 @pytest.mark.asyncio
@@ -59,4 +60,3 @@ async def test_culto_repository_add_hino_a_lista(in_memory_db: DatabaseConnectio
     hinos = await repo.get_hinos_da_lista(lista_id)
     assert len(hinos) == 2
     assert hinos[1].id == 2
-

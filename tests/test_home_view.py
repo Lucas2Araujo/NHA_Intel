@@ -1,9 +1,11 @@
 import asyncio
-import pytest
 from unittest.mock import MagicMock
+
 import flet as ft
-from src.repositories.hino_repository import HinoRepository
+import pytest
+
 from src.repositories.favorito_repository import FavoritoRepository
+from src.repositories.hino_repository import HinoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.views.home_view import HomeView
 
@@ -77,6 +79,7 @@ async def test_home_view_tile_click_triggers_navigation(in_memory_db):
 
     # Simula renderização de um hino fictício
     from src.models.hino import Hino
+
     hino_sample = Hino(id=1, numero="1", titulo="Test Hymn")
     home_view_obj._render_hino_tiles([hino_sample])
 
@@ -88,6 +91,7 @@ async def test_home_view_tile_click_triggers_navigation(in_memory_db):
     on_click_handler = tile.on_click
     assert callable(on_click_handler)
     on_click_handler(mock_event)  # type: ignore
+
 
 @pytest.mark.asyncio
 async def test_home_view_search_persistence_and_clear(in_memory_db):
@@ -114,6 +118,7 @@ async def test_home_view_search_persistence_and_clear(in_memory_db):
     assert home_view_obj.search_field is not None
     assert home_view_obj.search_field.value == "Santo"
 
+
 @pytest.mark.asyncio
 async def test_home_view_sorting_modes(in_memory_db):
     hino_repo = HinoRepository(in_memory_db)
@@ -139,7 +144,9 @@ async def test_home_view_sorting_modes(in_memory_db):
     # title_asc
     home_view_obj.current_sort = "title_asc"
     sorted_title_asc = home_view_obj._sort_hinos(hinos)
-    assert sorted_title_asc[0].titulo.startswith("Ó") # Ó Adorai o Senhor vem antes de O Deus...
+    assert sorted_title_asc[0].titulo.startswith(
+        "Ó"
+    )  # Ó Adorai o Senhor vem antes de O Deus...
     assert sorted_title_asc[1].titulo.startswith("O")
     assert sorted_title_asc[2].titulo.startswith("Santo")
 
@@ -151,7 +158,8 @@ async def test_home_view_sorting_modes(in_memory_db):
     assert sorted_title_desc[2].titulo.startswith("Ó")
 
     # Validação de parse_hino_number e format_hino_number para 587_A / 587_B
-    from src.views.home_view import parse_hino_number, format_hino_number
+    from src.views.home_view import format_hino_number, parse_hino_number
+
     assert parse_hino_number("587") == 587.0
     assert parse_hino_number("587_A") == 587.1
     assert parse_hino_number("587_B") == 587.2
@@ -161,6 +169,7 @@ async def test_home_view_sorting_modes(in_memory_db):
     assert format_hino_number("587_B") == "587B"
 
     from src.models.hino import Hino
+
     hino_587 = Hino(id=587, numero="587", titulo="Hino 587")
     hino_587a = Hino(id=588, numero="587_A", titulo="Hino 587A")
     hino_587b = Hino(id=589, numero="587_B", titulo="Hino 587B")
@@ -351,14 +360,16 @@ async def test_home_view_show_about_dialog(in_memory_db):
     dialog_col = bs.content.content
     assert isinstance(dialog_col, ft.Column)
     assert dialog_col.scroll == ft.ScrollMode.AUTO
-    
+
     # Encontra o container com o botão do GitHub e o switch AMOLED
     github_button_found = False
     amoled_switch_found = False
     for control in dialog_col.controls:
         if isinstance(control, ft.Row):
             for sub in control.controls:
-                if isinstance(sub, ft.OutlinedButton) and "github.com/Lucas2Araujo/NHA_Intel" in (sub.url or ""):
+                if isinstance(
+                    sub, ft.OutlinedButton
+                ) and "github.com/Lucas2Araujo/NHA_Intel" in (sub.url or ""):
                     github_button_found = True
         elif isinstance(control, ft.Container) and isinstance(control.content, ft.Row):
             for sub in control.content.controls:
@@ -370,7 +381,8 @@ async def test_home_view_show_about_dialog(in_memory_db):
 
 @pytest.mark.asyncio
 async def test_home_view_open_url(in_memory_db):
-    from unittest.mock import patch, AsyncMock
+    from unittest.mock import AsyncMock, patch
+
     hino_repo = HinoRepository(in_memory_db)
     fav_repo = FavoritoRepository(in_memory_db)
     hist_repo = HistoricoRepository(in_memory_db)
@@ -387,12 +399,15 @@ async def test_home_view_open_url(in_memory_db):
 @pytest.mark.asyncio
 async def test_home_view_amoled_toggle(in_memory_db):
     from src.services.theme_service import ThemeService
+
     hino_repo = HinoRepository(in_memory_db)
     fav_repo = FavoritoRepository(in_memory_db)
     hist_repo = HistoricoRepository(in_memory_db)
     theme_service = ThemeService(in_memory_db)
 
-    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo, theme_service=theme_service)
+    home_view_obj = HomeView(
+        hino_repo, fav_repo, hist_repo, theme_service=theme_service
+    )
     mock_page = MagicMock(spec=ft.Page)
     await home_view_obj.build(mock_page)
 
@@ -403,4 +418,3 @@ async def test_home_view_amoled_toggle(in_memory_db):
     await home_view_obj._on_amoled_toggle(False)
     assert theme_service.is_amoled is False
     assert mock_page.theme_mode == ft.ThemeMode.SYSTEM
-

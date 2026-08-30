@@ -1,5 +1,5 @@
-from typing import List, Dict, Any, Optional
-import aiosqlite
+from typing import Any
+
 from src.database.connection import DatabaseConnection
 from src.models.hino import Hino
 
@@ -14,8 +14,8 @@ class CultoRepository:
         self.db_connection = db_connection
 
     async def create_lista_culto(
-        self, tema_gerador: str, hino_ids: List[int]
-    ) -> Optional[int]:
+        self, tema_gerador: str, hino_ids: list[int]
+    ) -> int | None:
         """
         Cria uma nova lista de culto no banco de dados com a lista ordenada de hinos.
         Retorna o ID da lista criada.
@@ -42,7 +42,7 @@ class CultoRepository:
         await conn.commit()
         return lista_id
 
-    async def get_listas_culto(self) -> List[Dict[str, Any]]:
+    async def get_listas_culto(self) -> list[dict[str, Any]]:
         """Retorna todas as listas de culto salvas com contagem de hinos."""
         query = """
             SELECT lc.id, lc.tema_gerador, lc.data_criacao, COUNT(ilc.hino_id) as total_hinos
@@ -67,7 +67,7 @@ class CultoRepository:
             )
         return listas
 
-    async def get_hinos_da_lista(self, lista_id: int) -> List[Hino]:
+    async def get_hinos_da_lista(self, lista_id: int) -> list[Hino]:
         """Retorna os hinos pertencentes a uma lista de culto na ordem de execução."""
         query = """
             SELECT h.id, h.numero, h.titulo, h.letra, ilc.ordem_execucao
@@ -80,7 +80,7 @@ class CultoRepository:
         async with conn.execute(query, (lista_id,)) as cursor:
             rows = await cursor.fetchall()
 
-        hinos: List[Hino] = []
+        hinos: list[Hino] = []
         for row in rows:
             hinos.append(
                 Hino(
@@ -97,7 +97,9 @@ class CultoRepository:
         conn = await self.db_connection.get_connection()
         try:
             # Aiosqlite/SQLite pode não estar com ON DELETE CASCADE ativado por padrão
-            await conn.execute("DELETE FROM item_lista_culto WHERE lista_id = ?", (lista_id,))
+            await conn.execute(
+                "DELETE FROM item_lista_culto WHERE lista_id = ?", (lista_id,)
+            )
             await conn.execute("DELETE FROM lista_culto WHERE id = ?", (lista_id,))
             await conn.commit()
             return True
@@ -112,7 +114,7 @@ class CultoRepository:
         try:
             await conn.execute(
                 "UPDATE lista_culto SET tema_gerador = ? WHERE id = ?",
-                (novo_tema.strip(), lista_id)
+                (novo_tema.strip(), lista_id),
             )
             await conn.commit()
             return True
@@ -151,13 +153,13 @@ class CultoRepository:
         try:
             # Pega a última ordem de execução
             async with conn.execute(
-                "SELECT MAX(ordem_execucao) as max_ordem FROM item_lista_culto WHERE lista_id = ?", 
-                (lista_id,)
+                "SELECT MAX(ordem_execucao) as max_ordem FROM item_lista_culto WHERE lista_id = ?",
+                (lista_id,),
             ) as cursor:
                 row = await cursor.fetchone()
                 max_ordem = (row["max_ordem"] if row else 0) or 0
                 prox_ordem = max_ordem + 1
-            
+
             await conn.execute(
                 "INSERT INTO item_lista_culto (lista_id, hino_id, ordem_execucao) VALUES (?, ?, ?)",
                 (lista_id, hino_id, prox_ordem),
@@ -167,7 +169,9 @@ class CultoRepository:
         except Exception:
             return False
 
-    async def update_hino_da_lista(self, lista_id: int, old_hino_id: int, new_hino_id: int) -> bool:
+    async def update_hino_da_lista(
+        self, lista_id: int, old_hino_id: int, new_hino_id: int
+    ) -> bool:
         """
         Substitui um hino por outro em uma lista de culto, atualizando apenas a
         primeira ocorrência do hino antigo para preservar a ordem.

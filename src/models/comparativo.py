@@ -1,24 +1,34 @@
 import json
 from dataclasses import dataclass
-from typing import Optional, List, Tuple
 
 
 @dataclass(frozen=True)
 class BlocoDiff:
     """Representa um bloco individual no diff de um hino."""
+
     tipo: str  # "igual", "modificado", "adicionado", "removido"
-    texto: Optional[str] = None
-    antigo: Optional[List[str]] = None
-    novo: Optional[List[str]] = None
+    texto: str | None = None
+    antigo: list[str] | None = None
+    novo: list[str] | None = None
 
 
 @dataclass(frozen=True)
 class EstatisticasDiff:
     """Estatísticas consolidadas de contagem de linhas alteradas."""
+
     linhas_adicionadas: int = 0
     linhas_removidas: int = 0
     linhas_alteradas: int = 0
     linhas_iguais: int = 0
+
+
+def _normalize_string_list(val: object | None) -> list[str] | None:
+    """Normaliza um valor para lista de strings ou None se nulo."""
+    if val is None:
+        return None
+    if isinstance(val, list):
+        return [str(item) for item in val]
+    return [str(val)]
 
 
 @dataclass(frozen=True)
@@ -27,22 +37,25 @@ class HinoComparativo:
     Data Transfer Object (DTO) estritamente imutável representando
     a entidade de Comparação entre Hinário Novo e Antigo.
     """
-    id: Optional[int]
-    numero_novo: Optional[str]
-    numero_antigo: Optional[str]
-    titulo_novo: Optional[str]
-    titulo_antigo: Optional[str]
-    categoria_nova: Optional[str] = None
-    categoria_antiga: Optional[str] = None
-    status_comparacao: str = ""  # 'IDENTICO', 'MODIFICADO', 'NOVO_INEDITO', 'ANTIGO_DESCONTINUADO'
+
+    id: int | None
+    numero_novo: str | None
+    numero_antigo: str | None
+    titulo_novo: str | None
+    titulo_antigo: str | None
+    categoria_nova: str | None = None
+    categoria_antiga: str | None = None
+    status_comparacao: str = (
+        ""  # 'IDENTICO', 'MODIFICADO', 'NOVO_INEDITO', 'ANTIGO_DESCONTINUADO'
+    )
     modificado: int = 0
     similaridade_pct: float = 0.0
-    diff_texto: Optional[str] = None
-    diff_json: Optional[str] = None
-    resumo_alteracoes: Optional[str] = None
-    metodo_cruzamento: Optional[str] = None
+    diff_texto: str | None = None
+    diff_json: str | None = None
+    resumo_alteracoes: str | None = None
+    metodo_cruzamento: str | None = None
 
-    def get_parsed_diff(self) -> Tuple[Optional[EstatisticasDiff], List[BlocoDiff]]:
+    def get_parsed_diff(self) -> tuple[EstatisticasDiff | None, list[BlocoDiff]]:
         """Desserializa com segurança o diff_json estruturado."""
         if not self.diff_json or not self.diff_json.strip():
             return None, []
@@ -57,15 +70,15 @@ class HinoComparativo:
             )
 
             blocos_raw = data.get("blocos") or []
-            blocos: List[BlocoDiff] = []
+            blocos: list[BlocoDiff] = []
             for b in blocos_raw:
                 tipo = b.get("tipo", "igual")
                 texto = b.get("texto")
                 antigo = b.get("antigo")
                 novo = b.get("novo")
 
-                antigo_list = antigo if isinstance(antigo, list) else ([str(antigo)] if antigo is not None else None)
-                novo_list = novo if isinstance(novo, list) else ([str(novo)] if novo is not None else None)
+                antigo_list = _normalize_string_list(antigo)
+                novo_list = _normalize_string_list(novo)
 
                 blocos.append(
                     BlocoDiff(
@@ -78,4 +91,3 @@ class HinoComparativo:
             return stats, blocos
         except Exception:
             return None, []
-

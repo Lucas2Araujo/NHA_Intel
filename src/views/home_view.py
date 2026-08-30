@@ -1,15 +1,17 @@
 import asyncio
 import re
 import unicodedata
+
 import flet as ft
-from typing import List, Optional
-from src.repositories.hino_repository import HinoRepository
-from src.repositories.favorito_repository import FavoritoRepository
-from src.repositories.historico_repository import HistoricoRepository
+
 from src.models.hino import Hino
-from src.services.updater_service import UpdaterService
+from src.repositories.favorito_repository import FavoritoRepository
+from src.repositories.hino_repository import HinoRepository
+from src.repositories.historico_repository import HistoricoRepository
 from src.services.theme_service import ThemeService
+from src.services.updater_service import UpdaterService
 from src.views.update_dialog import show_update_dialog
+
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
@@ -50,7 +52,7 @@ def format_hino_number(numero: str) -> str:
 
 
 def strip_accents(s: str) -> str:
-    return unicodedata.normalize('NFKD', s).encode('ASCII', 'ignore').decode('utf-8')
+    return unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("utf-8")
 
 
 class HomeView:
@@ -72,30 +74,32 @@ class HomeView:
         hino_repository: HinoRepository,
         favorito_repository: FavoritoRepository,
         historico_repository: HistoricoRepository,
-        updater_service: Optional[UpdaterService] = None,
-        theme_service: Optional[ThemeService] = None,
+        updater_service: UpdaterService | None = None,
+        theme_service: ThemeService | None = None,
     ):
         self.hino_repository = hino_repository
         self.favorito_repository = favorito_repository
         self.historico_repository = historico_repository
         self.updater_service = updater_service or UpdaterService()
-        self.theme_service = theme_service or ThemeService(hino_repository.db_connection)
-        self._search_task: Optional[asyncio.Task] = None
-        self._sort_task: Optional[asyncio.Task] = None
+        self.theme_service = theme_service or ThemeService(
+            hino_repository.db_connection
+        )
+        self._search_task: asyncio.Task | None = None
+        self._sort_task: asyncio.Task | None = None
+        self._chunk_render_task: asyncio.Task | None = None
         self.current_filter: str = "todos"
         self.current_search: str = ""
         self.current_sort: str = "num_asc"
-        self.active_category: Optional[str] = None
-        self.active_tema: Optional[str] = None
-        self.page: Optional[ft.Page] = None
-        self.list_container: Optional[ft.ListView] = None
-        self.explore_container: Optional[ft.Column] = None
-        self.search_field: Optional[ft.TextField] = None
-        self.sort_button: Optional[ft.PopupMenuButton] = None
-        self.filter_bar: Optional[ft.SegmentedButton] = None
-        self.active_filter_banner: Optional[ft.Container] = None
-        self._explore_sections_cached: Optional[List[ft.Control]] = None
-
+        self.active_category: str | None = None
+        self.active_tema: str | None = None
+        self.page: ft.Page | None = None
+        self.list_container: ft.ListView | None = None
+        self.explore_container: ft.Column | None = None
+        self.search_field: ft.TextField | None = None
+        self.sort_button: ft.PopupMenuButton | None = None
+        self.filter_bar: ft.SegmentedButton | None = None
+        self.active_filter_banner: ft.Container | None = None
+        self._explore_sections_cached: list[ft.Control] | None = None
 
     async def build(self, page: ft.Page, initial_search: str = "") -> ft.View:
         self.page = page
@@ -142,12 +146,16 @@ class HomeView:
         self.search_field = ft.TextField(
             hint_text="Pesquisar hinos, letra, temas...",
             prefix_icon=ft.Icons.SEARCH,
-            suffix=ft.IconButton(
-                ft.Icons.CLEAR,
-                on_click=self._clear_search,
-                tooltip="Limpar busca",
-                icon_size=18,
-            ) if self.current_search else None,
+            suffix=(
+                ft.IconButton(
+                    ft.Icons.CLEAR,
+                    on_click=self._clear_search,
+                    tooltip="Limpar busca",
+                    icon_size=18,
+                )
+                if self.current_search
+                else None
+            ),
             on_change=self._on_search_change,
             border_radius=12,
             expand=True,
@@ -201,7 +209,12 @@ class HomeView:
                     controls=[
                         ft.Text("Hinário", weight=ft.FontWeight.BOLD),
                         ft.Container(
-                            content=ft.Text(f"v{APP_VERSION}", size=11, color=ft.Colors.BLUE_200, weight=ft.FontWeight.BOLD),
+                            content=ft.Text(
+                                f"v{APP_VERSION}",
+                                size=11,
+                                color=ft.Colors.BLUE_200,
+                                weight=ft.FontWeight.BOLD,
+                            ),
                             padding=ft.Padding.only(left=4),
                         ),
                     ],
@@ -220,7 +233,9 @@ class HomeView:
                         ft.Icons.AUTO_AWESOME,
                         tooltip="Agente Organizador de Cultos",
                         icon_color=ft.Colors.AMBER_300,
-                        on_click=lambda e: asyncio.create_task(self._navigate("/agente")),
+                        on_click=lambda e: asyncio.create_task(
+                            self._navigate("/agente")
+                        ),
                     ),
                 ],
             ),
@@ -237,7 +252,9 @@ class HomeView:
                                     ],
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 ),
-                                padding=ft.Padding.only(left=16, top=16, right=16, bottom=8),
+                                padding=ft.Padding.only(
+                                    left=16, top=16, right=16, bottom=8
+                                ),
                             ),
                             ft.Container(
                                 content=ft.Row(
@@ -263,16 +280,9 @@ class HomeView:
     async def _open_url(self, url: str):
         """Abre uma URL externa no navegador padrão ou app nativo."""
         try:
-            if hasattr(ft, "UrlLauncher"):
-                await ft.UrlLauncher().launch_url(url)
-            elif self.page and hasattr(self.page, "launch_url"):
-                await self.page.launch_url(url)
+            await ft.UrlLauncher().launch_url(url)
         except Exception:
-            if self.page and hasattr(self.page, "launch_url"):
-                try:
-                    await self.page.launch_url(url)
-                except Exception:
-                    pass
+            pass
 
     def _show_about_dialog(self, e=None):
         if not self.page:
@@ -280,8 +290,9 @@ class HomeView:
 
         amoled_switch = ft.Switch(
             value=self.theme_service.is_amoled if self.theme_service else False,
-            on_change=lambda ev: asyncio.create_task(self._on_amoled_toggle(ev.control.value)),
-            active_color=ft.Colors.BLUE_400,
+            on_change=lambda ev: asyncio.create_task(
+                self._on_amoled_toggle(ev.control.value)
+            ),
         )
 
         amoled_tile = ft.Container(
@@ -289,10 +300,18 @@ class HomeView:
                 controls=[
                     ft.Row(
                         controls=[
-                            ft.Icon(ft.Icons.DARK_MODE_OUTLINED, size=22, color=ft.Colors.AMBER_300),
+                            ft.Icon(
+                                ft.Icons.DARK_MODE_OUTLINED,
+                                size=22,
+                                color=ft.Colors.AMBER_300,
+                            ),
                             ft.Column(
                                 controls=[
-                                    ft.Text("Modo Telas AMOLED", weight=ft.FontWeight.BOLD, size=14),
+                                    ft.Text(
+                                        "Modo Telas AMOLED",
+                                        weight=ft.FontWeight.BOLD,
+                                        size=14,
+                                    ),
                                     ft.Text(
                                         "Preto puro (#000000) e economia de energia",
                                         size=11,
@@ -326,15 +345,25 @@ class HomeView:
                             controls=[
                                 ft.Row(
                                     controls=[
-                                        ft.Icon(ft.Icons.INFO_OUTLINE, size=20, color=ft.Colors.PRIMARY),
-                                        ft.Text("Sobre o Aplicativo", weight=ft.FontWeight.BOLD, size=18),
+                                        ft.Icon(
+                                            ft.Icons.INFO_OUTLINE,
+                                            size=20,
+                                            color=ft.Colors.PRIMARY,
+                                        ),
+                                        ft.Text(
+                                            "Sobre o Aplicativo",
+                                            weight=ft.FontWeight.BOLD,
+                                            size=18,
+                                        ),
                                     ],
                                     spacing=8,
                                 ),
                                 ft.IconButton(
                                     ft.Icons.CLOSE,
                                     tooltip="Fechar",
-                                    on_click=lambda ev: self.page.pop_dialog() if self.page else None,
+                                    on_click=lambda ev: (
+                                        self.page.pop_dialog() if self.page else None
+                                    ),
                                 ),
                             ],
                             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -343,15 +372,28 @@ class HomeView:
                         ft.Row(
                             controls=[
                                 ft.Container(
-                                    content=ft.Icon(ft.Icons.LIBRARY_MUSIC, size=30, color=ft.Colors.PRIMARY),
+                                    content=ft.Icon(
+                                        ft.Icons.LIBRARY_MUSIC,
+                                        size=30,
+                                        color=ft.Colors.PRIMARY,
+                                    ),
                                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                                     border_radius=10,
                                     padding=ft.Padding.all(8),
                                 ),
                                 ft.Column(
                                     controls=[
-                                        ft.Text("Hinário Inteligente", weight=ft.FontWeight.BOLD, size=16),
-                                        ft.Text(f"Versão {APP_VERSION}", size=12, color=ft.Colors.PRIMARY, weight=ft.FontWeight.W_600),
+                                        ft.Text(
+                                            "Hinário Inteligente",
+                                            weight=ft.FontWeight.BOLD,
+                                            size=16,
+                                        ),
+                                        ft.Text(
+                                            f"Versão {APP_VERSION}",
+                                            size=12,
+                                            color=ft.Colors.PRIMARY,
+                                            weight=ft.FontWeight.W_600,
+                                        ),
                                     ],
                                     spacing=2,
                                 ),
@@ -381,14 +423,18 @@ class HomeView:
                                     icon=ft.Icons.CODE,
                                     url="https://github.com/Lucas2Araujo/NHA_Intel",
                                     on_click=lambda ev: asyncio.create_task(
-                                        self._open_url("https://github.com/Lucas2Araujo/NHA_Intel")
+                                        self._open_url(
+                                            "https://github.com/Lucas2Araujo/NHA_Intel"
+                                        )
                                     ),
                                     expand=True,
                                 ),
                                 ft.FilledTonalButton(
                                     "Verificar Atualizações",
                                     icon=ft.Icons.SYSTEM_UPDATE_ALT,
-                                    on_click=lambda ev: asyncio.create_task(self._check_updates_manual()),
+                                    on_click=lambda ev: asyncio.create_task(
+                                        self._check_updates_manual()
+                                    ),
                                     expand=True,
                                 ),
                             ],
@@ -408,7 +454,6 @@ class HomeView:
         """Manipula a alternância do Modo AMOLED."""
         if self.theme_service and self.page:
             await self.theme_service.toggle_amoled(self.page, enabled)
-
 
     def _show_snack(self, message: str, duration: int = 3000) -> None:
         """Exibe um SnackBar de forma segura compatível com o Flet."""
@@ -464,8 +509,19 @@ class HomeView:
             content=ft.Column(
                 controls=[
                     ft.Icon(icon, size=48, color=ft.Colors.GREY_600),
-                    ft.Text(msg, weight=ft.FontWeight.BOLD, size=16, text_align=ft.TextAlign.CENTER),
-                    ft.Text(hint, size=13, color=ft.Colors.GREY_400, italic=True, text_align=ft.TextAlign.CENTER),
+                    ft.Text(
+                        msg,
+                        weight=ft.FontWeight.BOLD,
+                        size=16,
+                        text_align=ft.TextAlign.CENTER,
+                    ),
+                    ft.Text(
+                        hint,
+                        size=13,
+                        color=ft.Colors.GREY_400,
+                        italic=True,
+                        text_align=ft.TextAlign.CENTER,
+                    ),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=8,
@@ -474,7 +530,7 @@ class HomeView:
             padding=ft.Padding.all(40),
         )
 
-    def _render_hino_tiles(self, hinos: List[Hino]):
+    def _render_hino_tiles(self, hinos: list[Hino]):
         if not self.list_container:
             return
 
@@ -483,12 +539,12 @@ class HomeView:
         for h in hinos:
             if h.id is None:
                 continue
-            h_id = int(h.id)
+            h_id = h.id
             if h_id not in seen_ids:
                 seen_ids.add(h_id)
                 unique_hinos.append(h)
 
-        tiles: List[ft.Control] = [
+        tiles: list[ft.Control] = [
             ft.ListTile(
                 leading=ft.Container(
                     content=ft.Text(
@@ -505,7 +561,9 @@ class HomeView:
                     weight=ft.FontWeight.W_500,
                     size=16,
                 ),
-                on_click=lambda e=None, h_id=hino.id: asyncio.create_task(self._navigate(f"/hino/{h_id}")),
+                on_click=lambda e=None, h_id=hino.id: asyncio.create_task(
+                    self._navigate(f"/hino/{h_id}")
+                ),
             )
             for hino in unique_hinos
         ]
@@ -513,15 +571,44 @@ class HomeView:
         if not tiles:
             self.list_container.controls = [self._create_empty_state_control()]
         else:
-            self.list_container.controls = tiles
+            chunk_size = 40
+            if len(tiles) <= chunk_size:
+                self.list_container.controls = tiles
+            else:
+                self.list_container.controls = tiles[:chunk_size]
+                if self._chunk_render_task and not self._chunk_render_task.done():
+                    self._chunk_render_task.cancel()
+                self._chunk_render_task = asyncio.create_task(
+                    self._append_remaining_tiles(tiles[chunk_size:])
+                )
 
-    def _build_explore_section(self, title: str, items: List[str], icon: ft.IconData, icon_color: str, on_item_click) -> ft.Container:
-        chips: List[ft.Control] = [
+    async def _append_remaining_tiles(self, remaining: list[ft.Control]):
+        """Anexa o restante dos hinos de forma não-bloqueante para não travar a UI em ARMv7."""
+        await asyncio.sleep(0.01)
+        if self.list_container and remaining:
+            self.list_container.controls.extend(remaining)
+            if self.page:
+                try:
+                    self.list_container.update()
+                except Exception:
+                    self.page.update()
+
+    def _build_explore_section(
+        self,
+        title: str,
+        items: list[str],
+        icon: ft.IconData,
+        icon_color: str,
+        on_item_click,
+    ) -> ft.Container:
+        chips: list[ft.Control] = [
             ft.Chip(
                 label=ft.Text(item, size=12),
                 leading=ft.Icon(icon, size=16, color=icon_color),
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                on_click=lambda e=None, val=item: asyncio.create_task(on_item_click(val)),
+                on_click=lambda e=None, val=item: asyncio.create_task(
+                    on_item_click(val)
+                ),
             )
             for item in items
         ]
@@ -541,7 +628,9 @@ class HomeView:
             content=ft.Column(
                 controls=[
                     ft.Icon(ft.Icons.EXPLORE_OFF, size=48, color=ft.Colors.GREY_600),
-                    ft.Text("Nenhuma categoria ou tema disponível.", size=14, italic=True),
+                    ft.Text(
+                        "Nenhuma categoria ou tema disponível.", size=14, italic=True
+                    ),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
                 spacing=8,
@@ -577,12 +666,24 @@ class HomeView:
         sections = []
         if categorias:
             sections.append(
-                self._build_explore_section("📂 Categorias", categorias, ft.Icons.FOLDER_OUTLINED, ft.Colors.BLUE_400, self._filter_by_categoria)
+                self._build_explore_section(
+                    "📂 Categorias",
+                    categorias,
+                    ft.Icons.FOLDER_OUTLINED,
+                    ft.Colors.BLUE_400,
+                    self._filter_by_categoria,
+                )
             )
 
         if temas:
             sections.append(
-                self._build_explore_section("🏷️ Temas", temas, ft.Icons.LABEL_OUTLINED, ft.Colors.AMBER_400, self._filter_by_tema)
+                self._build_explore_section(
+                    "🏷️ Temas",
+                    temas,
+                    ft.Icons.LABEL_OUTLINED,
+                    ft.Colors.AMBER_400,
+                    self._filter_by_tema,
+                )
             )
 
         if not sections:
@@ -593,22 +694,26 @@ class HomeView:
         if self.page:
             self.page.update()
 
-    def _sort_hinos(self, hinos: List[Hino]) -> List[Hino]:
+    def _sort_hinos(self, hinos: list[Hino]) -> list[Hino]:
         """Ordena os hinos de acordo com o modo ativo em self.current_sort."""
         if not hinos:
             return []
 
         if self.current_sort == "num_desc":
-            return sorted(hinos, key=lambda h: parse_hino_number(h.numero), reverse=True)
+            return sorted(
+                hinos, key=lambda h: parse_hino_number(h.numero), reverse=True
+            )
         elif self.current_sort == "title_asc":
             return sorted(hinos, key=lambda h: strip_accents(h.titulo.lower()))
         elif self.current_sort == "title_desc":
-            return sorted(hinos, key=lambda h: strip_accents(h.titulo.lower()), reverse=True)
+            return sorted(
+                hinos, key=lambda h: strip_accents(h.titulo.lower()), reverse=True
+            )
         else:  # "num_asc" (padrão)
 
             return sorted(hinos, key=lambda h: parse_hino_number(h.numero))
 
-    def _build_sort_menu_items(self) -> List[ft.PopupMenuItem]:
+    def _build_sort_menu_items(self) -> list[ft.PopupMenuItem]:
         return [
             ft.PopupMenuItem(
                 content=ft.Text("Número (Crescente 1 → N)"),
@@ -672,13 +777,17 @@ class HomeView:
                         ft.TextButton(
                             content=ft.Text("Explorar Categorias"),
                             icon=ft.Icons.ARROW_BACK,
-                            on_click=lambda e: asyncio.create_task(self._return_to_explore()),
+                            on_click=lambda e: asyncio.create_task(
+                                self._return_to_explore()
+                            ),
                         ),
                         ft.IconButton(
                             icon=ft.Icons.CLOSE,
                             tooltip="Limpar filtro de categoria",
                             icon_size=18,
-                            on_click=lambda e: asyncio.create_task(self._clear_category_or_theme_filter()),
+                            on_click=lambda e: asyncio.create_task(
+                                self._clear_category_or_theme_filter()
+                            ),
                         ),
                     ],
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -702,13 +811,17 @@ class HomeView:
                         ft.TextButton(
                             content=ft.Text("Explorar Temas"),
                             icon=ft.Icons.ARROW_BACK,
-                            on_click=lambda e: asyncio.create_task(self._return_to_explore()),
+                            on_click=lambda e: asyncio.create_task(
+                                self._return_to_explore()
+                            ),
                         ),
                         ft.IconButton(
                             icon=ft.Icons.CLOSE,
                             tooltip="Limpar filtro de tema",
                             icon_size=18,
-                            on_click=lambda e: asyncio.create_task(self._clear_category_or_theme_filter()),
+                            on_click=lambda e: asyncio.create_task(
+                                self._clear_category_or_theme_filter()
+                            ),
                         ),
                     ],
                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -749,7 +862,9 @@ class HomeView:
             await self._return_to_explore()
             return
         valid_filters = ("todos", "favoritos", "recentes", "explorar")
-        fallback = self.current_filter if self.current_filter in valid_filters else "todos"
+        fallback = (
+            self.current_filter if self.current_filter in valid_filters else "todos"
+        )
         if self.filter_bar:
             self.filter_bar.selected = [fallback]
         if self.page:
@@ -815,59 +930,78 @@ class HomeView:
         if self.page:
             self.page.update()
 
-    async def _load_current_filter_data(self, search_term: str = ""):
+    @staticmethod
+    def _filter_by_text(hinos: list[Hino], search_term: str) -> list[Hino]:
+        """Filtra lista em memória por termo de busca no número ou título."""
+        if not search_term or not search_term.strip():
+            return hinos
+        term = search_term.lower().strip()
+        return [
+            h for h in hinos if term in h.numero.lower() or term in h.titulo.lower()
+        ]
+
+    async def _fetch_hinos_by_filter(
+        self, search_term: str
+    ) -> tuple[list[Hino], bool, int]:
+        """Obtém hinos conforme o filtro ativo retornando (hinos, deve_ordenar, banner_count)."""
         if self.current_filter == "categoria" and self.active_category:
             hinos = await self.hino_repository.search_by_categoria(self.active_category)
-            if search_term and search_term.strip():
-                term = search_term.lower().strip()
-                hinos = [h for h in hinos if term in h.numero.lower() or term in h.titulo.lower()]
-            self._update_filter_banner(len(hinos))
-            sorted_hinos = self._sort_hinos(hinos)
-        elif self.current_filter == "tema" and self.active_tema:
+            filtered = self._filter_by_text(hinos, search_term)
+            return filtered, True, len(filtered)
+
+        if self.current_filter == "tema" and self.active_tema:
             hinos = await self.hino_repository.search_by_tema(self.active_tema)
-            if search_term and search_term.strip():
-                term = search_term.lower().strip()
-                hinos = [h for h in hinos if term in h.numero.lower() or term in h.titulo.lower()]
-            self._update_filter_banner(len(hinos))
-            sorted_hinos = self._sort_hinos(hinos)
-        elif self.current_filter == "favoritos":
-            self._update_filter_banner(0)
+            filtered = self._filter_by_text(hinos, search_term)
+            return filtered, True, len(filtered)
+
+        if self.current_filter == "favoritos":
             hinos = await self._fetch_filtered_favoritos(search_term)
-            sorted_hinos = self._sort_hinos(hinos)
-        elif self.current_filter == "recentes":
-            self._update_filter_banner(0)
+            return hinos, True, 0
+
+        if self.current_filter == "recentes":
             hinos = await self._fetch_filtered_recentes(search_term)
-            # Na aba Recentes, preserva estritamente a ordem cronológica do mais recente para o mais antigo
-            sorted_hinos = hinos
-        else:
-            self._update_filter_banner(0)
-            hinos = await self.hino_repository.search(search_term)
-            sorted_hinos = self._sort_hinos(hinos)
+            # Na aba Recentes, preserva estritamente a ordem cronológica
+            return hinos, False, 0
+
+        hinos = await self.hino_repository.search(search_term)
+        return hinos, True, 0
+
+    async def _load_current_filter_data(self, search_term: str = ""):
+        hinos, should_sort, banner_count = await self._fetch_hinos_by_filter(
+            search_term
+        )
+        self._update_filter_banner(banner_count)
+
+        sorted_hinos = self._sort_hinos(hinos) if should_sort else hinos
 
         if self.sort_button:
-            self.sort_button.visible = self.current_filter not in ("recentes", "explorar")
+            self.sort_button.visible = self.current_filter not in (
+                "recentes",
+                "explorar",
+            )
 
         self._render_hino_tiles(sorted_hinos)
 
-    async def _fetch_filtered_favoritos(self, search_term: str) -> List[Hino]:
+    async def _fetch_filtered_favoritos(self, search_term: str) -> list[Hino]:
         hinos = await self.favorito_repository.get_favoritos()
-        if not search_term.strip():
-            return hinos
-        term = search_term.lower().strip()
-        return [h for h in hinos if term in h.numero.lower() or term in h.titulo.lower()]
+        return self._filter_by_text(hinos, search_term)
 
-    async def _fetch_filtered_recentes(self, search_term: str) -> List[Hino]:
+    async def _fetch_filtered_recentes(self, search_term: str) -> list[Hino]:
         hinos = await self.historico_repository.get_recentes()
-        if not search_term.strip():
-            return hinos
-        term = search_term.lower().strip()
-        return [h for h in hinos if term in h.numero.lower() or term in h.titulo.lower()]
+        return self._filter_by_text(hinos, search_term)
 
-    async def _execute_search(self, term: str):
-        await asyncio.sleep(0.3)
+    async def _execute_search(self, term: str, debounce: float = 0.25):
+        if debounce > 0:
+            await asyncio.sleep(debounce)
         await self._load_current_filter_data(term)
         if self.page:
-            self.page.update()
+            try:
+                if self.list_container:
+                    self.list_container.update()
+                if self.active_filter_banner:
+                    self.active_filter_banner.update()
+            except Exception:
+                self.page.update()
 
     def _clear_search(self, e=None):
         self.current_search = ""
@@ -876,7 +1010,7 @@ class HomeView:
             self.search_field.suffix = None
         if self._search_task and not self._search_task.done():
             self._search_task.cancel()
-        self._search_task = asyncio.create_task(self._execute_search(""))
+        self._search_task = asyncio.create_task(self._execute_search("", debounce=0.0))
 
     def _on_search_change(self, e):
         term = e.control.value or ""
@@ -908,7 +1042,13 @@ class HomeView:
         if self._search_task and not self._search_task.done():
             self._search_task.cancel()
 
-        self._search_task = asyncio.create_task(self._execute_search(term))
+        clean = term.strip()
+        is_numeric = bool(clean and re.match(r"^\d+[A-Za-z]?$", clean))
+        debounce_time = 0.0 if is_numeric or not clean else 0.25
+
+        self._search_task = asyncio.create_task(
+            self._execute_search(term, debounce=debounce_time)
+        )
 
     async def _on_filter_select(self, e):
         selected = e.control.selected
@@ -926,9 +1066,10 @@ class HomeView:
         self._show_content_view("list")
 
         filter_map = {"favoritos": "favoritos", "recentes": "recentes"}
-        self.current_filter = next((filter_map[k] for k in filter_map if k in selected), "todos")
+        self.current_filter = next(
+            (filter_map[k] for k in filter_map if k in selected), "todos"
+        )
 
         await self._load_current_filter_data("")
         if self.page:
             self.page.update()
-

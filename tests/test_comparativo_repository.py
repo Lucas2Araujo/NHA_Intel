@@ -1,9 +1,11 @@
 import json
+
 import pytest
 import pytest_asyncio
+
 from src.database.connection import DatabaseConnection
+from src.models.comparativo import EstatisticasDiff, HinoComparativo
 from src.repositories.comparativo_repository import ComparativoRepository
-from src.models.comparativo import HinoComparativo, BlocoDiff, EstatisticasDiff
 
 
 @pytest_asyncio.fixture
@@ -55,10 +57,73 @@ async def in_memory_comparativo_db():
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         """,
         [
-            (1, "1", "18", "Santo, Santo, Santo!", "Santo! Santo! Santo!", "IDENTICO", 0, 100.0, "Letra idêntica", json.dumps({"similaridade_pct": 100.0, "estatisticas": {"linhas_adicionadas": 0, "linhas_removidas": 0, "linhas_alteradas": 0, "linhas_iguais": 12}, "blocos": [{"tipo": "igual", "texto": "Santo, Santo, Santo!"}]}), "Letra idêntica", "TITULO_EXATO"),
-            (2, "3", "3", "O Deus Eterno Reina", "O Deus Eterno Reina", "MODIFICADO", 1, 95.0, "Diff texto aqui", json.dumps(sample_diff), "2 linha(s) modificada(s)", "NUMERO_E_TITULO"),
-            (3, "11", None, "Maior Que Tudo", None, "NOVO_INEDITO", 1, 0.0, None, None, "Inédito", "INEDITO"),
-            (4, None, "5", None, "Supremo Criador", "ANTIGO_DESCONTINUADO", 1, 0.0, None, None, "Descontinuado", "DESCONTINUADO"),
+            (
+                1,
+                "1",
+                "18",
+                "Santo, Santo, Santo!",
+                "Santo! Santo! Santo!",
+                "IDENTICO",
+                0,
+                100.0,
+                "Letra idêntica",
+                json.dumps(
+                    {
+                        "similaridade_pct": 100.0,
+                        "estatisticas": {
+                            "linhas_adicionadas": 0,
+                            "linhas_removidas": 0,
+                            "linhas_alteradas": 0,
+                            "linhas_iguais": 12,
+                        },
+                        "blocos": [{"tipo": "igual", "texto": "Santo, Santo, Santo!"}],
+                    }
+                ),
+                "Letra idêntica",
+                "TITULO_EXATO",
+            ),
+            (
+                2,
+                "3",
+                "3",
+                "O Deus Eterno Reina",
+                "O Deus Eterno Reina",
+                "MODIFICADO",
+                1,
+                95.0,
+                "Diff texto aqui",
+                json.dumps(sample_diff),
+                "2 linha(s) modificada(s)",
+                "NUMERO_E_TITULO",
+            ),
+            (
+                3,
+                "11",
+                None,
+                "Maior Que Tudo",
+                None,
+                "NOVO_INEDITO",
+                1,
+                0.0,
+                None,
+                None,
+                "Inédito",
+                "INEDITO",
+            ),
+            (
+                4,
+                None,
+                "5",
+                None,
+                "Supremo Criador",
+                "ANTIGO_DESCONTINUADO",
+                1,
+                0.0,
+                None,
+                None,
+                "Descontinuado",
+                "DESCONTINUADO",
+            ),
         ],
     )
 
@@ -146,7 +211,11 @@ def test_hino_comparativo_get_parsed_diff():
         },
         "blocos": [
             {"tipo": "igual", "texto": "Linha inalterada"},
-            {"tipo": "modificado", "antigo": ["Linha Antiga 1", "Linha Antiga 2"], "novo": ["Linha Nova 1"]},
+            {
+                "tipo": "modificado",
+                "antigo": ["Linha Antiga 1", "Linha Antiga 2"],
+                "novo": ["Linha Nova 1"],
+            },
             {"tipo": "adicionado", "texto": "Linha Adicionada"},
             {"tipo": "removido", "texto": "Linha Removida"},
         ],
@@ -201,3 +270,22 @@ def test_hino_comparativo_get_parsed_diff_empty():
     assert stats is None
     assert blocos == []
 
+
+@pytest.mark.asyncio
+async def test_comparativo_cache_lifecycle(in_memory_comparativo_db):
+    repo = ComparativoRepository(in_memory_comparativo_db)
+
+    # 1. get_by_numero_novo cache
+    res1 = await repo.get_by_numero_novo("1")
+    assert "1" in repo._cache_novo
+    assert await repo.get_by_numero_novo("1") is res1
+
+    # 2. get_by_numero_antigo cache
+    res_ant = await repo.get_by_numero_antigo("18")
+    assert "18" in repo._cache_antigo
+    assert await repo.get_by_numero_antigo("18") is res_ant
+
+    # 3. clear_cache
+    repo.clear_cache()
+    assert len(repo._cache_novo) == 0
+    assert len(repo._cache_antigo) == 0

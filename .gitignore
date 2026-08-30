@@ -48,6 +48,8 @@ tmp_downloads/
 *.db-journal
 *.db-wal
 *.db-shm
+*.bak
+*.backup
 
 # Android / CD Release Build Artifacts & Keystores
 release_apks/

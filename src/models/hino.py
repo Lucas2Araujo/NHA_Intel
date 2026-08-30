@@ -1,5 +1,4 @@
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -9,15 +8,15 @@ class Hino:
     Garante ausência de efeitos colaterais e otimiza o uso de memória no modelo assíncrono.
     """
 
-    id: Optional[int]
+    id: int | None
     numero: str
     titulo: str
-    letra: Optional[str] = None
-    autor_letra: Optional[str] = None
-    autor_musica: Optional[str] = None
-    texto_base: Optional[str] = None
-    categoria: Optional[str] = None
-    subcategoria: Optional[str] = None
-    link_video: Optional[str] = None
-    letra_json: Optional[str] = None
-    autores: Optional[str] = None
+    letra: str | None = None
+    autor_letra: str | None = None
+    autor_musica: str | None = None
+    texto_base: str | None = None
+    categoria: str | None = None
+    subcategoria: str | None = None
+    link_video: str | None = None
+    letra_json: str | None = None
+    autores: str | None = None
