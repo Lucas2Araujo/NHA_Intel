@@ -848,3 +848,137 @@ class BibliaRepository:
             return passagem
         except Exception:
             return None
+
+    async def get_total_capitulos(
+        self, book_id: int, versao: str | None = None
+    ) -> int:
+        """
+        Retorna o número total de capítulos de um determinado livro (pelo book_id 1 a 66).
+        Utiliza cache interno para resposta instantânea.
+        """
+        if not (1 <= book_id <= 66):
+            return 0
+        v = (versao or self.active_version or self.DEFAULT_VERSION).strip().upper()
+        cache_key = f"{v}:total_chapters:{book_id}"
+        if cache_key in self._passagem_cache:
+            val = self._passagem_cache[cache_key]
+            if isinstance(val, int):
+                return val
+
+        try:
+            conn_mgr = self._get_connection(v)
+            conn = await conn_mgr.get_connection()
+            query = "SELECT MAX(chapter) FROM verse WHERE book_id = ?;"
+            async with conn.execute(query, (book_id,)) as cursor:
+                row = await cursor.fetchone()
+                total = int(row[0]) if row and row[0] is not None else 1
+                self._passagem_cache[cache_key] = total
+                return total
+        except Exception:
+            return 1 if book_id in SINGLE_CHAPTER_BOOKS else 0
+
+    async def listar_livros(
+        self, versao: str | None = None
+    ) -> list[dict[str, Any]]:
+        """
+        Retorna a lista canônica ordenada dos 66 livros da Bíblia com:
+        - id (1 a 66)
+        - name (nome do livro na versão corrente)
+        - testament_reference_id (1 = Antigo Testamento, 2 = Novo Testamento)
+        - testament ("AT" ou "NT")
+        """
+        v = (versao or self.active_version or self.DEFAULT_VERSION).strip().upper()
+        try:
+            conn_mgr = self._get_connection(v)
+            conn = await conn_mgr.get_connection()
+            query = "SELECT id, name, testament_reference_id FROM book ORDER BY id ASC;"
+            async with conn.execute(query) as cursor:
+                rows = await cursor.fetchall()
+            if rows:
+                return [
+                    {
+                        "id": int(r["id"]),
+                        "name": str(r["name"]),
+                        "testament_reference_id": int(r["testament_reference_id"]) if "testament_reference_id" in r.keys() and r["testament_reference_id"] is not None else (1 if int(r["id"]) <= 39 else 2),
+                        "testament": "AT" if (int(r["testament_reference_id"]) if "testament_reference_id" in r.keys() and r["testament_reference_id"] is not None else (1 if int(r["id"]) <= 39 else 2)) == 1 else "NT",
+                    }
+                    for r in rows
+                ]
+        except Exception:
+            pass
+
+        # Fallback usando _get_book_names ou mapa canônico
+        book_names = await self._get_book_names(v)
+        livros: list[dict[str, Any]] = []
+        for bid in range(1, 67):
+            name = book_names.get(bid, f"Livro {bid}")
+            tid = 1 if bid <= 39 else 2
+            livros.append(
+                {
+                    "id": bid,
+                    "name": name,
+                    "testament_reference_id": tid,
+                    "testament": "AT" if tid == 1 else "NT",
+                }
+            )
+        return livros
+
+    async def buscar_capitulo(
+        self, book_id: int, chapter: int, versao: str | None = None
+    ) -> PassagemBiblica | None:
+        """
+        Consulta todos os versículos de um livro e capítulo diretamente por seus IDs numéricos.
+        """
+        if not (1 <= book_id <= 66) or chapter < 1:
+            return None
+
+        v = (versao or self.active_version or self.DEFAULT_VERSION).strip().upper()
+        cache_key = f"{v}:full:{book_id}:{chapter}"
+        if cache_key in self._passagem_cache:
+            cached = self._passagem_cache[cache_key]
+            if isinstance(cached, PassagemBiblica):
+                return cached
+
+        book_names = await self._get_book_names(v)
+        canonical_book_name = book_names.get(book_id, f"Livro {book_id}")
+
+        try:
+            conn_mgr = self._get_connection(v)
+            conn = await conn_mgr.get_connection()
+            query = """
+                SELECT verse, text 
+                FROM verse 
+                WHERE book_id = ? AND chapter = ?
+                ORDER BY verse ASC;
+            """
+            async with conn.execute(query, (book_id, chapter)) as cursor:
+                rows = await cursor.fetchall()
+
+            if not rows:
+                return None
+
+            versiculos = [
+                Versiculo(
+                    livro=canonical_book_name,
+                    capitulo=chapter,
+                    numero=int(row["verse"]),
+                    texto=str(row["text"]).strip(),
+                )
+                for row in rows
+            ]
+
+            passagem = PassagemBiblica(
+                referencia=f"{canonical_book_name} {chapter}",
+                livro=canonical_book_name,
+                capitulo=chapter,
+                versiculos=versiculos,
+            )
+
+            if len(self._passagem_cache) >= 50:
+                first_key = next(iter(self._passagem_cache))
+                del self._passagem_cache[first_key]
+            self._passagem_cache[cache_key] = passagem
+            return passagem
+        except Exception:
+            return None
+

@@ -23,6 +23,7 @@ from src.services.media_service import MediaService
 from src.services.theme_service import EDITION_ANTIGO, EDITION_NOVO, ThemeService
 from src.services.updater_service import UpdaterService
 from src.views.agente_view import AgenteView
+from src.views.biblia_view import BibliaView
 from src.views.download_manager_view import DownloadManagerView
 from src.views.hino_view import HinoView
 from src.views.home_view import HomeView
@@ -39,6 +40,7 @@ ROUTE_NOVO = "/novo"
 ROUTE_ANTIGO = "/antigo"
 ROUTE_AGENTE = "/agente"
 ROUTE_DOWNLOADS = "/downloads"
+ROUTE_BIBLIA = "/biblia"
 
 _background_tasks: set[asyncio.Task] = set()
 
@@ -335,6 +337,9 @@ async def main(page: ft.Page):
     )
     agente_view_instance = AgenteView(agente_service, culto_repository)
     download_manager_instance = DownloadManagerView(hino_repository, media_service)
+    biblia_view_instance = BibliaView(
+        biblia_repository, theme_service=theme_service
+    )
 
     async def route_change(e=None):
         route = page.route or "/"
@@ -359,6 +364,22 @@ async def main(page: ft.Page):
         )
         _render_agente_route(page, view_cache, agente_view_instance, new_views)
         _render_downloads_route(page, view_cache, download_manager_instance, new_views)
+
+        # Rota da Bíblia Sagrada (/biblia ou /biblia/{book_id}/{chapter})
+        if route_base == ROUTE_BIBLIA or route_base.startswith(f"{ROUTE_BIBLIA}/"):
+            initial_book_id = 1
+            initial_chapter = 1
+            parts = route_base.strip("/").split("/")
+            if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
+                initial_book_id = int(parts[1])
+                initial_chapter = int(parts[2])
+            elif len(parts) >= 2 and parts[1].isdigit():
+                initial_book_id = int(parts[1])
+            view_cache[ROUTE_BIBLIA] = await biblia_view_instance.build(
+                page, initial_book_id=initial_book_id, initial_chapter=initial_chapter
+            )
+            new_views.append(view_cache[ROUTE_BIBLIA])
+
         await _render_hino_route(
             page,
             route_base,

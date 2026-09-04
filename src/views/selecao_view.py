@@ -242,6 +242,17 @@ class SelecaoView:
             route="/antigo",
         )
 
+        card_biblia = self._build_edition_card(
+            page=page,
+            title="Bíblia Sagrada",
+            subtitle="ARA, NVI, NTLH, KJA • 66 Livros",
+            description="Leitura completa das Escrituras Sagradas com navegação rápida por livro e capítulo.",
+            badge_text="BÍBLIA",
+            icon=ft.Icons.AUTO_STORIES,
+            badge_color=ft.Colors.EMERALD_400 if hasattr(ft.Colors, "EMERALD_400") else ft.Colors.GREEN_400,
+            route="/biblia",
+        )
+
         quick_actions = ft.Container(
             content=ft.Row(
                 controls=[
@@ -274,6 +285,8 @@ class SelecaoView:
                 card_novo,
                 ft.Container(height=12),
                 card_antigo,
+                ft.Container(height=12),
+                card_biblia,
                 ft.Container(height=16),
                 quick_actions,
             ],

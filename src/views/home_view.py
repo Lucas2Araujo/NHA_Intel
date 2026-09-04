@@ -245,9 +245,12 @@ class HomeView:
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 actions=[
                     ft.IconButton(
-                        ft.Icons.INFO_OUTLINED,
-                        tooltip=f"Sobre o App (v{APP_VERSION})",
-                        on_click=self._show_about_dialog,
+                        ft.Icons.MENU_BOOK,
+                        tooltip="Bíblia Sagrada",
+                        icon_color=ft.Colors.GREEN_300,
+                        on_click=lambda e: asyncio.create_task(
+                            self._navigate("/biblia")
+                        ),
                     ),
                     ft.IconButton(
                         ft.Icons.AUTO_AWESOME,
@@ -256,6 +259,11 @@ class HomeView:
                         on_click=lambda e: asyncio.create_task(
                             self._navigate("/agente")
                         ),
+                    ),
+                    ft.IconButton(
+                        ft.Icons.INFO_OUTLINED,
+                        tooltip=f"Sobre o App (v{APP_VERSION})",
+                        on_click=self._show_about_dialog,
                     ),
                 ],
             ),
