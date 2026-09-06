@@ -162,12 +162,16 @@ async def _render_home_route(
     target_views: list[ft.View],
 ) -> None:
     """Renderiza a HomeView do Hinário Novo (/novo) ou Hinário Antigo (/antigo)."""
-    if route_base == ROUTE_NOVO:
+    if (
+        route_base == ROUTE_NOVO
+        or route_base.startswith(f"{ROUTE_NOVO}/")
+        or route_base.startswith("/hino/")
+    ):
         view_cache[ROUTE_NOVO] = await home_novo_instance.build(
             page, initial_search=initial_search
         )
         target_views.append(view_cache[ROUTE_NOVO])
-    elif route_base == ROUTE_ANTIGO:
+    elif route_base == ROUTE_ANTIGO or route_base.startswith(f"{ROUTE_ANTIGO}/"):
         view_cache[ROUTE_ANTIGO] = await home_antigo_instance.build(
             page, initial_search=initial_search
         )
@@ -397,6 +401,12 @@ async def main(page: ft.Page):
         page.update()
 
     async def view_pop(e: ft.ViewPopEvent):
+        try:
+            if hasattr(page, "pop_dialog") and page.pop_dialog():
+                return
+        except Exception:
+            pass
+
         if len(page.views) > 1:
             page.views.pop()
             top_view = page.views[-1]

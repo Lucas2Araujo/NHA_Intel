@@ -433,3 +433,20 @@ async def test_home_view_amoled_toggle(in_memory_db):
     await home_view_obj._on_amoled_toggle(False)
     assert theme_service.is_amoled is False
     assert mock_page.theme_mode == ft.ThemeMode.SYSTEM
+
+
+@pytest.mark.asyncio
+async def test_home_view_cached_view_retention(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo)
+    mock_page = MagicMock(spec=ft.Page)
+
+    view1 = await home_view_obj.build(mock_page)
+    assert home_view_obj._cached_view is view1
+
+    # Quando chamada novamente sem nova busca, deve retornar a mesma instância preservando scroll e listas
+    view2 = await home_view_obj.build(mock_page)
+    assert view2 is view1

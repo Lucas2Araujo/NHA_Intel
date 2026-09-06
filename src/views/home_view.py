@@ -102,6 +102,7 @@ class HomeView:
         self.filter_bar: ft.SegmentedButton | None = None
         self.active_filter_banner: ft.Container | None = None
         self._explore_sections_cached: list[ft.Control] | None = None
+        self._cached_view: ft.View | None = None
 
     async def build(self, page: ft.Page, initial_search: str = "") -> ft.View:
         self.page = page
@@ -112,6 +113,10 @@ class HomeView:
 
         if self.theme_service:
             self.theme_service.apply_theme(page, edition=self.edition)
+
+        # Se já tivermos a view construída e não houver nova busca inicial, reaproveitamos o estado
+        if self._cached_view is not None and not initial_search:
+            return self._cached_view
 
         if initial_search:
             self.current_search = initial_search
@@ -214,7 +219,7 @@ class HomeView:
             ft.Colors.BLUE_200 if self.edition == "novo" else ft.Colors.AMBER_300
         )
 
-        return ft.View(
+        self._cached_view = ft.View(
             route=f"/{self.edition}",
             bgcolor=ft.Colors.SURFACE,
             appbar=ft.AppBar(
@@ -244,22 +249,6 @@ class HomeView:
                 center_title=True,
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 actions=[
-                    ft.IconButton(
-                        ft.Icons.MENU_BOOK,
-                        tooltip="Bíblia Sagrada",
-                        icon_color=ft.Colors.GREEN_300,
-                        on_click=lambda e: asyncio.create_task(
-                            self._navigate("/biblia")
-                        ),
-                    ),
-                    ft.IconButton(
-                        ft.Icons.AUTO_AWESOME,
-                        tooltip="Agente Organizador de Cultos",
-                        icon_color=ft.Colors.AMBER_300,
-                        on_click=lambda e: asyncio.create_task(
-                            self._navigate("/agente")
-                        ),
-                    ),
                     ft.IconButton(
                         ft.Icons.INFO_OUTLINED,
                         tooltip=f"Sobre o App (v{APP_VERSION})",
@@ -300,6 +289,7 @@ class HomeView:
                 ),
             ],
         )
+        return self._cached_view
 
     async def _navigate(self, route_path: str):
         if self.page:
@@ -1068,6 +1058,7 @@ class HomeView:
             self._show_content_view("list")
 
         if self.search_field:
+            self.search_field.value = term
             self.search_field.suffix = (
                 ft.IconButton(
                     ft.Icons.CLEAR,

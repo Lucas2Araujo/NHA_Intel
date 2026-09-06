@@ -252,9 +252,6 @@ class AgenteView:
             ),
             center_title=True,
             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            actions=[
-                ft.Icon(ft.Icons.AUTO_AWESOME, color=ft.Colors.AMBER_300),
-            ],
         )
 
     def _on_slider_change(self, e: ft.ControlEvent, page: ft.Page) -> None:

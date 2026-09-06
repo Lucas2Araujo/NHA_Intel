@@ -471,6 +471,16 @@ class HinoView:
         self.current_biblia_passagem: PassagemBiblica | None = None
         self._biblia_loading: bool = False
 
+        self.animated_container: ft.Container | None = None
+        self.header_container: ft.Container | None = None
+        self.segmented_container: ft.Container | None = None
+        self.scroll_column: ft.Column | None = None
+        self.appbar_title: ft.Text | None = None
+        self.prev_btn: ft.IconButton | None = None
+        self.next_btn: ft.IconButton | None = None
+        self.view: ft.View | None = None
+        self._is_navigating: bool = False
+
         # SnackBar singleton reutilizável (evita acúmulo no overlay)
         self._snackbar: ft.SnackBar | None = None
 
@@ -717,7 +727,7 @@ class HinoView:
             icon=ft.Icons.FAVORITE if self.is_fav else ft.Icons.FAVORITE_BORDER,
             icon_color=ft.Colors.RED_400 if self.is_fav else None,
             tooltip="Desfavoritar" if self.is_fav else "Favoritar",
-            on_click=lambda e: page.run_task(self._toggle_favorito, page, hino),
+            on_click=lambda e: page.run_task(self._toggle_favorito, page, self.current_hino),
         )
 
         has_youtube = bool(hino.link_video and hino.link_video.strip())
@@ -734,21 +744,25 @@ class HinoView:
                 else "Link do YouTube indisponível"
             ),
             disabled=not has_youtube,
-            on_click=lambda e: page.run_task(self._open_youtube_link, page, hino),
+            on_click=lambda e: page.run_task(self._open_youtube_link, page, self.current_hino),
         )
 
         prev_btn, next_btn = self._build_nav_buttons(page)
-        header_container = self._build_header_container(page, hino)
+        self.appbar_title = ft.Text(f"Hino {hino.numero}", weight=ft.FontWeight.BOLD)
+        self.header_container = self._build_header_container(page, hino)
 
-        column_controls: list[ft.Control] = [header_container]
+        column_controls: list[ft.Control] = [self.header_container]
         segmented_btn = self._build_segmented_button(page)
-        if segmented_btn:
-            column_controls.append(segmented_btn)
+        self.segmented_container = ft.Container(
+            content=segmented_btn,
+            visible=segmented_btn is not None,
+        )
+        column_controls.append(self.segmented_container)
 
         column_controls.append(ft.Divider(height=1))
         column_controls.append(self.content_container)
 
-        scroll_column = ft.Column(
+        self.scroll_column = ft.Column(
             controls=column_controls,
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=0,
@@ -756,23 +770,43 @@ class HinoView:
             expand=True,
         )
 
+        self.animated_container = ft.Container(
+            content=self.scroll_column,
+            expand=True,
+            padding=0,
+            offset=ft.Offset(0, 0),
+            animate_offset=ft.Animation(220, ft.AnimationCurve.EASE_OUT_CUBIC),
+        )
+
         if self.theme_service:
             self.theme_service.apply_theme(page, edition=self.edition)
 
         async def _go_back(e):
-            if len(page.views) > 1:
+            try:
+                if hasattr(page, "pop_dialog") and page.pop_dialog():
+                    return
+            except Exception:
+                pass
+
+            if hasattr(page, "on_view_pop") and page.on_view_pop:
+                await page.on_view_pop(None)
+            elif len(page.views) > 1:
                 page.views.pop()
                 top_view = page.views[-1]
-                await page.push_route(top_view.route)
+                page.route = top_view.route or f"/{self.edition}"
+                if hasattr(page, "on_route_change") and page.on_route_change:
+                    await page.on_route_change(None)
+                else:
+                    await page.push_route(page.route)
             else:
                 await page.push_route(f"/{self.edition}")
 
-        return ft.View(
+        self.view = ft.View(
             route=f"/{self.edition}/hino/{self.hino_id}",
             bgcolor=ft.Colors.SURFACE,
             appbar=ft.AppBar(
                 leading=ft.IconButton(ft.Icons.ARROW_BACK, on_click=_go_back),
-                title=ft.Text(f"Hino {hino.numero}", weight=ft.FontWeight.BOLD),
+                title=self.appbar_title,
                 center_title=True,
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 actions=[
@@ -782,19 +816,20 @@ class HinoView:
                     ft.IconButton(
                         ft.Icons.INFO_OUTLINED,
                         tooltip="Informações do Hino",
-                        on_click=lambda e: self._show_info_modal(page, hino),
+                        on_click=lambda e: self._show_info_modal(page, self.current_hino),
                     ),
                 ],
             ),
             controls=[
                 ft.SafeArea(
                     maintain_bottom_view_padding=True,
-                    content=ft.Container(content=scroll_column, expand=True, padding=0),
+                    content=self.animated_container,
                     expand=True,
                 ),
             ],
             bottom_appbar=self._build_bottom_appbar(page, self.youtube_btn),
         )
+        return self.view
 
     def _build_nav_buttons(self, page: ft.Page) -> tuple:
         """Constrói botões de navegação anterior/próximo baseados na lista de IDs."""
@@ -806,29 +841,181 @@ class HinoView:
         has_next = current_idx >= 0 and current_idx < len(self.hino_ids_list) - 1
 
         async def _go_prev(e):
-            if has_prev:
-                prev_id = self.hino_ids_list[current_idx - 1]
-                await page.push_route(f"/{self.edition}/hino/{prev_id}")
+            idx = (
+                self.hino_ids_list.index(self.hino_id)
+                if self.hino_ids_list and self.hino_id in self.hino_ids_list
+                else -1
+            )
+            if idx > 0:
+                prev_id = self.hino_ids_list[idx - 1]
+                if self.animated_container is not None:
+                    await self._navigate_hino_directional(page, prev_id, direction="prev")
+                elif hasattr(page, "push_route"):
+                    await page.push_route(f"/{self.edition}/hino/{prev_id}")
 
         async def _go_next(e):
-            if has_next:
-                next_id = self.hino_ids_list[current_idx + 1]
-                await page.push_route(f"/{self.edition}/hino/{next_id}")
+            idx = (
+                self.hino_ids_list.index(self.hino_id)
+                if self.hino_ids_list and self.hino_id in self.hino_ids_list
+                else -1
+            )
+            if idx >= 0 and idx < len(self.hino_ids_list) - 1:
+                next_id = self.hino_ids_list[idx + 1]
+                if self.animated_container is not None:
+                    await self._navigate_hino_directional(page, next_id, direction="next")
+                elif hasattr(page, "push_route"):
+                    await page.push_route(f"/{self.edition}/hino/{next_id}")
 
-        prev_btn = ft.IconButton(
+        self.prev_btn = ft.IconButton(
             ft.Icons.NAVIGATE_BEFORE,
             tooltip="Hino Anterior",
             on_click=_go_prev,
             disabled=not has_prev,
         )
-        next_btn = ft.IconButton(
+        self.next_btn = ft.IconButton(
             ft.Icons.NAVIGATE_NEXT,
             tooltip="Próximo Hino",
             on_click=_go_next,
             disabled=not has_next,
         )
 
-        return prev_btn, next_btn
+        return self.prev_btn, self.next_btn
+
+    def _update_nav_buttons_state(self) -> None:
+        """Atualiza o estado habilitado/desabilitado dos botões de navegação."""
+        current_idx = -1
+        if self.hino_ids_list and self.hino_id in self.hino_ids_list:
+            current_idx = self.hino_ids_list.index(self.hino_id)
+
+        has_prev = current_idx > 0
+        has_next = current_idx >= 0 and current_idx < len(self.hino_ids_list) - 1
+
+        if self.prev_btn:
+            self.prev_btn.disabled = not has_prev
+            try:
+                self.prev_btn.update()
+            except Exception:
+                pass
+        if self.next_btn:
+            self.next_btn.disabled = not has_next
+            try:
+                self.next_btn.update()
+            except Exception:
+                pass
+
+    async def _navigate_hino_directional(
+        self, page: ft.Page, target_id: int, direction: str
+    ) -> None:
+        """Transiciona para o hino anterior ou próximo com animação direcional de deslizamento."""
+        if self._is_navigating:
+            return
+        self._is_navigating = True
+        try:
+            # next: o conteúdo atual desliza para a esquerda (-1.0), novo entra da direita (1.0 -> 0)
+            # prev: o conteúdo atual desliza para a direita (1.0), novo entra da esquerda (-1.0 -> 0)
+            exit_x = -1.0 if direction == "next" else 1.0
+            enter_x = 1.0 if direction == "next" else -1.0
+
+            if self.animated_container:
+                self.animated_container.animate_offset = ft.Animation(
+                    160, ft.AnimationCurve.EASE_IN
+                )
+                self.animated_container.offset = ft.Offset(exit_x, 0)
+                try:
+                    self.animated_container.update()
+                except Exception:
+                    pass
+                await asyncio.sleep(0.16)
+
+            new_hino = await self.hino_repository.get_by_id(target_id)
+            if not new_hino:
+                return
+
+            self.hino_id = target_id
+            self.current_hino = new_hino
+            await self._init_data_and_preferences(page, new_hino)
+
+            if self.appbar_title:
+                self.appbar_title.value = f"Hino {new_hino.numero}"
+                try:
+                    self.appbar_title.update()
+                except Exception:
+                    pass
+
+            self._update_nav_buttons_state()
+            self._update_fav_icon_state()
+
+            has_youtube = bool(new_hino.link_video and new_hino.link_video.strip())
+            if self.youtube_btn:
+                self.youtube_btn.disabled = not has_youtube
+                self.youtube_btn.icon_color = (
+                    ft.Colors.RED_400 if has_youtube else None
+                )
+                try:
+                    self.youtube_btn.update()
+                except Exception:
+                    pass
+
+            if self.letra_text:
+                self.letra_text.value = (
+                    new_hino.letra if new_hino.letra else MSG_LETRA_NAO_DISPONIVEL
+                )
+
+            # Volta para o modo padrão "letra" na transição de hino
+            if self.selected_view_mode != "letra":
+                self.selected_view_mode = "letra"
+
+            if self.content_container:
+                self.content_container.content = self._render_current_mode_content()
+
+            if self.header_container:
+                self.header_container.content = (
+                    self._build_header_container(page, new_hino).content
+                )
+
+            if self.segmented_container:
+                new_seg = self._build_segmented_button(page)
+                self.segmented_container.content = new_seg
+                self.segmented_container.visible = new_seg is not None
+
+            if self.scroll_column:
+                try:
+                    res = self.scroll_column.scroll_to(offset=0, duration=0)
+                    if asyncio.iscoroutine(res):
+                        await res
+                except Exception:
+                    pass
+
+            new_route = f"/{self.edition}/hino/{target_id}"
+            if self.view:
+                self.view.route = new_route
+            page.route = new_route
+
+            if self.animated_container:
+                self.animated_container.animate_offset = None
+                self.animated_container.offset = ft.Offset(enter_x, 0)
+                try:
+                    self.animated_container.update()
+                except Exception:
+                    pass
+
+                await asyncio.sleep(0.02)
+
+                self.animated_container.animate_offset = ft.Animation(
+                    200, ft.AnimationCurve.EASE_OUT_CUBIC
+                )
+                self.animated_container.offset = ft.Offset(0, 0)
+                try:
+                    self.animated_container.update()
+                except Exception:
+                    pass
+
+            try:
+                page.update()
+            except Exception:
+                pass
+        finally:
+            self._is_navigating = False
 
     def _on_biblia_click(
         self,
@@ -1091,10 +1278,22 @@ class HinoView:
 
     def _build_not_found_view(self, page: ft.Page) -> ft.View:
         async def _go_back(e):
-            if len(page.views) > 1:
+            try:
+                if hasattr(page, "pop_dialog") and page.pop_dialog():
+                    return
+            except Exception:
+                pass
+
+            if hasattr(page, "on_view_pop") and page.on_view_pop:
+                await page.on_view_pop(None)
+            elif len(page.views) > 1:
                 page.views.pop()
                 top_view = page.views[-1]
-                await page.push_route(top_view.route)
+                page.route = top_view.route or f"/{self.edition}"
+                if hasattr(page, "on_route_change") and page.on_route_change:
+                    await page.on_route_change(None)
+                else:
+                    await page.push_route(page.route)
             else:
                 await page.push_route(f"/{self.edition}")
 

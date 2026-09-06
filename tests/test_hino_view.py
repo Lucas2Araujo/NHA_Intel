@@ -730,3 +730,57 @@ async def test_hino_view_modo_leitura_biblica_imersiva(in_memory_db):
     view_obj.is_biblia_full_chapter = True
     await view_obj._carregar_biblia_passagem(mock_page)
     assert len(view_obj.current_biblia_passagem.versiculos) == 3
+
+
+@pytest.mark.asyncio
+async def test_hino_view_directional_navigation(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    view_obj = HinoView(1, hino_repo, fav_repo, hist_repo, hino_ids_list=[1, 2, 3])
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.views = []
+    mock_page.route = "/novo/hino/1"
+
+    await view_obj.build(mock_page)
+    assert view_obj.hino_id == 1
+    assert view_obj.prev_btn.disabled is True
+    assert view_obj.next_btn.disabled is False
+    assert view_obj.animated_container is not None
+
+    # Avança para o próximo hino com animação direcional
+    await view_obj._navigate_hino_directional(mock_page, 2, direction="next")
+    assert view_obj.hino_id == 2
+    assert view_obj.prev_btn.disabled is False
+    assert view_obj.next_btn.disabled is False
+    assert mock_page.route == "/novo/hino/2"
+    assert view_obj.appbar_title.value == "Hino 2"
+
+    # Retorna para o hino anterior com animação direcional
+    await view_obj._navigate_hino_directional(mock_page, 1, direction="prev")
+    assert view_obj.hino_id == 1
+    assert view_obj.prev_btn.disabled is True
+    assert view_obj.next_btn.disabled is False
+    assert mock_page.route == "/novo/hino/1"
+    assert view_obj.appbar_title.value == "Hino 1"
+
+
+@pytest.mark.asyncio
+async def test_hino_view_go_back_hierarchy(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    view_obj = HinoView(1, hino_repo, fav_repo, hist_repo, hino_ids_list=[1, 2])
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.on_view_pop = AsyncMock()
+    mock_page.pop_dialog = MagicMock(return_value=False)
+
+    view = await view_obj.build(mock_page)
+    appbar_leading = view.appbar.leading
+    assert appbar_leading is not None
+
+    # Aciona o botão de voltar da AppBar
+    await appbar_leading.on_click(MagicMock())
+    mock_page.on_view_pop.assert_called_once_with(None)
