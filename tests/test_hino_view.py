@@ -4,6 +4,7 @@ import flet as ft
 import pytest
 
 from src.models.hino import Hino
+from src.repositories.biblia_repository import BibliaRepository
 from src.repositories.favorito_repository import FavoritoRepository
 from src.repositories.hino_repository import HinoRepository
 from src.repositories.historico_repository import HistoricoRepository
@@ -14,6 +15,7 @@ from src.views.hino_view import (
     OPENDYSLEXIC_FONT_FAMILY,
     TIMES_NEW_ROMAN_FONT_FAMILY,
     HinoView,
+    _BibliaModalSession,
 )
 
 
@@ -208,12 +210,11 @@ async def test_hino_view_abrir_modal_leitura_biblica_success(in_memory_db):
     assert isinstance(dialog_arg, ft.BottomSheet)
     mock_biblia_repo.buscar_passagem.assert_called_with("João 3:16", versao="ARA")
 
-    # Verifica que há o seletor Dropdown no cabeçalho
+    # Verifica que há o seletor M3 pill button no cabeçalho
     header_row = dialog_arg.content.content.controls[0]
-    dropdown = header_row.controls[1]
-    assert isinstance(dropdown, ft.Dropdown)
-    assert len(dropdown.options) == 2
-    assert dropdown.value == "ARA"
+    version_btn = header_row.controls[1]
+    assert isinstance(version_btn, ft.PopupMenuButton)
+    assert len(version_btn.items) == 2
 
     # Teste 2: Aberto a partir do modal de informações (from_info_modal=True)
     mock_page.show_dialog.reset_mock()
@@ -784,3 +785,77 @@ async def test_hino_view_go_back_hierarchy(in_memory_db):
     # Aciona o botão de voltar da AppBar
     await appbar_leading.on_click(MagicMock())
     mock_page.on_view_pop.assert_called_once_with(None)
+
+
+@pytest.mark.asyncio
+async def test_hino_view_navigate_search(in_memory_db):
+    import urllib.parse
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    view_obj = HinoView(1, hino_repo, fav_repo, hist_repo, edition="novo")
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.pop_dialog = MagicMock(return_value=True)
+    mock_page.push_route = AsyncMock()
+
+    await view_obj.build(mock_page)
+
+    await view_obj._navigate_search(mock_page, "Adoração & Louvor")
+
+    expected_query = urllib.parse.quote("Adoração & Louvor")
+    expected_route = f"/novo?categoria={expected_query}&from_hino=1"
+
+    mock_page.pop_dialog.assert_called()
+    mock_page.push_route.assert_called_once_with(expected_route)
+
+
+@pytest.mark.asyncio
+async def test_hino_view_version_selector_synchronization(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    mock_biblia_repo = MagicMock(spec=BibliaRepository)
+    mock_biblia_repo.get_available_versions.return_value = ["ARA", "NVI"]
+    mock_biblia_repo.active_version = "ARA"
+    mock_biblia_repo.buscar_passagem = AsyncMock(return_value=None)
+    mock_biblia_repo.buscar_capitulo = AsyncMock(return_value=None)
+
+    view_obj = HinoView(
+        1,
+        hino_repo,
+        fav_repo,
+        hist_repo,
+        biblia_repository=mock_biblia_repo,
+        edition="novo",
+    )
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.height = 800
+    mock_page.update = MagicMock()
+    view_obj.page = mock_page
+
+    # 1. Constrói a barra inline e verifica o botão pill
+    toolbar = view_obj._build_biblia_inline_toolbar(accent_color="#6750A4")
+    assert isinstance(view_obj.inline_version_btn, ft.PopupMenuButton)
+    assert len(view_obj.inline_version_btn.items) == 2
+
+    # 2. Testa seleção inline de versão
+    with patch.object(view_obj, "_carregar_biblia_passagem", new_callable=AsyncMock) as mock_carregar:
+        await view_obj._on_inline_versao_selected("NVI")
+        assert view_obj.selected_biblia_version == "NVI"
+        mock_biblia_repo.set_version.assert_called_with("NVI")
+        mock_carregar.assert_called_once_with(mock_page)
+
+    # 3. Testa seleção no modal
+    state_modal = _BibliaModalSession(view_obj, mock_page, "João 3:16")
+    with patch.object(state_modal, "carregar_versiculos", new_callable=AsyncMock) as mock_carregar_modal:
+        await state_modal._on_versao_selected("ARA")
+        assert state_modal.selected_version == "ARA"
+        assert view_obj.selected_biblia_version == "ARA"
+        mock_biblia_repo.set_version.assert_called_with("ARA")
+        mock_carregar_modal.assert_called_once_with("ARA")
+
+
+
+

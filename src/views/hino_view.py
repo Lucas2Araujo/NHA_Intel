@@ -1,6 +1,7 @@
 import asyncio
 import json
 from typing import Any
+import urllib.parse
 
 import flet as ft
 
@@ -14,6 +15,10 @@ from src.repositories.hino_repository import HinoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.services.media_service import MediaService
 from src.services.theme_service import ThemeService
+from src.views.biblia_view import (
+    build_bible_version_button,
+    update_bible_version_button,
+)
 
 DEFAULT_FONT_FAMILY = "Padrão"
 TIMES_NEW_ROMAN_FONT_FAMILY = "Times New Roman"
@@ -111,19 +116,13 @@ class _BibliaModalSession:
             spacing=8,
         )
 
-        versoes = self.view.biblia_repository.get_available_versions()
-        self.version_dropdown = ft.Dropdown(
-            options=[ft.dropdown.Option(key=v, text=v) for v in versoes],
-            value=self.selected_version,
-            width=92,
-            height=36,
-            text_size=13,
-            content_padding=ft.Padding.symmetric(horizontal=8, vertical=2),
-            dense=True,
-            border_radius=8,
-            tooltip="Versão da Bíblia",
-            on_select=self._on_versao_changed,
+        self.version_btn = build_bible_version_button(
+            biblia_repository=self.view.biblia_repository,
+            current_version=self.selected_version,
+            on_version_selected=self._on_versao_selected,
+            theme_service=self.view.theme_service,
         )
+        self.version_dropdown = self.version_btn
 
         self.expand_btn = ft.IconButton(
             ft.Icons.FULLSCREEN,
@@ -186,8 +185,9 @@ class _BibliaModalSession:
                     spacing=8,
                     expand=True,
                 ),
-                self.version_dropdown,
+                self.version_btn,
                 self.expand_btn,
+
                 ft.IconButton(
                     ft.Icons.CLOSE,
                     icon_size=20,
@@ -199,6 +199,7 @@ class _BibliaModalSession:
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=4,
         )
+
 
         self.action_bar = self.view._build_biblia_modal_action_bar(
             self.copy_btn,
@@ -240,8 +241,8 @@ class _BibliaModalSession:
             ),
             padding=ft.Padding.only(left=20, top=16, right=20, bottom=30),
             height=(
-                min(self.page.height * 0.85, 620)
-                if self.page and self.page.height
+                min(float(self.page.height) * 0.85, 620)
+                if (self.page and isinstance(self.page.height, (int, float)))
                 else 520
             ),
         )
@@ -293,19 +294,29 @@ class _BibliaModalSession:
             ]
         self.page.update()
 
-    async def _on_versao_changed(self, e) -> None:
-        nova_versao = e.control.value
+    async def _on_versao_selected(self, nova_versao: str) -> None:
         if not nova_versao:
             return
         self.selected_version = nova_versao
         self.view.selected_biblia_version = nova_versao
         self.view.biblia_repository.set_version(nova_versao)
+        update_bible_version_button(
+            self.version_btn,
+            nova_versao,
+            self.view.biblia_repository,
+            self._on_versao_selected,
+        )
         if self.view._save_pref_task and not self.view._save_pref_task.done():
             self.view._save_pref_task.cancel()
         self.view._save_pref_task = self.view._create_background_task(
             self.view._save_preferences()
         )
         await self.carregar_versiculos(nova_versao)
+
+    async def _on_versao_changed(self, e) -> None:
+        nova_versao = getattr(e.control, "value", None)
+        if nova_versao:
+            await self._on_versao_selected(nova_versao)
 
     def _close_dialog(self, ev=None) -> None:
         self.page.pop_dialog()
@@ -356,13 +367,13 @@ class _BibliaModalSession:
         passagem = self.current_passagem
         if not passagem or not passagem.versiculos:
             return
-        texto_copia = f"{passagem.texto_formatado}\n\n({passagem.referencia} - {self.selected_version})"
+        texto_copia = f'"{passagem.texto_formatado}"\n— {passagem.referencia} ({self.selected_version})'
         try:
             await ft.Clipboard().set(texto_copia)
         except Exception:
             pass
         self.view._show_snackbar(
-            self.page, f"Passagem '{passagem.referencia}' copiada!"
+            self.page, f"Passagem '{passagem.referencia} ({self.selected_version})' copiada!"
         )
 
     async def _toggle_capitulo(self, ev=None) -> None:
@@ -470,6 +481,7 @@ class HinoView:
         self.is_biblia_full_chapter: bool = False
         self.current_biblia_passagem: PassagemBiblica | None = None
         self._biblia_loading: bool = False
+        self.inline_version_btn: ft.PopupMenuButton | None = None
 
         self.animated_container: ft.Container | None = None
         self.header_container: ft.Container | None = None
@@ -1540,28 +1552,40 @@ class HinoView:
             self.is_biblia_full_chapter = False
             await self._carregar_biblia_passagem(self.page)
 
-    async def _on_inline_versao_changed(self, e) -> None:
+    async def _on_inline_versao_selected(self, nova_versao: str) -> None:
         """Manipula a alteração de versão da Bíblia na barra de ferramentas inline."""
-        nova_versao = e.control.value
-        if not nova_versao:
+        if not nova_versao or nova_versao == self.selected_biblia_version:
             return
         self.selected_biblia_version = nova_versao
         self.biblia_repository.set_version(nova_versao)
+        if hasattr(self, "inline_version_btn") and self.inline_version_btn:
+            update_bible_version_button(
+                self.inline_version_btn,
+                nova_versao,
+                self.biblia_repository,
+                self._on_inline_versao_selected,
+            )
         self._save_pref_task = self._create_background_task(self._save_preferences())
         await self._carregar_biblia_passagem(self.page)
+
+    async def _on_inline_versao_changed(self, e) -> None:
+        """Manipula a alteração de versão da Bíblia a partir do Dropdown (legado)."""
+        nova_versao = getattr(e.control, "value", None)
+        if nova_versao:
+            await self._on_inline_versao_selected(nova_versao)
 
     async def _on_inline_copiar_passagem(self, e) -> None:
         """Copia a passagem bíblica ativa para a área de transferência."""
         passagem = self.current_biblia_passagem
         if not passagem or not passagem.versiculos:
             return
-        texto_copia = f"{passagem.texto_formatado}\n\n({passagem.referencia} - {self.selected_biblia_version})"
+        texto_copia = f'"{passagem.texto_formatado}"\n— {passagem.referencia} ({self.selected_biblia_version})'
         try:
             await ft.Clipboard().set(texto_copia)
         except Exception:
             pass
         if self.page:
-            self._show_snackbar(self.page, f"Passagem '{passagem.referencia}' copiada!")
+            self._show_snackbar(self.page, f"Passagem '{passagem.referencia} ({self.selected_biblia_version})' copiada!")
 
     async def _on_inline_toggle_capitulo(self, e) -> None:
         """Alterna entre versículos do hino e o capítulo completo na visualização inline."""
@@ -1586,23 +1610,11 @@ class HinoView:
             weight=ft.FontWeight.BOLD,
             color=accent_color,
         )
-        versoes_disponiveis = self.biblia_repository.get_available_versions()
-
-        version_dropdown = ft.Dropdown(
-            options=[ft.dropdown.Option(key=v, text=v) for v in versoes_disponiveis],
-            value=self.selected_biblia_version,
-            width=92,
-            height=36,
-            text_size=13,
-            content_padding=ft.Padding.symmetric(horizontal=8, vertical=2),
-            dense=True,
-            border_radius=8,
-            tooltip="Versão da Bíblia",
-            on_select=lambda e: (
-                self.page.run_task(self._on_inline_versao_changed, e)
-                if self.page
-                else None
-            ),
+        self.inline_version_btn = build_bible_version_button(
+            biblia_repository=self.biblia_repository,
+            current_version=self.selected_biblia_version,
+            on_version_selected=self._on_inline_versao_selected,
+            theme_service=self.theme_service,
         )
 
         copy_btn = ft.OutlinedButton(
@@ -1669,10 +1681,15 @@ class HinoView:
                         wrap=True,
                     ),
                     ft.Row(
-                        controls=[chapter_toggle_btn, version_dropdown, copy_btn],
+                        controls=[
+                            chapter_toggle_btn,
+                            self.inline_version_btn,
+                            copy_btn,
+                        ],
                         spacing=6,
                         wrap=True,
                         alignment=ft.MainAxisAlignment.END,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
@@ -1684,6 +1701,7 @@ class HinoView:
             padding=ft.Padding.symmetric(vertical=8, horizontal=12),
             margin=ft.Margin.only(bottom=8),
         )
+
 
     def _build_single_biblia_chip(
         self, r: str, is_active: bool, is_base: bool, accent_color: str
@@ -2394,19 +2412,38 @@ class HinoView:
         )
         page.show_dialog(bs)
 
-    async def _navigate_search(self, page: ft.Page, term: str) -> None:
-        """Fecha o modal e navega para Home com busca FTS pelo termo."""
+    async def _navigate_filter(
+        self, page: ft.Page, filter_type: str, filter_val: str
+    ) -> None:
+        """Fecha o modal e navega para a lista de hinos com filtro de categoria/tema e origem do hino."""
         try:
             page.pop_dialog()
         except Exception:
             pass
-        await page.push_route(f"/?q={term}")
+        encoded_val = urllib.parse.quote(filter_val.strip())
+        edition_route = f"/{self.edition}" if self.edition in ("novo", "antigo") else "/novo"
+        await page.push_route(
+            f"{edition_route}?{filter_type}={encoded_val}&from_hino={self.hino_id}"
+        )
 
-    def _trigger_search_navigation(self, page: ft.Page, term: str) -> None:
-        """Aciona a navegação de busca mantendo a referência da task."""
+    def _trigger_filter_navigation(
+        self, page: ft.Page, filter_type: str, filter_val: str
+    ) -> None:
+        """Aciona a navegação de filtro mantendo a referência da task."""
         if self._nav_task and not self._nav_task.done():
             self._nav_task.cancel()
-        self._nav_task = asyncio.create_task(self._navigate_search(page, term))
+        self._nav_task = asyncio.create_task(
+            self._navigate_filter(page, filter_type, filter_val)
+        )
+
+    async def _navigate_search(self, page: ft.Page, term: str) -> None:
+        """Compatibilidade: navega como categoria preservando o hino de origem."""
+        await self._navigate_filter(page, "categoria", term)
+
+    def _trigger_search_navigation(self, page: ft.Page, term: str) -> None:
+        """Compatibilidade: aciona a navegação de categoria."""
+        self._trigger_filter_navigation(page, "categoria", term)
+
 
     def _extract_author_metadata(self, hino: Hino) -> list[tuple[str, str]]:
         """Extrai os pares (rótulo, valor) de autoria do hino."""
@@ -2489,8 +2526,8 @@ class HinoView:
                         ft.Icons.FOLDER_OUTLINED, size=16, color=ft.Colors.BLUE_400
                     ),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    on_click=lambda e, c=hino.categoria: self._trigger_search_navigation(
-                        page, c
+                    on_click=lambda e, c=hino.categoria: self._trigger_filter_navigation(
+                        page, "categoria", c
                     ),
                 )
             )
@@ -2504,8 +2541,8 @@ class HinoView:
                         color=ft.Colors.BLUE_300,
                     ),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    on_click=lambda e, sc=hino.subcategoria: self._trigger_search_navigation(
-                        page, sc
+                    on_click=lambda e, sc=hino.subcategoria: self._trigger_filter_navigation(
+                        page, "categoria", sc
                     ),
                 )
             )
@@ -2536,7 +2573,9 @@ class HinoView:
                     ft.Icons.LABEL_OUTLINED, size=15, color=ft.Colors.AMBER_400
                 ),
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                on_click=lambda e, tema=t: self._trigger_search_navigation(page, tema),
+                on_click=lambda e, tema=t: self._trigger_filter_navigation(
+                    page, "tema", tema
+                ),
             )
             for t in temas
         ]

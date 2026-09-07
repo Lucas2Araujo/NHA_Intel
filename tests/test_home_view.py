@@ -450,3 +450,87 @@ async def test_home_view_cached_view_retention(in_memory_db):
     # Quando chamada novamente sem nova busca, deve retornar a mesma instância preservando scroll e listas
     view2 = await home_view_obj.build(mock_page)
     assert view2 is view1
+
+
+@pytest.mark.asyncio
+async def test_home_view_origin_hino_banner_navigation(in_memory_db):
+    from unittest.mock import AsyncMock
+
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo)
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.push_route = AsyncMock()
+
+
+    # Constrói a HomeView com filtro de categoria e hino de origem (Hino 42)
+    view = await home_view_obj.build(
+        mock_page,
+        initial_categoria="Adoração",
+        origin_hino_id=42,
+    )
+    assert home_view_obj.current_filter == "categoria"
+    assert home_view_obj.active_category == "Adoração"
+    assert home_view_obj.origin_hino_id == 42
+    assert home_view_obj.active_filter_banner.visible is True
+
+    # Verifica se o botão do banner exibe "Voltar para o hino"
+    banner_row = home_view_obj.active_filter_banner.content.content
+    assert isinstance(banner_row, ft.Row)
+    back_to_hino_btn = banner_row.controls[2]
+    assert isinstance(back_to_hino_btn, ft.TextButton)
+    assert back_to_hino_btn.content.value == "Voltar para o hino"
+
+    # Testa o clique no botão "Voltar para o hino"
+    await home_view_obj._navigate_back_to_hino()
+    mock_page.push_route.assert_called_once_with("/novo/hino/42")
+
+    # Testa limpeza do filtro
+    await home_view_obj._clear_category_or_theme_filter()
+    assert home_view_obj.origin_hino_id is None
+    assert home_view_obj.active_category is None
+    assert home_view_obj.current_filter == "todos"
+
+
+def test_parse_route_query_main():
+    from main import _parse_route_query
+
+    # Categoria com hino de origem
+    r_base, q, cat, tema, from_hino = _parse_route_query(
+        "/novo?categoria=Adora%C3%A7%C3%A3o&from_hino=42"
+    )
+    assert r_base == "/novo"
+    assert q == ""
+    assert cat == "Adoração"
+    assert tema is None
+    assert from_hino == 42
+
+    # Tema com hino de origem
+    r_base, q, cat, tema, from_hino = _parse_route_query(
+        "/novo?tema=Gratid%C3%A3o&from_hino=10"
+    )
+    assert r_base == "/novo"
+    assert q == ""
+    assert cat is None
+    assert tema == "Gratidão"
+    assert from_hino == 10
+
+    # Busca geral
+    r_base, q, cat, tema, from_hino = _parse_route_query("/novo?q=Cristo")
+    assert r_base == "/novo"
+    assert q == "Cristo"
+    assert cat is None
+    assert tema is None
+    assert from_hino is None
+
+    # Rota simples sem query
+    r_base, q, cat, tema, from_hino = _parse_route_query("/antigo")
+    assert r_base == "/antigo"
+    assert q == ""
+    assert cat is None
+    assert tema is None
+    assert from_hino is None
+
+

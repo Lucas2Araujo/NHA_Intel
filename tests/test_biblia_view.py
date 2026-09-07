@@ -7,7 +7,11 @@ import pytest
 from src.database.connection import DatabaseConnection
 from src.repositories.biblia_repository import BibliaRepository
 from src.services.theme_service import ThemeService
-from src.views.biblia_view import BibliaView
+from src.views.biblia_view import (
+    BibliaView,
+    build_bible_version_button,
+    update_bible_version_button,
+)
 
 
 @pytest.mark.asyncio
@@ -92,9 +96,10 @@ async def test_biblia_view_build_and_render_in_memory():
     view_instance._zoom_out()
     assert view_instance.font_size == initial_font
 
-    # Testa abertura do modal de seleção
+    # Testa abertura do seletor em tela cheia (Plano B)
     view_instance._show_selector_dialog()
-    mock_page.show_dialog.assert_called_once()
+    assert view_instance.active_screen == "livros"
+    assert view_instance.view.appbar.title.value == "Selecionar Livro"
 
     await repo.close()
 
@@ -128,3 +133,351 @@ async def test_biblia_repository_helper_methods():
     assert cap.versiculos[0].numero == 1
 
     await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_biblia_view_marcador_and_copy():
+    from src.views.biblia_view import CANONICAL_BOOK_ABBREVIATIONS
+
+    # Verifica o catálogo canônico de 66 livros
+    assert len(CANONICAL_BOOK_ABBREVIATIONS) == 66
+    assert CANONICAL_BOOK_ABBREVIATIONS[1] == "Gn"
+    assert CANONICAL_BOOK_ABBREVIATIONS[19] == "Sl"
+    assert CANONICAL_BOOK_ABBREVIATIONS[40] == "Mt"
+    assert CANONICAL_BOOK_ABBREVIATIONS[43] == "Jo"
+    assert CANONICAL_BOOK_ABBREVIATIONS[66] == "Ap"
+
+    db_conn = DatabaseConnection(db_path=":memory:", read_only=False)
+    conn = await db_conn.get_connection()
+    await conn.execute("CREATE TABLE IF NOT EXISTS preferencias (chave TEXT PRIMARY KEY, valor TEXT);")
+    await conn.execute("CREATE TABLE book (id INTEGER PRIMARY KEY, testament_reference_id INTEGER, name VARCHAR(50));")
+    await conn.execute("CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);")
+    await conn.execute("INSERT INTO book VALUES (1, 1, 'Gênesis');")
+    await conn.execute("INSERT INTO verse VALUES (1, 1, 1, 1, 'No princípio criou Deus os céus e a terra.');")
+    await conn.commit()
+
+    repo = BibliaRepository(db_conn)
+    theme_service = ThemeService(db_conn)
+    view_instance = BibliaView(repo, theme_service=theme_service)
+
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.update = MagicMock()
+    mock_page.show_dialog = MagicMock()
+    mock_page.pop_dialog = MagicMock()
+
+    await view_instance.build(mock_page, initial_book_id=1, initial_chapter=1)
+    await asyncio.sleep(0.05)
+
+    # 1. Testar toggle de marcador
+    assert len(view_instance.marcadores) == 0
+    await view_instance._toggle_marcador(1, "No princípio criou Deus os céus e a terra.")
+    assert len(view_instance.marcadores) == 1
+    marcador_key = "1_1_1"
+    assert marcador_key in view_instance.marcadores
+    assert view_instance.marcadores[marcador_key]["book_name"] == "Gênesis"
+    assert view_instance.marcadores[marcador_key]["verse"] == 1
+
+    # 2. Testar abertura do modal de marcadores
+    view_instance._show_marcadores_dialog()
+    mock_page.show_dialog.assert_called()
+
+    # 3. Testar cópia de versículo com versão
+    await view_instance._copiar_versiculo(1, "No princípio criou Deus os céus e a terra.")
+
+    # 4. Testar cópia de capítulo completo com versão
+    await view_instance._copiar_capitulo()
+
+    # 5. Testar remoção de marcador
+    await view_instance._remover_marcador_por_id(marcador_key)
+    assert len(view_instance.marcadores) == 0
+
+    # 6. Testar persistência de leitura entre sessões
+    await view_instance._save_preferences()
+    new_view = BibliaView(repo, theme_service=theme_service)
+    await new_view.build(mock_page, initial_book_id=None, initial_chapter=None)
+    assert new_view.current_book_id == 1
+    assert new_view.current_chapter == 1
+    assert new_view.font_size == view_instance.font_size
+
+    # 7. Testar menu de contexto por toque longo / botão direito no versículo
+    mock_page.show_dialog.reset_mock()
+    view_instance._show_verse_context_menu(1, "No princípio criou Deus os céus e a terra.")
+    mock_page.show_dialog.assert_called_once()
+    context_bs = mock_page.show_dialog.call_args[0][0]
+    assert isinstance(context_bs, ft.BottomSheet)
+
+    # 8. Testar navegação sequencial em tela cheia (Plano B)
+    # Abre seleção de livros
+    view_instance._show_selector_dialog()
+    assert view_instance.active_screen == "livros"
+    assert view_instance.view.appbar.title.value == "Selecionar Livro"
+
+    # Seleciona um livro -> transiciona para seleção de capítulos
+    view_instance._open_chapters_selection(1, "Gênesis")
+    assert view_instance.active_screen == "capitulos"
+    assert "Gênesis • Capítulos" in view_instance.view.appbar.title.value
+
+    # Volta aos livros pelo botão do appbar
+    view_instance._open_book_selection()
+    assert view_instance.active_screen == "livros"
+
+    # Volta ao leitor
+    view_instance._back_to_leitor()
+    assert view_instance.active_screen == "leitor"
+
+    # Seleciona capítulo diretamente
+    view_instance._select_chapter(1, 1)
+    assert view_instance.active_screen == "leitor"
+
+    # 9. Verificar que versículos usam GestureDetector e não botões laterais à direita
+    # controls[0] é o cabeçalho do capítulo, controls[1] é o primeiro versículo
+    assert len(view_instance.verses_list.controls) > 1
+    verse_ctrl = view_instance.verses_list.controls[1]
+    assert isinstance(verse_ctrl, ft.GestureDetector)
+    inner_row = verse_ctrl.content.content
+    assert isinstance(inner_row, ft.Row)
+    # Tem apenas o número e o texto (2 controles), sem botões na margem direita
+    assert len(inner_row.controls) == 2
+    assert isinstance(inner_row.controls[1], ft.Text)
+
+    await repo.close()
+
+
+def test_format_verse_numbers_and_citation():
+    from src.views.biblia_view import format_verse_citation, format_verse_numbers
+
+    # 1. format_verse_numbers
+    assert format_verse_numbers([]) == ""
+    assert format_verse_numbers([5]) == "5"
+    assert format_verse_numbers([1, 2, 3]) == "1-3"
+    assert format_verse_numbers([1, 3, 8, 10]) == "1, 3, 8, 10"
+    assert format_verse_numbers([1, 2, 3, 7, 10, 11, 12]) == "1-3, 7, 10-12"
+    # Ordem e duplicatas
+    assert format_verse_numbers([12, 1, 3, 2, 7, 11, 10, 1, 2]) == "1-3, 7, 10-12"
+
+    # 2. format_verse_citation
+    assert format_verse_citation("Gênesis", 1, [], "ARA") == ""
+
+    # Versículo único
+    cit_single = format_verse_citation("João", 3, [(16, "Porque Deus amou o mundo...")], "ARA")
+    assert cit_single == '"Porque Deus amou o mundo..."\n— João 3:16 (ARA)'
+
+    # Versículos contíguos / sequenciais (texto corrido)
+    verses_seq = [
+        (1, "No princípio criou Deus os céus e a terra."),
+        (2, "E a terra era sem forma e vazia."),
+        (3, "E disse Deus: Haja luz."),
+    ]
+    cit_seq = format_verse_citation("Gênesis", 1, verses_seq, "ARA")
+    assert "— Gênesis 1:1-3 (ARA)" in cit_seq
+    assert "No princípio criou Deus os céus e a terra. E a terra era sem forma e vazia. E disse Deus: Haja luz." in cit_seq
+
+    # Versículos não sequenciais / intercalados (prefixados com número)
+    verses_non_seq = [
+        (1, "No princípio criou Deus os céus e a terra."),
+        (3, "E disse Deus: Haja luz."),
+        (8, "E chamou Deus à expansão Céus."),
+    ]
+    cit_non_seq = format_verse_citation("Gênesis", 1, verses_non_seq, "NVI")
+    assert "— Gênesis 1:1, 3, 8 (NVI)" in cit_non_seq
+    assert "1 No princípio" in cit_non_seq
+    assert "3 E disse Deus" in cit_non_seq
+    assert "8 E chamou Deus" in cit_non_seq
+
+
+@pytest.mark.asyncio
+async def test_multi_verse_selection_and_batch_actions():
+    db_conn = DatabaseConnection(db_path=":memory:", read_only=False)
+    conn = await db_conn.get_connection()
+    await conn.execute("CREATE TABLE IF NOT EXISTS preferencias (chave TEXT PRIMARY KEY, valor TEXT);")
+    await conn.execute("CREATE TABLE book (id INTEGER PRIMARY KEY, testament_reference_id INTEGER, name VARCHAR(50));")
+    await conn.execute("CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);")
+    await conn.execute("INSERT INTO book VALUES (40, 2, 'Mateus');")
+    await conn.executemany(
+        "INSERT INTO verse VALUES (?, 40, 13, ?, ?);",
+        [
+            (1, 1, "Tendo Jesus saído de casa..."),
+            (2, 2, "E ajuntou-se muita gente junto dele..."),
+            (3, 3, "E falou-lhes de muitas coisas por parábolas..."),
+            (4, 7, "E outra parte caiu entre espinhos..."),
+            (5, 10, "E, chegando-se a ele os discípulos..."),
+        ],
+    )
+    await conn.commit()
+
+    repo = BibliaRepository(db_conn)
+    theme_service = ThemeService(db_conn)
+    view_instance = BibliaView(repo, theme_service=theme_service)
+
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.update = MagicMock()
+    mock_page.show_dialog = MagicMock()
+    mock_page.pop_dialog = MagicMock()
+    mock_page.set_clipboard = MagicMock()
+
+    view = await view_instance.build(mock_page, initial_book_id=40, initial_chapter=13)
+    await asyncio.sleep(0.05)
+
+    assert not view_instance.is_selection_mode
+    assert len(view_instance.selected_verses) == 0
+
+    # 1. Entrar no modo de seleção ao tocar longamente em um versículo
+    view_instance._on_verse_long_press(1, "Tendo Jesus saído de casa...")
+    assert view_instance.is_selection_mode is True
+    assert 1 in view_instance.selected_verses
+    # A AppBar do View deve agora ser a AppBar de seleção
+    assert view.appbar is not view_instance.normal_appbar
+    assert "1 versículo selecionado" in view.appbar.title.value
+
+    # 2. Alternar versículos com toque simples
+    view_instance._on_verse_tap(2)
+    view_instance._on_verse_tap(3)
+    assert view_instance.selected_verses == {1, 2, 3}
+    assert "3 versículos selecionados" in view.appbar.title.value
+
+    # 3. Adicionar versículo não sequencial
+    view_instance._on_verse_tap(7)
+    assert view_instance.selected_verses == {1, 2, 3, 7}
+
+    # 4. Marcar em lote os versículos selecionados
+    await view_instance._toggle_marcadores_selected()
+    # Modo de seleção deve ser encerrado após a ação
+    assert not view_instance.is_selection_mode
+    assert len(view_instance.selected_verses) == 0
+    assert view.appbar is view_instance.normal_appbar
+
+    # Todos os 4 versículos devem estar em marcadores
+    assert "40_13_1" in view_instance.marcadores
+    assert "40_13_2" in view_instance.marcadores
+    assert "40_13_3" in view_instance.marcadores
+    assert "40_13_7" in view_instance.marcadores
+
+    # 5. Selecionar todos os versículos do capítulo
+    view_instance._enter_selection_mode(1)
+    view_instance._select_all_verses()
+    assert len(view_instance.selected_verses) == 5
+
+    # 6. Copiar versículos selecionados
+    await view_instance._copy_selected_verses()
+    assert not view_instance.is_selection_mode
+    mock_page.set_clipboard.assert_called()
+    copied_text = mock_page.set_clipboard.call_args[0][0]
+    assert "Mateus 13:" in copied_text
+
+    # 7. Desmarcar todos os selecionados em lote
+    view_instance._enter_selection_mode(1)
+    view_instance._on_verse_tap(2)
+    view_instance._on_verse_tap(3)
+    view_instance._on_verse_tap(7)
+    # Como 1, 2, 3 e 7 já estão marcados, toggle deve desmarcá-los
+    await view_instance._toggle_marcadores_selected()
+    assert "40_13_1" not in view_instance.marcadores
+    assert "40_13_2" not in view_instance.marcadores
+    assert "40_13_3" not in view_instance.marcadores
+    assert "40_13_7" not in view_instance.marcadores
+
+    # 8. Cancelar modo de seleção via _exit_selection_mode
+    view_instance._enter_selection_mode(10)
+    assert view_instance.is_selection_mode is True
+    view_instance._exit_selection_mode()
+    assert view_instance.is_selection_mode is False
+    assert len(view_instance.selected_verses) == 0
+    assert view.appbar is view_instance.normal_appbar
+
+    # 9. Troca de versão via _select_version
+    assert view_instance.version_btn is not None
+    await view_instance._select_version("ARA")
+    assert view_instance.selected_version == "ARA"
+
+    await repo.close()
+
+
+def test_build_bible_version_button_and_update():
+    mock_repo = MagicMock(spec=BibliaRepository)
+    mock_repo.get_available_versions.return_value = ["ARA", "NVI", "NTLH"]
+
+    selected_calls = []
+
+    def on_select(ver: str):
+        selected_calls.append(ver)
+
+    btn = build_bible_version_button(
+        biblia_repository=mock_repo,
+        current_version="ARA",
+        on_version_selected=on_select,
+    )
+    assert isinstance(btn, ft.PopupMenuButton)
+    assert len(btn.items) == 3
+    # Verifica que o item ativo possui o checkmark
+    assert "ARA  ✓" in btn.items[0].content
+    assert "NVI" in btn.items[1].content
+
+    # Dispara callback ao clicar no item 1
+    btn.items[1].on_click(None)
+    assert selected_calls == ["NVI"]
+
+    # Atualiza o botão para NVI
+    update_bible_version_button(btn, "NVI", mock_repo, on_select)
+    assert "NVI  ✓" in btn.items[1].content
+    assert "ARA  ✓" not in btn.items[0].content
+
+
+@pytest.mark.asyncio
+async def test_biblia_view_plan_b_full_screen_flow():
+    db_conn = DatabaseConnection(db_path=":memory:", read_only=False)
+    conn = await db_conn.get_connection()
+    await conn.execute("CREATE TABLE IF NOT EXISTS preferencias (chave TEXT PRIMARY KEY, valor TEXT);")
+    await conn.execute("CREATE TABLE book (id INTEGER PRIMARY KEY, testament_reference_id INTEGER, name VARCHAR(50));")
+    await conn.execute("CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);")
+    await conn.execute("INSERT INTO book VALUES (1, 1, 'Gênesis');")
+    await conn.execute("INSERT INTO book VALUES (40, 2, 'Mateus');")
+    await conn.execute("INSERT INTO verse VALUES (1, 1, 1, 1, 'No princípio...');")
+    await conn.execute("INSERT INTO verse VALUES (2, 1, 2, 1, 'Assim os céus...');")
+    await conn.commit()
+
+    repo = BibliaRepository(db_conn)
+    theme_service = ThemeService(db_conn)
+    view_instance = BibliaView(repo, theme_service=theme_service)
+
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.update = MagicMock()
+
+    await view_instance.build(mock_page, initial_book_id=1, initial_chapter=1)
+
+    # 1. Inicia na tela 'leitor'
+    assert view_instance.active_screen == "leitor"
+    assert view_instance.view.appbar is view_instance.normal_appbar
+
+    # 2. Abre tela de livros
+    view_instance._open_book_selection()
+    assert view_instance.active_screen == "livros"
+    assert view_instance.view.appbar.title.value == "Selecionar Livro"
+    assert view_instance.books_grid_container is not None
+
+    # 3. Volta ao leitor
+    view_instance._back_to_leitor()
+    assert view_instance.active_screen == "leitor"
+    assert view_instance.view.appbar is view_instance.normal_appbar
+
+    # 4. Transiciona para seleção de capítulos
+    view_instance._open_chapters_selection(1, "Gênesis")
+    assert view_instance.active_screen == "capitulos"
+    assert "Gênesis • Capítulos" in view_instance.view.appbar.title.value
+    await asyncio.sleep(0.05)
+    assert view_instance.chapters_grid_container is not None
+
+    # 5. Volta da tela de capítulos para os livros
+    view_instance._open_book_selection()
+    assert view_instance.active_screen == "livros"
+
+    # 6. Seleciona um capítulo diretamente -> volta ao leitor e carrega versículos
+    view_instance._select_chapter(1, 2)
+    assert view_instance.active_screen == "leitor"
+    assert view_instance.current_book_id == 1
+    assert view_instance.current_chapter == 2
+    await asyncio.sleep(0.05)
+    assert view_instance.current_chapter == 2
+
+    await repo.close()
+
+

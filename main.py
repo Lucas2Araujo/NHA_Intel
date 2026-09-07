@@ -33,7 +33,7 @@ from src.views.update_dialog import show_update_dialog
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
-    APP_VERSION = "0.1.0"
+    APP_VERSION = "4.2.0"
 
 ROUTE_SELECAO = "/"
 ROUTE_NOVO = "/novo"
@@ -138,24 +138,40 @@ _build_splash_view = _build_loading_view
 
 
 
-def _parse_route_query(route: str) -> tuple[str, str]:
-    """Extrai a rota base e o parâmetro de busca (?q=) da URL."""
+def _parse_route_query(
+    route: str,
+) -> tuple[str, str, str | None, str | None, int | None]:
+    """Extrai a rota base e os parâmetros de query da URL."""
     if "?" not in route:
-        return route, ""
+        return route, "", None, None, None
     parts = route.split("?", 1)
     route_base = parts[0] or "/"
     query_str = parts[1]
     initial_search = ""
+    initial_categoria = None
+    initial_tema = None
+    from_hino = None
     for param in query_str.split("&"):
         if param.startswith("q="):
             initial_search = urllib.parse.unquote(param[2:])
-    return route_base, initial_search
+        elif param.startswith("categoria="):
+            initial_categoria = urllib.parse.unquote(param[10:])
+        elif param.startswith("tema="):
+            initial_tema = urllib.parse.unquote(param[5:])
+        elif param.startswith("from_hino="):
+            val = param[10:]
+            if val.isdigit():
+                from_hino = int(val)
+    return route_base, initial_search, initial_categoria, initial_tema, from_hino
 
 
 async def _render_home_route(
     page: ft.Page,
     route_base: str,
     initial_search: str,
+    initial_categoria: str | None,
+    initial_tema: str | None,
+    origin_hino_id: int | None,
     view_cache: dict[str, ft.View],
     home_novo_instance: HomeView,
     home_antigo_instance: HomeView,
@@ -168,14 +184,23 @@ async def _render_home_route(
         or route_base.startswith("/hino/")
     ):
         view_cache[ROUTE_NOVO] = await home_novo_instance.build(
-            page, initial_search=initial_search
+            page,
+            initial_search=initial_search,
+            initial_categoria=initial_categoria,
+            initial_tema=initial_tema,
+            origin_hino_id=origin_hino_id,
         )
         target_views.append(view_cache[ROUTE_NOVO])
     elif route_base == ROUTE_ANTIGO or route_base.startswith(f"{ROUTE_ANTIGO}/"):
         view_cache[ROUTE_ANTIGO] = await home_antigo_instance.build(
-            page, initial_search=initial_search
+            page,
+            initial_search=initial_search,
+            initial_categoria=initial_categoria,
+            initial_tema=initial_tema,
+            origin_hino_id=origin_hino_id,
         )
         target_views.append(view_cache[ROUTE_ANTIGO])
+
 
 
 def _render_agente_route(
@@ -345,9 +370,25 @@ async def main(page: ft.Page):
         biblia_repository, theme_service=theme_service
     )
 
+    navigation_history: list[str] = []
+    current_tracked_route: list[str] = [page.route or "/"]
+    is_popping: list[bool] = [False]
+
     async def route_change(e=None):
         route = page.route or "/"
-        route_base, initial_search = _parse_route_query(route)
+        (
+            route_base,
+            initial_search,
+            initial_categoria,
+            initial_tema,
+            from_hino,
+        ) = _parse_route_query(route)
+
+        if not is_popping[0] and current_tracked_route[0] != route:
+            if not navigation_history or navigation_history[-1] != current_tracked_route[0]:
+                navigation_history.append(current_tracked_route[0])
+            current_tracked_route[0] = route
+
         if "?" in route:
             page.route = route_base
 
@@ -361,6 +402,9 @@ async def main(page: ft.Page):
             page,
             route_base,
             initial_search,
+            initial_categoria,
+            initial_tema,
+            from_hino,
             view_cache,
             home_novo_instance,
             home_antigo_instance,
@@ -371,8 +415,8 @@ async def main(page: ft.Page):
 
         # Rota da Bíblia Sagrada (/biblia ou /biblia/{book_id}/{chapter})
         if route_base == ROUTE_BIBLIA or route_base.startswith(f"{ROUTE_BIBLIA}/"):
-            initial_book_id = 1
-            initial_chapter = 1
+            initial_book_id = None
+            initial_chapter = None
             parts = route_base.strip("/").split("/")
             if len(parts) >= 3 and parts[1].isdigit() and parts[2].isdigit():
                 initial_book_id = int(parts[1])
@@ -400,18 +444,29 @@ async def main(page: ft.Page):
         page.views.extend(new_views)
         page.update()
 
-    async def view_pop(e: ft.ViewPopEvent):
+    async def view_pop(e: ft.ViewPopEvent | None = None):
         try:
             if hasattr(page, "pop_dialog") and page.pop_dialog():
                 return
         except Exception:
             pass
 
-        if len(page.views) > 1:
+        if navigation_history:
+            prev_route = navigation_history.pop()
+            is_popping[0] = True
+            current_tracked_route[0] = prev_route
+            try:
+                await page.push_route(prev_route)
+            finally:
+                is_popping[0] = False
+        elif len(page.views) > 1:
             page.views.pop()
             top_view = page.views[-1]
             page.route = top_view.route
             await route_change(None)
+        else:
+            await page.push_route("/")
+
 
     page.on_route_change = route_change
     page.on_view_pop = view_pop
