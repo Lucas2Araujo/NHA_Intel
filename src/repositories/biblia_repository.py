@@ -982,3 +982,180 @@ class BibliaRepository:
         except Exception:
             return None
 
+    async def pesquisar_texto(
+        self,
+        termo: str,
+        book_id: int | None = None,
+        testamento: int | None = None,
+        versao: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        """
+        Pesquisa versículos bíblicos por termos/palavras-chave ou por referência direta.
+
+        Args:
+            termo: String de pesquisa (ex: "luz do mundo", "amor", ou referência como "João 3:16").
+            book_id: Opcional, filtra para um livro específico (1 a 66).
+            testamento: Opcional, 1 para Antigo Testamento (livros 1..39), 2 para Novo Testamento (livros 40..66).
+            versao: Versão bíblica a consultar (padrão: versão ativa).
+            limit: Quantidade máxima de resultados retornados (padrão: 100).
+
+        Returns:
+            Lista de dicionários com chaves:
+              'book_id', 'book_name', 'chapter', 'verse', 'text', 'referencia', 'versao'.
+        """
+        if not termo or not termo.strip():
+            return []
+
+        clean_term = termo.strip()
+        v = (versao or self.active_version or self.DEFAULT_VERSION).strip().upper()
+        book_names = await self._get_book_names(v)
+
+        # 1. Reconhecimento de referência bíblica direta (ex: "João 3:16", "Sl 23")
+        parsed_ref = self.parse_referencia(clean_term)
+        if parsed_ref:
+            try:
+                passagem = await self.buscar_passagem(clean_term, versao=v)
+                if passagem and passagem.versiculos:
+                    resultados_ref: list[dict[str, Any]] = []
+                    for vers in passagem.versiculos:
+                        bid = parsed_ref["book_id"]
+                        if book_id is not None and bid != book_id:
+                            continue
+                        if testamento is not None:
+                            expected_tid = 1 if bid <= 39 else 2
+                            if expected_tid != testamento:
+                                continue
+                        bname = book_names.get(bid, passagem.livro)
+                        resultados_ref.append(
+                            {
+                                "book_id": bid,
+                                "book_name": bname,
+                                "chapter": vers.capitulo,
+                                "verse": vers.numero,
+                                "text": vers.texto,
+                                "referencia": f"{bname} {vers.capitulo}:{vers.numero}",
+                                "versao": v,
+                            }
+                        )
+                    if resultados_ref:
+                        return resultados_ref[:limit]
+            except Exception:
+                pass
+
+        # 2. Busca textual flexível por palavras-chave
+        words = [w for w in re.split(r"\s+", clean_term) if len(w) >= 2]
+        if not words:
+            words = [clean_term]
+
+        try:
+            conn_mgr = self._get_connection(v)
+            conn = await conn_mgr.get_connection()
+
+            conditions = ["1=1"]
+            params: list[Any] = []
+
+            for w in words:
+                conditions.append("v.text LIKE ?")
+                params.append(f"%{w}%")
+
+            if book_id is not None and 1 <= book_id <= 66:
+                conditions.append("v.book_id = ?")
+                params.append(book_id)
+
+            if testamento is not None:
+                if testamento == 1:
+                    conditions.append("v.book_id <= 39")
+                elif testamento == 2:
+                    conditions.append("v.book_id >= 40")
+
+            params.append(limit)
+
+            where_clause = " AND ".join(conditions)
+            query = f"""
+                SELECT v.book_id, v.chapter, v.verse, v.text, b.name as book_name
+                FROM verse v
+                LEFT JOIN book b ON b.id = v.book_id
+                WHERE {where_clause}
+                ORDER BY v.book_id ASC, v.chapter ASC, v.verse ASC
+                LIMIT ?;
+            """
+            async with conn.execute(query, params) as cursor:
+                rows = await cursor.fetchall()
+
+            resultados: list[dict[str, Any]] = []
+            for r in rows:
+                bid = int(r["book_id"])
+                ch = int(r["chapter"])
+                vn = int(r["verse"])
+                raw_bname = r["book_name"]
+                bname = (
+                    str(raw_bname)
+                    if raw_bname
+                    else book_names.get(bid, f"Livro {bid}")
+                )
+                txt = str(r["text"]).strip()
+                resultados.append(
+                    {
+                        "book_id": bid,
+                        "book_name": bname,
+                        "chapter": ch,
+                        "verse": vn,
+                        "text": txt,
+                        "referencia": f"{bname} {ch}:{vn}",
+                        "versao": v,
+                    }
+                )
+            return resultados
+        except Exception:
+            return []
+
+    async def comparar_versiculo(
+        self, book_id: int, chapter: int, verse: int
+    ) -> list[dict[str, Any]]:
+        """
+        Consulta o mesmo versículo em todas as versões da Bíblia disponíveis no app.
+
+        Args:
+            book_id: ID do livro (1 a 66).
+            chapter: Número do capítulo.
+            verse: Número do versículo.
+
+        Returns:
+            Lista de dicionários ordenados com:
+              'versao', 'nome_versao', 'texto', 'is_active'.
+        """
+        if not (1 <= book_id <= 66) or chapter < 1 or verse < 1:
+            return []
+
+        versoes = self.get_available_versions()
+        active_ver = (self.active_version or self.DEFAULT_VERSION).strip().upper()
+        comparacoes: list[dict[str, Any]] = []
+
+        for v in versoes:
+            v_upper = v.strip().upper()
+            try:
+                conn_mgr = self._get_connection(v_upper)
+                conn = await conn_mgr.get_connection()
+                query = """
+                    SELECT text FROM verse
+                    WHERE book_id = ? AND chapter = ? AND verse = ?
+                    LIMIT 1;
+                """
+                async with conn.execute(query, (book_id, chapter, verse)) as cursor:
+                    row = await cursor.fetchone()
+                if row and row["text"]:
+                    comparacoes.append(
+                        {
+                            "versao": v_upper,
+                            "nome_versao": self.get_version_name(v_upper),
+                            "texto": str(row["text"]).strip(),
+                            "is_active": v_upper == active_ver,
+                        }
+                    )
+            except Exception:
+                continue
+
+        return comparacoes
+
+

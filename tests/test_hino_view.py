@@ -857,5 +857,87 @@ async def test_hino_view_version_selector_synchronization(in_memory_db):
         mock_carregar_modal.assert_called_once_with("ARA")
 
 
+@pytest.mark.asyncio
+async def test_edition_feedback_banner_and_soft_colors(in_memory_db):
+    """Verifica se o banner de feedback visual da edição selecionada com cores suaves funciona dinamicamente."""
+    import json
+
+    from src.models.comparativo import HinoComparativo
+
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    mock_comp_repo = MagicMock()
+    comp = HinoComparativo(
+        id=1,
+        numero_novo="1",
+        numero_antigo="5",
+        titulo_novo="Glória a Deus",
+        titulo_antigo="Antigo Glória a Deus",
+        status_comparacao="MODIFICADO",
+        resumo_alteracoes="Alteração de estrofe",
+        diff_json=json.dumps({"similaridade_pct": 85.0, "estatisticas": {}, "blocos": []}),
+    )
+    mock_comp_repo.get_by_numero_novo = AsyncMock(return_value=comp)
+
+    mock_antigo_repo = MagicMock()
+    mock_antigo_repo.get_by_numero = AsyncMock(
+        return_value=Hino(
+            id=5,
+            numero="5",
+            titulo="Antigo Glória a Deus",
+            letra="Letra antiga do hino",
+        )
+    )
+
+    view_obj = HinoView(
+        1,
+        hino_repo,
+        fav_repo,
+        hist_repo,
+        comparativo_repository=mock_comp_repo,
+        antigo_repository=mock_antigo_repo,
+        edition="novo",
+    )
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.height = 800
+    mock_page.update = MagicMock()
+
+    await view_obj.build(mock_page)
+
+    # 1. Verifica presença inicial do banner de feedback
+    assert view_obj.edition_feedback_banner is not None
+    assert view_obj.edition_feedback_text is not None
+    assert view_obj.edition_feedback_text.value == "Novo Hinário selecionado"
+    assert view_obj.edition_feedback_banner.bgcolor == ft.Colors.PRIMARY_CONTAINER
+
+    # 2. Alterna para o Hinário Antigo
+    view_obj._on_segment_change(mock_page, ["antigo"])
+    assert view_obj.selected_view_mode == "antigo"
+    assert view_obj.edition_feedback_text.value == "Hinário Tradicional selecionado"
+    assert view_obj.edition_feedback_banner.bgcolor == ft.Colors.SECONDARY_CONTAINER
+
+    # 3. Alterna para Comparação de Mudanças
+    view_obj._on_segment_change(mock_page, ["comparacao"])
+    assert view_obj.selected_view_mode == "comparacao"
+    assert view_obj.edition_feedback_text.value == "Modo de Comparação selecionado"
+    assert view_obj.edition_feedback_banner.bgcolor == ft.Colors.TERTIARY_CONTAINER
+
+    # 4. Alterna para o modo Bíblia
+    with patch.object(view_obj, "_carregar_biblia_passagem", new_callable=AsyncMock):
+        view_obj._on_segment_change(mock_page, ["biblia"])
+        assert view_obj.selected_view_mode == "biblia"
+        assert view_obj.edition_feedback_text.value == "Texto Bíblico selecionado"
+        assert view_obj.edition_feedback_banner.bgcolor == ft.Colors.SURFACE_CONTAINER_HIGHEST
+
+    # 5. Alterna via clique no chip comparativo
+    view_obj._on_chip_comparativo_click(mock_page)
+    assert view_obj.selected_view_mode == "comparacao"
+    assert view_obj.edition_feedback_text.value == "Modo de Comparação selecionado"
+    assert view_obj.edition_feedback_banner.bgcolor == ft.Colors.TERTIARY_CONTAINER
+
+
+
 
 

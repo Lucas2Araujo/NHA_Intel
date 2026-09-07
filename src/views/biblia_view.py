@@ -7,6 +7,7 @@ import flet as ft
 from src.models.biblia import PassagemBiblica
 from src.repositories.biblia_repository import BibliaRepository
 from src.services.theme_service import ThemeService
+from src.views.settings_dialog import ensure_page_dialogs
 
 PREF_BIBLIA_KEY = "biblia_prefs"
 PREF_MARCADORES_KEY = "biblia_marcadores"
@@ -235,6 +236,7 @@ class BibliaView:
 
         # Configurações de exibição de texto, marcadores e persistência
         self.font_size: int = 17
+        self.font_family: str = "Roboto"
         self.marcadores: dict[str, dict[str, Any]] = {}
         self._prefs_loaded: bool = False
         self._prefs_db: Any | None = None
@@ -257,12 +259,19 @@ class BibliaView:
         self.verses_list: ft.ListView | None = None
         self.header_info_text: ft.Text | None = None
 
-        # Telas ativas de navegação sequencial em tela cheia (Plano B)
-        self.active_screen: str = "leitor"  # "leitor", "livros", "capitulos"
+        # Telas ativas de navegação sequencial em tela cheia (Plano B + Sprint 4)
+        self.active_screen: str = "leitor"  # "leitor", "livros", "capitulos", "pesquisa"
         self.selected_modal_book: dict[str, Any] = {"id": 1, "name": "Gênesis"}
         self.selected_testament: str = "AT"
         self.books_grid_container: ft.Container | None = None
         self.chapters_grid_container: ft.Container | None = None
+
+        # Estado da pesquisa bíblica (Sprint 4)
+        self.search_query: str = ""
+        self.search_scope: str = "todos"  # "todos", "livro", "at", "nt"
+        self.search_results: list[dict[str, Any]] = []
+        self.is_searching: bool = False
+        self.search_input: ft.TextField | None = None
 
     def _show_snackbar(self, message: str, duration: int = 2500) -> None:
         """Exibe um SnackBar de forma segura compatível com o Flet."""
@@ -315,6 +324,8 @@ class BibliaView:
                         self.biblia_repository.set_version(self.selected_version)
                 if "font_size" in data:
                     self.font_size = int(data.get("font_size", self.font_size))
+                if "font_family" in data:
+                    self.font_family = str(data.get("font_family", self.font_family))
 
             # 2. Carrega biblia_marcadores
             async with conn.execute(
@@ -329,7 +340,7 @@ class BibliaView:
         self._prefs_loaded = True
 
     async def _save_preferences(self) -> None:
-        """Persiste a sessão atual (livro, capítulo, versão e tamanho de fonte)."""
+        """Persiste a sessão atual (livro, capítulo, versão, tamanho e família de fonte)."""
         try:
             conn = await self._get_prefs_connection()
             payload = json.dumps(
@@ -338,6 +349,7 @@ class BibliaView:
                     "chapter": self.current_chapter,
                     "version": self.selected_version,
                     "font_size": self.font_size,
+                    "font_family": self.font_family,
                 }
             )
             await conn.execute(
@@ -571,6 +583,42 @@ class BibliaView:
             else f"{len(self.selected_verses)} versículos selecionados"
         )
 
+        selection_actions: list[ft.Control] = [
+            ft.IconButton(
+                icon=ft.Icons.SELECT_ALL,
+                tooltip="Selecionar todos os versículos",
+                on_click=lambda e: self._select_all_verses(),
+            ),
+            ft.IconButton(
+                icon=(
+                    ft.Icons.BOOKMARK_REMOVE
+                    if all_marked
+                    else ft.Icons.BOOKMARK_ADD
+                ),
+                icon_color=ft.Colors.ERROR if all_marked else None,
+                tooltip=(
+                    "Desmarcar versículos selecionados"
+                    if all_marked
+                    else "Marcar / Grifar versículos selecionados"
+                ),
+                on_click=lambda e: asyncio.create_task(self._toggle_marcadores_selected()),
+            ),
+            ft.IconButton(
+                icon=ft.Icons.CONTENT_COPY,
+                tooltip="Copiar versículos selecionados",
+                on_click=lambda e: asyncio.create_task(self._copy_selected_verses()),
+            ),
+        ]
+
+        if len(self.selected_verses) == 1:
+            selection_actions.append(
+                ft.IconButton(
+                    icon=ft.Icons.COMPARE_ARROWS,
+                    tooltip="Comparar versões do versículo",
+                    on_click=lambda e: asyncio.create_task(self._abrir_comparador_selecionado()),
+                )
+            )
+
         selection_appbar = ft.AppBar(
             leading=ft.IconButton(
                 ft.Icons.CLOSE,
@@ -580,35 +628,250 @@ class BibliaView:
             title=ft.Text(count_text, size=15, weight=ft.FontWeight.BOLD),
             center_title=False,
             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            actions=[
-                ft.IconButton(
-                    icon=ft.Icons.SELECT_ALL,
-                    tooltip="Selecionar todos os versículos",
-                    on_click=lambda e: self._select_all_verses(),
-                ),
-                ft.IconButton(
-                    icon=(
-                        ft.Icons.BOOKMARK_REMOVE
-                        if all_marked
-                        else ft.Icons.BOOKMARK_ADD
-                    ),
-                    icon_color=ft.Colors.ERROR if all_marked else None,
-                    tooltip=(
-                        "Desmarcar versículos selecionados"
-                        if all_marked
-                        else "Marcar / Grifar versículos selecionados"
-                    ),
-                    on_click=lambda e: asyncio.create_task(self._toggle_marcadores_selected()),
-                ),
-                ft.IconButton(
-                    icon=ft.Icons.CONTENT_COPY,
-                    tooltip="Copiar versículos selecionados",
-                    on_click=lambda e: asyncio.create_task(self._copy_selected_verses()),
-                ),
-            ],
+            actions=selection_actions,
         )
         self.view.appbar = selection_appbar
         self.page.update()
+
+    # Alias de compatibilidade com chamadas de renderização
+    _render_selection_appbar = _update_appbar_for_selection
+
+    async def _abrir_comparador_selecionado(self) -> None:
+        """Abre o comparador de versões para o versículo único selecionado."""
+        if not self.selected_verses:
+            return
+        v_num = min(self.selected_verses)
+        await self._abrir_comparador_versoes(
+            self.current_book_id, self.current_chapter, v_num
+        )
+
+    async def _abrir_comparador_versoes(
+        self,
+        book_id: int | None = None,
+        chapter: int | None = None,
+        verse_num: int | None = None,
+    ) -> None:
+        """
+        Abre um modal (BottomSheet) moderno com scroll vertical comparando o versículo
+        selecionado em todas as versões da Bíblia disponíveis no aplicativo.
+        """
+        if not self.page:
+            return
+
+        b_id = book_id if book_id is not None else self.current_book_id
+        ch = chapter if chapter is not None else self.current_chapter
+        vn = verse_num if verse_num is not None else 1
+        b_name = self._get_book_name(b_id)
+        accent_color = self._get_accent_color()
+
+        comparacoes = await self.biblia_repository.comparar_versiculo(b_id, ch, vn)
+        if not comparacoes:
+            self._show_snackbar("Nenhuma versão encontrada para comparação.")
+            return
+
+        ref_title = f"{b_name} {ch}:{vn}"
+
+        async def _copiar_todas_as_versoes(e):
+            linhas: list[str] = [f"{ref_title} em diferentes traduções:\n"]
+            for item in comparacoes:
+                linhas.append(f"[{item['versao']}] {item['texto']}")
+            texto_consolidado = "\n\n".join(linhas)
+            try:
+                await ft.Clipboard().set(texto_consolidado)
+            except Exception:
+                pass
+            self._show_snackbar("Comparações copiadas para a área de transferência!")
+
+        async def _copiar_versao_individual(item: dict[str, Any]):
+            texto_ind = f'"{item["texto"]}"\n— {ref_title} ({item["versao"]})'
+            try:
+                await ft.Clipboard().set(texto_ind)
+            except Exception:
+                pass
+            self._show_snackbar(f"Versículo na versão {item['versao']} copiado!")
+
+        async def _ler_nesta_versao(nova_versao: str):
+            if self.page:
+                try:
+                    self.page.pop_dialog()
+                except Exception:
+                    pass
+            await self._select_version(nova_versao)
+
+        version_cards: list[ft.Control] = []
+        for item in comparacoes:
+            is_active = item.get("is_active", False)
+            ver = item["versao"]
+            nome_ver = item["nome_versao"]
+            txt = item["texto"]
+
+            badge_controls: list[ft.Control] = [
+                ft.Container(
+                    content=ft.Text(
+                        ver,
+                        size=11,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.ON_PRIMARY_CONTAINER
+                        if is_active
+                        else ft.Colors.ON_SURFACE_VARIANT,
+                    ),
+                    bgcolor=ft.Colors.PRIMARY_CONTAINER
+                    if is_active
+                    else ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                    padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+                    border_radius=6,
+                ),
+                ft.Text(
+                    nome_ver,
+                    size=13,
+                    weight=ft.FontWeight.W_500,
+                    color=ft.Colors.ON_SURFACE,
+                    overflow=ft.TextOverflow.ELLIPSIS,
+                ),
+            ]
+            if is_active:
+                badge_controls.append(
+                    ft.Container(
+                        content=ft.Text(
+                            "Em Leitura",
+                            size=10,
+                            weight=ft.FontWeight.BOLD,
+                            color=ft.Colors.ON_SECONDARY_CONTAINER,
+                        ),
+                        bgcolor=ft.Colors.SECONDARY_CONTAINER,
+                        padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                        border_radius=4,
+                    )
+                )
+
+            actions_row_controls: list[ft.Control] = [
+                ft.TextButton(
+                    "Copiar",
+                    icon=ft.Icons.CONTENT_COPY,
+                    style=ft.ButtonStyle(
+                        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                        text_style=ft.TextStyle(size=12),
+                    ),
+                    on_click=lambda e, it=item: asyncio.create_task(
+                        _copiar_versao_individual(it)
+                    ),
+                )
+            ]
+            if not is_active:
+                actions_row_controls.append(
+                    ft.TextButton(
+                        "Ler nesta versão",
+                        icon=ft.Icons.MENU_BOOK,
+                        style=ft.ButtonStyle(
+                            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                            text_style=ft.TextStyle(size=12),
+                        ),
+                        on_click=lambda e, v=ver: asyncio.create_task(
+                            _ler_nesta_versao(v)
+                        ),
+                    )
+                )
+
+            card = ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Row(
+                            controls=badge_controls,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            spacing=8,
+                        ),
+                        ft.Text(
+                            txt,
+                            size=self.font_size,
+                            font_family=self.font_family,
+                            color=ft.Colors.ON_SURFACE,
+                            selectable=True,
+                        ),
+                        ft.Row(
+                            controls=actions_row_controls,
+                            alignment=ft.MainAxisAlignment.END,
+                            spacing=4,
+                        ),
+                    ],
+                    spacing=8,
+                ),
+                bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+                border_radius=12,
+                padding=12,
+                border=ft.Border.all(
+                    1,
+                    ft.Colors.PRIMARY
+                    if is_active
+                    else ft.Colors.OUTLINE_VARIANT,
+                ),
+            )
+            version_cards.append(card)
+
+        bs = ft.BottomSheet(
+            scrollable=True,
+            show_drag_handle=True,
+            content=ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Row(
+                            controls=[
+                                ft.Row(
+                                    controls=[
+                                        ft.Icon(
+                                            ft.Icons.COMPARE_ARROWS,
+                                            size=20,
+                                            color=accent_color,
+                                        ),
+                                        ft.Text(
+                                            f"Comparar Versões — {ref_title}",
+                                            weight=ft.FontWeight.BOLD,
+                                            size=16,
+                                            color=ft.Colors.ON_SURFACE,
+                                        ),
+                                    ],
+                                    spacing=8,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                ft.Row(
+                                    controls=[
+                                        ft.IconButton(
+                                            ft.Icons.COPY_ALL,
+                                            tooltip="Copiar todas as versões",
+                                            on_click=lambda e: asyncio.create_task(
+                                                _copiar_todas_as_versoes(e)
+                                            ),
+                                        ),
+                                        ft.IconButton(
+                                            ft.Icons.CLOSE,
+                                            tooltip="Fechar",
+                                            on_click=lambda e: self.page.pop_dialog()
+                                            if self.page
+                                            else None,
+                                        ),
+                                    ],
+                                    spacing=2,
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        ft.Divider(height=1),
+                        ft.Column(
+                            controls=version_cards,
+                            spacing=10,
+                            scroll=ft.ScrollMode.AUTO,
+                            expand=True,
+                        ),
+                    ],
+                    spacing=12,
+                    expand=True,
+                ),
+                padding=ft.Padding.only(left=16, top=8, right=16, bottom=24),
+                height=520,
+            ),
+        )
+        ensure_page_dialogs(self.page)
+        self.page.show_dialog(bs)
+
 
     def _navegar_para_marcador(self, book_id: int, chapter: int, versao: str) -> None:
         """Navega diretamente para o versículo/capítulo salvo."""
@@ -785,18 +1048,23 @@ class BibliaView:
                 else 520,
             )
         )
-        self.page.show_dialog(bs)
+        if self.page:
+            ensure_page_dialogs(self.page)
+            self.page.show_dialog(bs)
 
     def _get_accent_color(self) -> str:
         if self.theme_service:
             return self.theme_service.get_accent_color("novo")
-        return ft.Colors.BLUE_400
+        return ft.Colors.PRIMARY
+
+    def _get_book_name(self, book_id: int) -> str:
+        for b in self.livros:
+            if b["id"] == book_id:
+                return b["name"]
+        return f"Livro {book_id}"
 
     def _get_current_book_name(self) -> str:
-        for b in self.livros:
-            if b["id"] == self.current_book_id:
-                return b["name"]
-        return f"Livro {self.current_book_id}"
+        return self._get_book_name(self.current_book_id)
 
     async def _load_books(self) -> None:
         """Carrega a lista de livros se ainda não carregada."""
@@ -1019,6 +1287,7 @@ class BibliaView:
                         ft.Text(
                             v.texto,
                             size=self.font_size,
+                            font_family=self.font_family,
                             selectable=not self.is_selection_mode,
                             expand=True,
                         ),
@@ -1091,6 +1360,14 @@ class BibliaView:
         def _handle_copiar(e):
             self.page.pop_dialog()
             asyncio.create_task(self._copiar_versiculo(v_num, v_text))
+
+        def _handle_comparar(e):
+            self.page.pop_dialog()
+            asyncio.create_task(
+                self._abrir_comparador_versoes(
+                    self.current_book_id, self.current_chapter, v_num
+                )
+            )
 
         context_bs = ft.BottomSheet(
             content=ft.Container(
@@ -1166,6 +1443,20 @@ class BibliaView:
                             ),
                             on_click=_handle_copiar,
                         ),
+                        ft.ListTile(
+                            leading=ft.Icon(
+                                ft.Icons.COMPARE_ARROWS,
+                                color=accent_color,
+                            ),
+                            title=ft.Text(
+                                "Comparar Versões",
+                                weight=ft.FontWeight.W_500,
+                            ),
+                            subtitle=ft.Text(
+                                "Ver este versículo em diferentes traduções"
+                            ),
+                            on_click=_handle_comparar,
+                        ),
                     ],
                     spacing=6,
                     tight=True,
@@ -1176,7 +1467,9 @@ class BibliaView:
                 ),
             ),
         )
-        self.page.show_dialog(context_bs)
+        if self.page:
+            ensure_page_dialogs(self.page)
+            self.page.show_dialog(context_bs)
 
     async def _navigate_prev_chapter(self, e=None) -> None:
 
@@ -1476,6 +1769,15 @@ class BibliaView:
                     expand=True,
                 )
             ]
+        elif self.active_screen == "pesquisa":
+            self.view.appbar = self._build_pesquisa_appbar()
+            self.view.controls = [
+                ft.SafeArea(
+                    maintain_bottom_view_padding=True,
+                    content=self._build_pesquisa_content(),
+                    expand=True,
+                )
+            ]
         else:  # "leitor"
             self.active_screen = "leitor"
             if self.is_selection_mode:
@@ -1491,6 +1793,293 @@ class BibliaView:
             ]
         if self.page:
             self.page.update()
+
+    def _abrir_pesquisa(self, e=None) -> None:
+        """Abre a tela de pesquisa da Bíblia."""
+        self.active_screen = "pesquisa"
+        self._render_active_screen()
+
+    def _build_pesquisa_appbar(self) -> ft.AppBar:
+        """Constrói o AppBar para a tela de pesquisa bíblica."""
+
+        def _on_clear(e):
+            if self.search_input:
+                self.search_input.value = ""
+            self.search_query = ""
+            self.search_results = []
+            self.is_searching = False
+            self._render_active_screen()
+
+        self.search_input = ft.TextField(
+            value=self.search_query,
+            hint_text="Palavras ou referências (ex: luz, João 3:16)...",
+            prefix_icon=ft.Icons.SEARCH,
+            suffix=ft.IconButton(ft.Icons.CLEAR, tooltip="Limpar", on_click=_on_clear),
+            dense=True,
+            border_radius=12,
+            expand=True,
+            autofocus=True,
+            on_submit=lambda e: asyncio.create_task(
+                self._executar_pesquisa(e.control.value)
+            ),
+        )
+
+        return ft.AppBar(
+            leading=ft.IconButton(
+                ft.Icons.ARROW_BACK,
+                tooltip="Voltar ao Leitor",
+                on_click=self._back_to_leitor,
+            ),
+            title=self.search_input,
+            center_title=False,
+            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+            actions=[
+                ft.IconButton(
+                    ft.Icons.SEARCH,
+                    tooltip="Pesquisar",
+                    on_click=lambda e: asyncio.create_task(
+                        self._executar_pesquisa(
+                            self.search_input.value if self.search_input else ""
+                        )
+                    ),
+                ),
+            ],
+        )
+
+    def _build_pesquisa_content(self) -> ft.Control:
+        """Constrói a interface com os filtros de escopo e lista de resultados da pesquisa."""
+        book_name = self._get_current_book_name()
+
+        def _set_scope(sc: str):
+            self.search_scope = sc
+            if self.search_query.strip():
+                asyncio.create_task(self._executar_pesquisa(self.search_query))
+            else:
+                self._render_active_screen()
+
+        scope_chips = ft.Row(
+            controls=[
+                ft.Chip(
+                    label=ft.Text("Toda a Bíblia", size=12),
+                    selected=self.search_scope == "todos",
+                    on_select=lambda e: _set_scope("todos"),
+                ),
+                ft.Chip(
+                    label=ft.Text(f"Livro Atual ({book_name})", size=12),
+                    selected=self.search_scope == "livro",
+                    on_select=lambda e: _set_scope("livro"),
+                ),
+                ft.Chip(
+                    label=ft.Text("Antigo Testamento", size=12),
+                    selected=self.search_scope == "at",
+                    on_select=lambda e: _set_scope("at"),
+                ),
+                ft.Chip(
+                    label=ft.Text("Novo Testamento", size=12),
+                    selected=self.search_scope == "nt",
+                    on_select=lambda e: _set_scope("nt"),
+                ),
+            ],
+            wrap=True,
+            spacing=8,
+            run_spacing=6,
+        )
+
+        if self.is_searching:
+            results_view = ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.ProgressRing(width=32, height=32),
+                        ft.Text(
+                            "Pesquisando nas Escrituras...",
+                            color=ft.Colors.GREY_400,
+                            size=13,
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=12,
+                ),
+                alignment=ft.Alignment.CENTER,
+                expand=True,
+            )
+        elif not self.search_query.strip():
+            results_view = ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Icon(ft.Icons.SEARCH, size=48, color=ft.Colors.GREY_500),
+                        ft.Text(
+                            "Pesquise palavras, expressões ou referências",
+                            weight=ft.FontWeight.BOLD,
+                            size=15,
+                            color=ft.Colors.ON_SURFACE,
+                        ),
+                        ft.Text(
+                            "Exemplos: 'luz do mundo', 'pastor', 'João 3:16', 'Salmos 23'",
+                            size=13,
+                            color=ft.Colors.GREY_400,
+                            text_align=ft.TextAlign.CENTER,
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=8,
+                ),
+                alignment=ft.Alignment.CENTER,
+                expand=True,
+            )
+        elif not self.search_results:
+            results_view = ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Icon(ft.Icons.SEARCH_OFF, size=48, color=ft.Colors.GREY_500),
+                        ft.Text(
+                            f"Nenhum versículo encontrado para '{self.search_query}'",
+                            weight=ft.FontWeight.BOLD,
+                            size=15,
+                            color=ft.Colors.ON_SURFACE,
+                        ),
+                        ft.Text(
+                            "Tente outras palavras ou amplie o filtro de escopo.",
+                            size=13,
+                            color=ft.Colors.GREY_400,
+                        ),
+                    ],
+                    horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                    alignment=ft.MainAxisAlignment.CENTER,
+                    spacing=8,
+                ),
+                alignment=ft.Alignment.CENTER,
+                expand=True,
+            )
+        else:
+            result_tiles: list[ft.Control] = []
+            for item in self.search_results:
+                bid = item["book_id"]
+                ch = item["chapter"]
+                vn = item["verse"]
+                ref = item["referencia"]
+                txt = item["text"]
+
+                tile = ft.Container(
+                    content=ft.ListTile(
+                        leading=ft.Container(
+                            content=ft.Text(
+                                CANONICAL_BOOK_ABBREVIATIONS.get(bid, str(bid)),
+                                size=11,
+                                weight=ft.FontWeight.BOLD,
+                                color=ft.Colors.PRIMARY,
+                            ),
+                            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                            padding=ft.Padding.symmetric(horizontal=8, vertical=6),
+                            border_radius=8,
+                        ),
+                        title=ft.Text(
+                            ref,
+                            weight=ft.FontWeight.BOLD,
+                            size=14,
+                            color=ft.Colors.ON_SURFACE,
+                        ),
+                        subtitle=ft.Text(
+                            txt,
+                            size=13,
+                            color=ft.Colors.ON_SURFACE_VARIANT,
+                            max_lines=2,
+                            overflow=ft.TextOverflow.ELLIPSIS,
+                        ),
+                        trailing=ft.Icon(
+                            ft.Icons.CHEVRON_RIGHT, size=18, color=ft.Colors.GREY_400
+                        ),
+                        on_click=lambda e, b=bid, c=ch, v=vn: asyncio.create_task(
+                            self._navegar_para_resultado_pesquisa(b, c, v)
+                        ),
+                    ),
+                    bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+                    border_radius=12,
+                    margin=ft.Margin.only(bottom=6),
+                )
+                result_tiles.append(tile)
+
+            results_view = ft.Column(
+                controls=[
+                    ft.Container(
+                        content=ft.Text(
+                            f"{len(self.search_results)} versículo(s) encontrado(s) na versão {self.selected_version}",
+                            size=12,
+                            color=ft.Colors.GREY_400,
+                        ),
+                        padding=ft.Padding.symmetric(horizontal=4, vertical=6),
+                    ),
+                    ft.ListView(
+                        controls=result_tiles,
+                        expand=True,
+                        spacing=4,
+                    ),
+                ],
+                expand=True,
+                spacing=6,
+            )
+
+        return ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Container(
+                        content=scope_chips, padding=ft.Padding.only(bottom=8)
+                    ),
+                    ft.Divider(height=1),
+                    results_view,
+                ],
+                expand=True,
+                spacing=6,
+            ),
+            padding=ft.Padding.symmetric(horizontal=16, vertical=12),
+            expand=True,
+        )
+
+    async def _executar_pesquisa(self, query: str | None = None) -> None:
+        """Executa a pesquisa de versículos através do repositório."""
+        q = (
+            query
+            if query is not None
+            else (self.search_input.value if self.search_input else self.search_query)
+        ).strip()
+        self.search_query = q
+        if not q:
+            self.search_results = []
+            self.is_searching = False
+            self._render_active_screen()
+            return
+
+        self.is_searching = True
+        self._render_active_screen()
+
+        book_id = self.current_book_id if self.search_scope == "livro" else None
+        testamento = (
+            1
+            if self.search_scope == "at"
+            else (2 if self.search_scope == "nt" else None)
+        )
+
+        results = await self.biblia_repository.pesquisar_texto(
+            termo=q,
+            book_id=book_id,
+            testamento=testamento,
+            versao=self.selected_version,
+            limit=100,
+        )
+        self.search_results = results
+        self.is_searching = False
+        self._render_active_screen()
+
+    async def _navegar_para_resultado_pesquisa(
+        self, book_id: int, chapter: int, verse_num: int
+    ) -> None:
+        """Navega para o capítulo e versículo selecionado nos resultados de busca."""
+        self.current_book_id = book_id
+        self.current_chapter = chapter
+        self.active_screen = "leitor"
+        self._render_active_screen()
+        await self._carregar_capitulo(book_id, chapter, versao=self.selected_version)
 
     async def _select_version(self, nova_versao: str) -> None:
         """Manipula a troca de versão da Bíblia a partir do seletor popup."""
@@ -1529,8 +2118,147 @@ class BibliaView:
         nova_versao = e.control.value
         await self._select_version(nova_versao)
 
+    def _show_font_accessibility_modal(self, page: ft.Page | None = None) -> None:
+        """Abre um modal (BottomSheet) para ajuste do tamanho e família da fonte do texto bíblico."""
+        p = page or self.page
+        accent_color = self._get_accent_color()
+
+        self._modal_font_size_text = ft.Text(
+            f"{self.font_size}pt",
+            weight=ft.FontWeight.BOLD,
+            size=16,
+        )
+
+        def _update_font_size_ui():
+            if hasattr(self, "_modal_font_size_text") and self._modal_font_size_text:
+                self._modal_font_size_text.value = f"{self.font_size}pt"
+            self._render_verses()
+            asyncio.create_task(self._save_preferences())
+            if p:
+                p.update()
+
+        def _on_increase(e):
+            if self.font_size < 32:
+                self.font_size += 2
+                _update_font_size_ui()
+
+        def _on_decrease(e):
+            if self.font_size > 12:
+                self.font_size -= 2
+                _update_font_size_ui()
+
+        def _on_reset(e):
+            self.font_size = 17
+            _update_font_size_ui()
+
+        def _on_font_change(font_name: str):
+            self.font_family = font_name
+            self._render_verses()
+            asyncio.create_task(self._save_preferences())
+            if p:
+                p.update()
+
+        font_options = [
+            ("Roboto", "Roboto (Padrão)"),
+            ("Merriweather", "Merriweather (Serifada)"),
+            ("Times New Roman", "Times New Roman (Clássica)"),
+            ("Montserrat", "Montserrat (Moderna)"),
+            ("Inter", "Inter (Clean)"),
+            ("OpenDyslexic", "OpenDyslexic (Acessível)"),
+        ]
+
+        font_radios = ft.RadioGroup(
+            content=ft.Column(
+                controls=[
+                    ft.Radio(value=val, label=lbl) for val, lbl in font_options
+                ],
+                spacing=6,
+            ),
+            value=self.font_family,
+            on_change=lambda e: _on_font_change(e.control.value),
+        )
+
+        bs = ft.BottomSheet(
+            content=ft.Container(
+                content=ft.Column(
+                    controls=[
+                        ft.Row(
+                            controls=[
+                                ft.Row(
+                                    controls=[
+                                        ft.Icon(
+                                            ft.Icons.FORMAT_SIZE,
+                                            color=accent_color,
+                                            size=22,
+                                        ),
+                                        ft.Text(
+                                            "Aparência e Fonte do Texto",
+                                            weight=ft.FontWeight.BOLD,
+                                            size=16,
+                                        ),
+                                    ],
+                                    spacing=8,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                                ),
+                                ft.IconButton(
+                                    ft.Icons.CLOSE,
+                                    tooltip="Fechar",
+                                    on_click=lambda ev: p.pop_dialog() if p else None,
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                        ),
+                        ft.Divider(height=1),
+                        ft.Text(
+                            "Tamanho da Letra:",
+                            weight=ft.FontWeight.W_500,
+                            size=14,
+                        ),
+                        ft.Row(
+                            controls=[
+                                ft.IconButton(
+                                    ft.Icons.REMOVE_CIRCLE_OUTLINE,
+                                    tooltip="Diminuir",
+                                    on_click=_on_decrease,
+                                ),
+                                self._modal_font_size_text,
+                                ft.IconButton(
+                                    ft.Icons.ADD_CIRCLE_OUTLINE,
+                                    tooltip="Aumentar",
+                                    on_click=_on_increase,
+                                ),
+                                ft.TextButton(
+                                    "Resetar",
+                                    tooltip="Redefinir para 17pt",
+                                    on_click=_on_reset,
+                                ),
+                            ],
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        ),
+                        ft.Divider(height=1),
+                        ft.Text(
+                            "Família da Fonte:",
+                            weight=ft.FontWeight.W_500,
+                            size=14,
+                        ),
+                        font_radios,
+                    ],
+                    tight=True,
+                    spacing=10,
+                    scroll=ft.ScrollMode.AUTO,
+                ),
+                padding=ft.Padding.only(left=20, top=16, right=20, bottom=32),
+            ),
+            show_drag_handle=True,
+        )
+        self.font_accessibility_bs = bs
+        if p:
+            ensure_page_dialogs(p)
+            p.show_dialog(bs)
+
     def _zoom_in(self, e=None) -> None:
-        if self.font_size < 30:
+        if self.font_size < 32:
             self.font_size += 2
             self._render_verses()
             asyncio.create_task(self._save_preferences())
@@ -1653,6 +2381,11 @@ class BibliaView:
                 self.next_btn,
                 self.version_btn,
                 ft.IconButton(
+                    ft.Icons.SEARCH,
+                    tooltip="Pesquisar na Bíblia",
+                    on_click=self._abrir_pesquisa,
+                ),
+                ft.IconButton(
                     ft.Icons.BOOKMARKS_OUTLINED,
                     tooltip="Textos Bíblicos Marcados",
                     on_click=self._show_marcadores_dialog,
@@ -1661,6 +2394,11 @@ class BibliaView:
                     icon=ft.Icons.MORE_VERT,
                     tooltip="Opções de Leitura",
                     items=[
+                        ft.PopupMenuItem(
+                            "Pesquisar na Bíblia",
+                            icon=ft.Icons.SEARCH,
+                            on_click=self._abrir_pesquisa,
+                        ),
                         ft.PopupMenuItem(
                             "Copiar Capítulo Completo",
                             icon=ft.Icons.CONTENT_COPY,
@@ -1672,14 +2410,9 @@ class BibliaView:
                             on_click=self._show_marcadores_dialog,
                         ),
                         ft.PopupMenuItem(
-                            "Aumentar Fonte (+)",
-                            icon=ft.Icons.TEXT_INCREASE,
-                            on_click=self._zoom_in,
-                        ),
-                        ft.PopupMenuItem(
-                            "Diminuir Fonte (-)",
-                            icon=ft.Icons.TEXT_DECREASE,
-                            on_click=self._zoom_out,
+                            "Aparência e Fonte do Texto",
+                            icon=ft.Icons.FORMAT_SIZE,
+                            on_click=lambda e: self._show_font_accessibility_modal(page),
                         ),
                         ft.PopupMenuItem(
                             "Selecionar Livro / Capítulo",

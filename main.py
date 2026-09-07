@@ -26,8 +26,9 @@ from src.views.agente_view import AgenteView
 from src.views.biblia_view import BibliaView
 from src.views.download_manager_view import DownloadManagerView
 from src.views.hino_view import HinoView
-from src.views.home_view import HomeView
+from src.views.home_view import HinosView, HomeView
 from src.views.selecao_view import SelecaoView
+from src.views.settings_dialog import ensure_page_dialogs
 from src.views.update_dialog import show_update_dialog
 
 try:
@@ -293,6 +294,7 @@ async def main(page: ft.Page):
     Inicializa conexões SQLite (Hinário Novo, Hinário Antigo, Bíblia e Comparativo),
     restaura preferências e gerencia rotas dinâmicas com suporte a ambos os hinários.
     """
+    ensure_page_dialogs(page)
     db_connection = DatabaseConnection(db_path="hinario.db")
     antigo_connection = DatabaseConnection(db_path="hinario_antigo.db")
     biblia_connection = DatabaseConnection(db_path="ARA.sqlite", read_only=True)
@@ -348,21 +350,27 @@ async def main(page: ft.Page):
     selecao_view_instance = SelecaoView(
         theme_service=theme_service, updater_service=updater_service
     )
-    home_novo_instance = HomeView(
+    home_novo_instance = HinosView(
         hino_repository,
         favorito_repository,
         historico_repository,
         updater_service=updater_service,
         theme_service=theme_service,
         edition=EDITION_NOVO,
+        antigo_hino_repo=antigo_hino_repo,
+        antigo_fav_repo=antigo_fav_repo,
+        antigo_hist_repo=antigo_hist_repo,
     )
-    home_antigo_instance = HomeView(
+    home_antigo_instance = HinosView(
         antigo_hino_repo,
         antigo_fav_repo,
         antigo_hist_repo,
         updater_service=updater_service,
         theme_service=theme_service,
         edition=EDITION_ANTIGO,
+        novo_hino_repo=hino_repository,
+        novo_fav_repo=favorito_repository,
+        novo_hist_repo=historico_repository,
     )
     agente_view_instance = AgenteView(agente_service, culto_repository)
     download_manager_instance = DownloadManagerView(hino_repository, media_service)

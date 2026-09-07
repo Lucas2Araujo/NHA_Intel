@@ -10,6 +10,7 @@ from src.repositories.hino_repository import HinoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.services.theme_service import ThemeService
 from src.services.updater_service import UpdaterService
+from src.views.settings_dialog import show_settings_dialog
 from src.views.update_dialog import show_update_dialog
 
 try:
@@ -77,6 +78,12 @@ class HomeView:
         updater_service: UpdaterService | None = None,
         theme_service: ThemeService | None = None,
         edition: str = "novo",
+        novo_hino_repo: HinoRepository | None = None,
+        novo_fav_repo: FavoritoRepository | None = None,
+        novo_hist_repo: HistoricoRepository | None = None,
+        antigo_hino_repo: HinoRepository | None = None,
+        antigo_fav_repo: FavoritoRepository | None = None,
+        antigo_hist_repo: HistoricoRepository | None = None,
     ):
         self.hino_repository = hino_repository
         self.favorito_repository = favorito_repository
@@ -86,6 +93,26 @@ class HomeView:
             hino_repository.db_connection
         )
         self.edition: str = edition
+
+        self._novo_repos = (
+            (novo_hino_repo, novo_fav_repo, novo_hist_repo)
+            if (novo_hino_repo and novo_fav_repo and novo_hist_repo)
+            else (
+                (hino_repository, favorito_repository, historico_repository)
+                if edition == "novo"
+                else None
+            )
+        )
+        self._antigo_repos = (
+            (antigo_hino_repo, antigo_fav_repo, antigo_hist_repo)
+            if (antigo_hino_repo and antigo_fav_repo and antigo_hist_repo)
+            else (
+                (hino_repository, favorito_repository, historico_repository)
+                if edition == "antigo"
+                else None
+            )
+        )
+
         self._search_task: asyncio.Task | None = None
         self._sort_task: asyncio.Task | None = None
         self._chunk_render_task: asyncio.Task | None = None
@@ -100,6 +127,7 @@ class HomeView:
         self.explore_container: ft.Column | None = None
         self.search_field: ft.TextField | None = None
         self.sort_button: ft.PopupMenuButton | None = None
+        self.edition_selector: ft.SegmentedButton | None = None
         self.filter_bar: ft.SegmentedButton | None = None
         self.active_filter_banner: ft.Container | None = None
         self._explore_sections_cached: list[ft.Control] | None = None
@@ -230,6 +258,26 @@ class HomeView:
             items=self._build_sort_menu_items(),
         )
 
+        self.edition_selector = ft.SegmentedButton(
+            selected=[self.edition],
+            allow_empty_selection=False,
+            show_selected_icon=False,
+            segments=[
+                ft.Segment(
+                    value="novo",
+                    label=ft.Text("Novo (2022)", size=12),
+                    icon=ft.Icon(ft.Icons.AUTO_AWESOME_OUTLINED, size=15),
+                ),
+                ft.Segment(
+                    value="antigo",
+                    label=ft.Text("Tradicional (1996)", size=12),
+                    icon=ft.Icon(ft.Icons.HISTORY_EDU_OUTLINED, size=15),
+                ),
+            ],
+            on_change=self._on_edition_select,
+            expand=True,
+        )
+
         self.filter_bar = ft.SegmentedButton(
             selected=[
                 "explorar"
@@ -265,7 +313,13 @@ class HomeView:
 
         badge_year = "2022" if self.edition == "novo" else "1996"
         badge_color = (
-            ft.Colors.BLUE_200 if self.edition == "novo" else ft.Colors.AMBER_300
+            (
+                self.theme_service.get_accent_color()
+                if self.theme_service
+                else ft.Colors.PRIMARY
+            )
+            if self.edition == "novo"
+            else ft.Colors.AMBER_300
         )
 
         self._cached_view = ft.View(
@@ -273,8 +327,8 @@ class HomeView:
             bgcolor=ft.Colors.SURFACE,
             appbar=ft.AppBar(
                 leading=ft.IconButton(
-                    ft.Icons.SWAP_HORIZ,
-                    tooltip="Trocar Hinário",
+                    ft.Icons.ARROW_BACK,
+                    tooltip="Voltar ao Menu Principal",
                     on_click=lambda e: asyncio.create_task(self._navigate("/")),
                 ),
                 title=ft.Row(
@@ -299,8 +353,8 @@ class HomeView:
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 actions=[
                     ft.IconButton(
-                        ft.Icons.INFO_OUTLINED,
-                        tooltip=f"Sobre o App (v{APP_VERSION})",
+                        ft.Icons.INFO_OUTLINE,
+                        tooltip="Sobre o App e Configurações",
                         on_click=self._show_about_dialog,
                     ),
                 ],
@@ -319,8 +373,15 @@ class HomeView:
                                     alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                                 ),
                                 padding=ft.Padding.only(
-                                    left=16, top=16, right=16, bottom=8
+                                    left=16, top=16, right=16, bottom=6
                                 ),
+                            ),
+                            ft.Container(
+                                content=ft.Row(
+                                    controls=[self.edition_selector],
+                                ),
+                                alignment=ft.Alignment.CENTER,
+                                padding=ft.Padding.symmetric(horizontal=16, vertical=2),
                             ),
                             ft.Container(
                                 content=ft.Row(
@@ -340,6 +401,47 @@ class HomeView:
         )
         return self._cached_view
 
+    async def _on_edition_select(self, e: ft.ControlEvent):
+        selected = e.control.selected
+        if not selected:
+            return
+        new_edition = next(iter(selected))
+        if new_edition == self.edition:
+            return
+        if self.page:
+            await self.page.push_route(f"/{new_edition}")
+        else:
+            await self.switch_edition(new_edition)
+
+    async def switch_edition(self, new_edition: str):
+        """Alterna a edição de hinos assincronamente e recarrega os dados."""
+        if new_edition not in ("novo", "antigo"):
+            return
+        self.edition = new_edition
+        if new_edition == "novo" and self._novo_repos:
+            self.hino_repository, self.favorito_repository, self.historico_repository = self._novo_repos
+        elif new_edition == "antigo" and self._antigo_repos:
+            self.hino_repository, self.favorito_repository, self.historico_repository = self._antigo_repos
+
+        if self.edition_selector:
+            self.edition_selector.selected = [new_edition]
+
+        edition_title = (
+            "Hinário Novo" if self.edition == "novo" else "Hinário Tradicional"
+        )
+        if self.page:
+            self.page.title = f"{edition_title} - v{APP_VERSION}"
+            if self.theme_service:
+                self.theme_service.apply_theme(self.page, edition=self.edition)
+
+        self._cached_view = None
+        await self._load_current_filter_data(self.current_search)
+        if self.page:
+            try:
+                self.page.update()
+            except Exception:
+                pass
+
     async def _navigate(self, route_path: str):
         if self.page:
             await self.page.push_route(route_path)
@@ -355,167 +457,13 @@ class HomeView:
         if not self.page:
             return
 
-        amoled_switch = ft.Switch(
-            value=self.theme_service.is_amoled if self.theme_service else False,
-            on_change=lambda ev: asyncio.create_task(
-                self._on_amoled_toggle(ev.control.value)
-            ),
+        show_settings_dialog(
+            page=self.page,
+            theme_service=self.theme_service,
+            updater_service=self.updater_service,
+            edition=self.edition,
+            on_check_updates=self._check_updates_manual,
         )
-
-        amoled_tile = ft.Container(
-            content=ft.Row(
-                controls=[
-                    ft.Row(
-                        controls=[
-                            ft.Icon(
-                                ft.Icons.DARK_MODE_OUTLINED,
-                                size=22,
-                                color=ft.Colors.AMBER_300,
-                            ),
-                            ft.Column(
-                                controls=[
-                                    ft.Text(
-                                        "Modo Telas AMOLED",
-                                        weight=ft.FontWeight.BOLD,
-                                        size=14,
-                                    ),
-                                    ft.Text(
-                                        "Preto puro (#000000) e economia de energia",
-                                        size=11,
-                                        color=ft.Colors.ON_SURFACE_VARIANT,
-                                    ),
-                                ],
-                                spacing=1,
-                            ),
-                        ],
-                        spacing=10,
-                    ),
-                    amoled_switch,
-                ],
-                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            ),
-            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            border_radius=10,
-            padding=ft.Padding.symmetric(horizontal=12, vertical=8),
-        )
-
-        bs = ft.BottomSheet(
-            scrollable=True,
-            show_drag_handle=True,
-            use_safe_area=True,
-            maintain_bottom_view_insets_padding=True,
-            content=ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Row(
-                            controls=[
-                                ft.Row(
-                                    controls=[
-                                        ft.Icon(
-                                            ft.Icons.INFO_OUTLINE,
-                                            size=20,
-                                            color=ft.Colors.PRIMARY,
-                                        ),
-                                        ft.Text(
-                                            "Sobre o Aplicativo",
-                                            weight=ft.FontWeight.BOLD,
-                                            size=18,
-                                        ),
-                                    ],
-                                    spacing=8,
-                                ),
-                                ft.IconButton(
-                                    ft.Icons.CLOSE,
-                                    tooltip="Fechar",
-                                    on_click=lambda ev: (
-                                        self.page.pop_dialog() if self.page else None
-                                    ),
-                                ),
-                            ],
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        ),
-                        ft.Divider(height=1),
-                        ft.Row(
-                            controls=[
-                                ft.Container(
-                                    content=ft.Icon(
-                                        ft.Icons.LIBRARY_MUSIC,
-                                        size=30,
-                                        color=ft.Colors.PRIMARY,
-                                    ),
-                                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                                    border_radius=10,
-                                    padding=ft.Padding.all(8),
-                                ),
-                                ft.Column(
-                                    controls=[
-                                        ft.Text(
-                                            "Hinário Inteligente",
-                                            weight=ft.FontWeight.BOLD,
-                                            size=16,
-                                        ),
-                                        ft.Text(
-                                            f"Versão {APP_VERSION}",
-                                            size=12,
-                                            color=ft.Colors.PRIMARY,
-                                            weight=ft.FontWeight.W_600,
-                                        ),
-                                    ],
-                                    spacing=2,
-                                ),
-                            ],
-                            spacing=12,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        ),
-                        ft.Container(
-                            content=ft.Text(
-                                "Aplicação moderna e completa para o Hinário Adventista (601 hinos).\n"
-                                "Oferece busca inteligente e rápida (letra, temas e categorias), favoritos, "
-                                "histórico de acessos, reprodução e downloads de áudio offline, recursos de acessibilidade "
-                                "tipográfica (incluindo fonte OpenDyslexic), referências bíblicas cruzadas "
-                                "e o Agente Organizador de Cultos por blocos litúrgicos.",
-                                size=13,
-                                color=ft.Colors.ON_SURFACE_VARIANT,
-                            ),
-                            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                            border_radius=10,
-                            padding=ft.Padding.all(12),
-                        ),
-                        amoled_tile,
-                        ft.Row(
-                            controls=[
-                                ft.OutlinedButton(
-                                    "GitHub do Projeto",
-                                    icon=ft.Icons.CODE,
-                                    url="https://github.com/Lucas2Araujo/NHA_Intel",
-                                    on_click=lambda ev: asyncio.create_task(
-                                        self._open_url(
-                                            "https://github.com/Lucas2Araujo/NHA_Intel"
-                                        )
-                                    ),
-                                    expand=True,
-                                ),
-                                ft.FilledTonalButton(
-                                    "Verificar Atualizações",
-                                    icon=ft.Icons.SYSTEM_UPDATE_ALT,
-                                    on_click=lambda ev: asyncio.create_task(
-                                        self._check_updates_manual()
-                                    ),
-                                    expand=True,
-                                ),
-                            ],
-                            spacing=10,
-                        ),
-                    ],
-                    scroll=ft.ScrollMode.AUTO,
-                    tight=True,
-                    spacing=12,
-                ),
-                padding=ft.Padding.only(left=20, top=10, right=20, bottom=30),
-            ),
-        )
-        self.page.show_dialog(bs)
 
     async def _on_amoled_toggle(self, enabled: bool) -> None:
         """Manipula a alternância do Modo AMOLED."""
@@ -613,8 +561,13 @@ class HomeView:
                 seen_ids.add(h_id)
                 unique_hinos.append(h)
 
+        accent = (
+            self.theme_service.get_accent_color()
+            if self.theme_service
+            else ft.Colors.PRIMARY
+        )
         num_color = (
-            ft.Colors.BLUE_200
+            accent
             if self.edition == "novo"
             else (
                 ft.Colors.PURPLE_200
@@ -629,17 +582,25 @@ class HomeView:
                     content=ft.Text(
                         format_hino_number(hino.numero),
                         weight=ft.FontWeight.BOLD,
-                        size=14,
+                        size=13,
                         color=num_color,
                     ),
-                    width=55,
+                    width=52,
+                    height=36,
+                    border_radius=8,
+                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                     alignment=ft.Alignment.CENTER,
                 ),
                 title=ft.Text(
                     hino.titulo,
                     weight=ft.FontWeight.W_500,
-                    size=16,
+                    size=15,
+                    color=ft.Colors.ON_SURFACE,
                 ),
+                bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+                shape=ft.RoundedRectangleBorder(radius=12),
+                hover_color=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                content_padding=ft.Padding.symmetric(horizontal=12, vertical=4),
                 on_click=lambda e=None, h_id=hino.id: asyncio.create_task(
                     self._navigate(f"/{self.edition}/hino/{h_id}")
                 ),
@@ -749,7 +710,11 @@ class HomeView:
                     "📂 Categorias",
                     categorias,
                     ft.Icons.FOLDER_OUTLINED,
-                    ft.Colors.BLUE_400,
+                    (
+                        self.theme_service.get_accent_color()
+                        if self.theme_service
+                        else ft.Colors.PRIMARY
+                    ),
                     self._filter_by_categoria,
                 )
             )
@@ -852,7 +817,15 @@ class HomeView:
                 padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                 content=ft.Row(
                     controls=[
-                        ft.Icon(ft.Icons.FOLDER, size=18, color=ft.Colors.BLUE_400),
+                        ft.Icon(
+                            ft.Icons.FOLDER,
+                            size=18,
+                            color=(
+                                self.theme_service.get_accent_color()
+                                if self.theme_service
+                                else ft.Colors.PRIMARY
+                            ),
+                        ),
                         ft.Text(
                             f"Categoria: {self.active_category} ({count} hinos)",
                             weight=ft.FontWeight.W_500,
@@ -1169,3 +1142,7 @@ class HomeView:
         await self._load_current_filter_data("")
         if self.page:
             self.page.update()
+
+
+# Alias oficial da Sprint 3 para a visualização da lista de hinos
+HinosView = HomeView

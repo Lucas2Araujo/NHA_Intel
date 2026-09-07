@@ -297,3 +297,121 @@ async def test_biblia_buscar_capitulo_completo():
     assert await repo.buscar_capitulo_completo("Invalido 99:99") is None
 
     await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_biblia_repository_pesquisar_texto():
+    db_conn = DatabaseConnection(db_path=":memory:", read_only=True)
+    conn = await db_conn.get_connection()
+    await conn.execute(
+        "CREATE TABLE book (id INTEGER PRIMARY KEY, testament_reference_id INTEGER, name VARCHAR(50));"
+    )
+    await conn.execute(
+        "CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);"
+    )
+    await conn.executemany(
+        "INSERT INTO book VALUES (?, ?, ?);",
+        [
+            (1, 1, "Gênesis"),
+            (19, 1, "Salmos"),
+            (40, 2, "Mateus"),
+            (43, 2, "João"),
+        ],
+    )
+    await conn.executemany(
+        "INSERT INTO verse VALUES (?, ?, ?, ?, ?);",
+        [
+            (1, 1, 1, 3, "Disse Deus: Haja luz; e houve luz."),
+            (2, 19, 23, 1, "O SENHOR é o meu pastor; nada me faltará."),
+            (
+                3,
+                40,
+                5,
+                14,
+                "Vós sois a luz do mundo; não se pode esconder uma cidade edificada sobre um monte;",
+            ),
+            (
+                4,
+                43,
+                8,
+                12,
+                "De novo, lhes falava Jesus, dizendo: Eu sou a luz do mundo; quem me segue não andará nas trevas;",
+            ),
+            (
+                5,
+                43,
+                3,
+                16,
+                "Porque Deus amou ao mundo de tal maneira que deu o seu Filho unigênito...",
+            ),
+        ],
+    )
+    await conn.commit()
+
+    repo = BibliaRepository(db_conn)
+
+    # 1. Busca por termo textual único
+    res_luz = await repo.pesquisar_texto("luz")
+    assert len(res_luz) == 3
+    assert res_luz[0]["referencia"] == "Gênesis 1:3"
+
+    # 2. Busca por múltiplos termos
+    res_luz_mundo = await repo.pesquisar_texto("luz mundo")
+    assert len(res_luz_mundo) == 2
+    assert res_luz_mundo[0]["referencia"] == "Mateus 5:14"
+    assert res_luz_mundo[1]["referencia"] == "João 8:12"
+
+    # 3. Filtro por livro
+    res_mateus = await repo.pesquisar_texto("luz", book_id=40)
+    assert len(res_mateus) == 1
+    assert res_mateus[0]["book_name"] == "Mateus"
+
+    # 4. Filtro por testamento (1 = Antigo, 2 = Novo)
+    res_at = await repo.pesquisar_texto("luz", testamento=1)
+    assert len(res_at) == 1
+    assert res_at[0]["book_name"] == "Gênesis"
+
+    res_nt = await repo.pesquisar_texto("luz", testamento=2)
+    assert len(res_nt) == 2
+
+    # 5. Reconhecimento de referência bíblica direta
+    res_ref = await repo.pesquisar_texto("João 3:16")
+    assert len(res_ref) == 1
+    assert res_ref[0]["referencia"] == "João 3:16"
+    assert "amou ao mundo" in res_ref[0]["text"]
+
+    # 6. Termo vazio ou sem resultado
+    assert await repo.pesquisar_texto("") == []
+    assert await repo.pesquisar_texto("palavra_inexistente_xyz") == []
+
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_biblia_repository_comparar_versiculo():
+    db_conn = DatabaseConnection(db_path=":memory:", read_only=True)
+    conn = await db_conn.get_connection()
+    await conn.execute("CREATE TABLE book (id INTEGER PRIMARY KEY, name VARCHAR(50));")
+    await conn.execute(
+        "CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);"
+    )
+    await conn.execute("INSERT INTO book VALUES (43, 'João');")
+    await conn.execute(
+        "INSERT INTO verse VALUES (1, 43, 3, 16, 'Porque Deus amou ao mundo de tal maneira...');"
+    )
+    await conn.commit()
+
+    repo = BibliaRepository(db_conn)
+
+    # Comparar versículo existente
+    comps = await repo.comparar_versiculo(43, 3, 16)
+    assert len(comps) >= 1
+    assert comps[0]["texto"] == "Porque Deus amou ao mundo de tal maneira..."
+    assert comps[0]["versao"] == "ARA"
+
+    # Versículo inexistente ou parâmetros inválidos
+    assert await repo.comparar_versiculo(43, 3, 999) == []
+    assert await repo.comparar_versiculo(999, 1, 1) == []
+
+    await repo.close()
+

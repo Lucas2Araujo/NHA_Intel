@@ -4,6 +4,7 @@ import flet as ft
 
 from src.services.theme_service import ThemeService
 from src.services.updater_service import UpdaterService
+from src.views.settings_dialog import show_settings_dialog
 
 try:
     from src.version import __version__ as APP_VERSION
@@ -31,72 +32,17 @@ class SelecaoView:
     async def _navigate(self, page: ft.Page, route: str) -> None:
         await page.push_route(route)
 
-    def _show_about_dialog(self, page: ft.Page, e=None):
-        """Abre o modal Sobre o App com atalho para o modo AMOLED."""
-        amoled_switch = ft.Switch(
-            value=self.theme_service.is_amoled,
-            active_color=ft.Colors.BLUE_400,
-            on_change=lambda ev: asyncio.create_task(
-                self.theme_service.toggle_amoled(page, ev.control.value)
-            ),
+    def _show_about_dialog(self, page: ft.Page | None = None, e=None):
+        """Abre o modal de Configurações, Temas e Sobre o App."""
+        target_page = page if isinstance(page, ft.Page) else self.page
+        if not target_page:
+            return
+        show_settings_dialog(
+            page=target_page,
+            theme_service=self.theme_service,
+            updater_service=self.updater_service,
+            edition="novo",
         )
-
-        dialog = ft.AlertDialog(
-            title=ft.Row(
-                controls=[
-                    ft.Icon(ft.Icons.LIBRARY_MUSIC, color=ft.Colors.BLUE_400, size=24),
-                    ft.Text("Hinário Inteligente", weight=ft.FontWeight.BOLD),
-                ],
-                spacing=10,
-            ),
-            content=ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Text(
-                            f"Versão: {APP_VERSION} (Alfa)",
-                            size=13,
-                            color=ft.Colors.GREY_400,
-                        ),
-                        ft.Divider(height=10),
-                        ft.Text(
-                            "Aplicativo cristão com busca inteligente, letras, comparação de hinários e ferramentas de culto.",
-                            size=13,
-                        ),
-                        ft.Divider(height=10),
-                        ft.Row(
-                            controls=[
-                                ft.Column(
-                                    controls=[
-                                        ft.Text(
-                                            "Modo AMOLED",
-                                            weight=ft.FontWeight.BOLD,
-                                            size=14,
-                                        ),
-                                        ft.Text(
-                                            "Preto absoluto para telas OLED",
-                                            size=12,
-                                            color=ft.Colors.GREY_400,
-                                        ),
-                                    ],
-                                    spacing=2,
-                                    expand=True,
-                                ),
-                                amoled_switch,
-                            ],
-                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                        ),
-                    ],
-                    tight=True,
-                    spacing=8,
-                ),
-                width=320,
-            ),
-            actions=[
-                ft.TextButton("Fechar", on_click=lambda ev: page.pop_dialog()),
-            ],
-            actions_alignment=ft.MainAxisAlignment.END,
-        )
-        page.show_dialog(dialog)
 
     def _build_edition_card(
         self,
@@ -194,7 +140,7 @@ class SelecaoView:
                         content=ft.Icon(
                             ft.Icons.LIBRARY_MUSIC,
                             size=42,
-                            color=ft.Colors.BLUE_400,
+                            color=ft.Colors.PRIMARY,
                         ),
                         bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                         border_radius=20,
@@ -227,7 +173,7 @@ class SelecaoView:
             description="Busca inteligente, letras oficiais, novos arranjos e referências bíblicas.",
             badge_text="NOVO",
             icon=ft.Icons.AUTO_AWESOME,
-            badge_color=ft.Colors.BLUE_400,
+            badge_color=ft.Colors.PRIMARY,
             route="/novo",
         )
 
@@ -249,7 +195,7 @@ class SelecaoView:
             description="Leitura completa das Escrituras Sagradas com navegação rápida por livro e capítulo.",
             badge_text="BÍBLIA",
             icon=ft.Icons.AUTO_STORIES,
-            badge_color=ft.Colors.EMERALD_400 if hasattr(ft.Colors, "EMERALD_400") else ft.Colors.GREEN_400,
+            badge_color=ft.Colors.GREEN_400,
             route="/biblia",
         )
 
@@ -306,7 +252,7 @@ class SelecaoView:
                 actions=[
                     ft.IconButton(
                         icon=ft.Icons.INFO_OUTLINE,
-                        tooltip="Sobre o App / Modo AMOLED",
+                        tooltip="Sobre o App e Configurações",
                         on_click=lambda e: self._show_about_dialog(page),
                     ),
                 ],

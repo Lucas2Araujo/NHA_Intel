@@ -534,3 +534,92 @@ def test_parse_route_query_main():
     assert from_hino is None
 
 
+def test_hinos_view_alias_and_export():
+    from src.views import HinosView
+    from src.views.home_view import HinosView as HinosViewFromHome
+
+    assert HinosView is HomeView
+    assert HinosViewFromHome is HomeView
+
+
+@pytest.mark.asyncio
+async def test_home_view_edition_selector_and_navigation(in_memory_db):
+    from unittest.mock import AsyncMock
+
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo, edition="novo")
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.push_route = AsyncMock()
+
+    view = await home_view_obj.build(mock_page)
+
+    # 1. Verifica presença e estrutura do edition_selector
+    assert home_view_obj.edition_selector is not None
+    assert isinstance(home_view_obj.edition_selector, ft.SegmentedButton)
+    assert home_view_obj.edition_selector.selected == ["novo"]
+    assert len(home_view_obj.edition_selector.segments) == 2
+    assert home_view_obj.edition_selector.segments[0].value == "novo"
+    assert home_view_obj.edition_selector.segments[1].value == "antigo"
+
+    # 2. Testa alternância via evento disparado no SegmentedButton
+    mock_event = MagicMock()
+    mock_event.control.selected = ["antigo"]
+    await home_view_obj._on_edition_select(mock_event)
+    mock_page.push_route.assert_called_once_with("/antigo")
+
+    # 3. Testa botão de retorno da AppBar para a raiz "/"
+    assert view.appbar.leading is not None
+    assert view.appbar.leading.icon == ft.Icons.ARROW_BACK
+    await home_view_obj._navigate("/")
+    mock_page.push_route.assert_called_with("/")
+
+
+@pytest.mark.asyncio
+async def test_home_view_switch_edition_in_place(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo, edition="novo")
+    mock_page = MagicMock(spec=ft.Page)
+    await home_view_obj.build(mock_page)
+
+    await home_view_obj.switch_edition("antigo")
+    assert home_view_obj.edition == "antigo"
+    assert home_view_obj.edition_selector.selected == ["antigo"]
+    assert "Hinário Tradicional" in mock_page.title
+
+    await home_view_obj.switch_edition("novo")
+    assert home_view_obj.edition == "novo"
+    assert home_view_obj.edition_selector.selected == ["novo"]
+    assert "Hinário Novo" in mock_page.title
+
+
+@pytest.mark.asyncio
+async def test_home_view_m3_card_styling(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    home_view_obj = HomeView(hino_repo, fav_repo, hist_repo)
+    mock_page = MagicMock(spec=ft.Page)
+    await home_view_obj.build(mock_page)
+
+    from src.models.hino import Hino
+
+    sample = Hino(id=10, numero="10", titulo="M3 Styled Hymn")
+    home_view_obj._render_hino_tiles([sample])
+
+    assert len(home_view_obj.list_container.controls) == 1
+    tile = home_view_obj.list_container.controls[0]
+    assert isinstance(tile, ft.ListTile)
+    assert tile.bgcolor == ft.Colors.SURFACE_CONTAINER_LOW
+    assert isinstance(tile.shape, ft.RoundedRectangleBorder)
+    assert tile.shape.radius == 12
+    assert tile.title.value == "M3 Styled Hymn"
+
+
+

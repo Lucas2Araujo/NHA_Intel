@@ -19,6 +19,7 @@ from src.views.biblia_view import (
     build_bible_version_button,
     update_bible_version_button,
 )
+from src.views.settings_dialog import ensure_page_dialogs
 
 DEFAULT_FONT_FAMILY = "Padrão"
 TIMES_NEW_ROMAN_FONT_FAMILY = "Times New Roman"
@@ -405,6 +406,7 @@ class _BibliaModalSession:
 
     async def show(self) -> None:
         bs = ft.BottomSheet(content=self.modal_body)
+        ensure_page_dialogs(self.page)
         self.page.show_dialog(bs)
         await self.carregar_versiculos(self.selected_version)
 
@@ -486,6 +488,9 @@ class HinoView:
         self.animated_container: ft.Container | None = None
         self.header_container: ft.Container | None = None
         self.segmented_container: ft.Container | None = None
+        self.edition_feedback_banner: ft.Container | None = None
+        self.edition_feedback_text: ft.Text | None = None
+        self.edition_feedback_icon: ft.Icon | None = None
         self.scroll_column: ft.Column | None = None
         self.appbar_title: ft.Text | None = None
         self.prev_btn: ft.IconButton | None = None
@@ -973,9 +978,8 @@ class HinoView:
                     new_hino.letra if new_hino.letra else MSG_LETRA_NAO_DISPONIVEL
                 )
 
-            # Volta para o modo padrão "letra" na transição de hino
-            if self.selected_view_mode != "letra":
-                self.selected_view_mode = "letra"
+            # Volta para a edição base na transição de hino
+            self.selected_view_mode = self.edition
 
             if self.content_container:
                 self.content_container.content = self._render_current_mode_content()
@@ -1466,8 +1470,97 @@ class HinoView:
                 )
         return segments
 
+    def _get_edition_feedback_info(self) -> tuple[str, str, str, ft.IconData]:
+        """Retorna (label, bgcolor, text_color, icon) para o feedback visual suave da edição selecionada."""
+        mode = self.selected_view_mode
+        if mode == "letra":
+            mode = self.edition
+
+        if mode == "novo":
+            return (
+                "Novo Hinário selecionado",
+                ft.Colors.PRIMARY_CONTAINER,
+                ft.Colors.ON_PRIMARY_CONTAINER,
+                ft.Icons.CHECK_CIRCLE_OUTLINE,
+            )
+        elif mode == "antigo":
+            return (
+                "Hinário Tradicional selecionado",
+                ft.Colors.SECONDARY_CONTAINER,
+                ft.Colors.ON_SECONDARY_CONTAINER,
+                ft.Icons.HISTORY_EDU_OUTLINED,
+            )
+        elif mode == "comparacao":
+            return (
+                "Modo de Comparação selecionado",
+                ft.Colors.TERTIARY_CONTAINER,
+                ft.Colors.ON_TERTIARY_CONTAINER,
+                ft.Icons.COMPARE_ARROWS,
+            )
+        elif mode == "biblia":
+            return (
+                "Texto Bíblico selecionado",
+                ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                ft.Colors.ON_SURFACE_VARIANT,
+                ft.Icons.MENU_BOOK,
+            )
+
+        if self.edition == "antigo":
+            return (
+                "Hinário Tradicional selecionado",
+                ft.Colors.SECONDARY_CONTAINER,
+                ft.Colors.ON_SECONDARY_CONTAINER,
+                ft.Icons.HISTORY_EDU_OUTLINED,
+            )
+        return (
+            "Novo Hinário selecionado",
+            ft.Colors.PRIMARY_CONTAINER,
+            ft.Colors.ON_PRIMARY_CONTAINER,
+            ft.Icons.CHECK_CIRCLE_OUTLINE,
+        )
+
+    def _build_edition_feedback_banner(self) -> ft.Container:
+        """Cria o banner pill de feedback visual da edição ativa com cor suave."""
+        label, bgcolor, text_color, icon = self._get_edition_feedback_info()
+        self.edition_feedback_icon = ft.Icon(icon, size=14, color=text_color)
+        self.edition_feedback_text = ft.Text(
+            label,
+            size=12,
+            weight=ft.FontWeight.W_500,
+            color=text_color,
+        )
+        self.edition_feedback_banner = ft.Container(
+            content=ft.Row(
+                controls=[
+                    self.edition_feedback_icon,
+                    self.edition_feedback_text,
+                ],
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=6,
+            ),
+            bgcolor=bgcolor,
+            border_radius=20,
+            padding=ft.Padding.symmetric(horizontal=14, vertical=5),
+            tooltip="Edição ou modo de exibição ativo",
+            animate=ft.Animation(200, ft.AnimationCurve.EASE_OUT),
+        )
+        return self.edition_feedback_banner
+
+    def _update_edition_feedback_banner(self) -> None:
+        """Atualiza dinamicamente o texto, cor de fundo e ícone do banner de feedback."""
+        if not self.edition_feedback_banner:
+            return
+        label, bgcolor, text_color, icon = self._get_edition_feedback_info()
+        self.edition_feedback_banner.bgcolor = bgcolor
+        if hasattr(self, "edition_feedback_icon") and self.edition_feedback_icon:
+            self.edition_feedback_icon.name = icon
+            self.edition_feedback_icon.color = text_color
+        if hasattr(self, "edition_feedback_text") and self.edition_feedback_text:
+            self.edition_feedback_text.value = label
+            self.edition_feedback_text.color = text_color
+
     def _build_segmented_button(self, page: ft.Page) -> ft.Control | None:
-        """Gera a barra de alternância (SegmentedButton) entre Novo, Antigo, Comparação e Texto Bíblico."""
+        """Gera a barra de alternância (SegmentedButton) entre Novo, Antigo, Comparação e Texto Bíblico com banner de feedback suave."""
         if not self.comparativo:
             return None
 
@@ -1514,8 +1607,17 @@ class HinoView:
             show_selected_icon=False,
         )
 
+        self.edition_feedback_banner = self._build_edition_feedback_banner()
+
         return ft.Container(
-            content=self.segmented_button,
+            content=ft.Column(
+                controls=[
+                    self.segmented_button,
+                    self.edition_feedback_banner,
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                spacing=8,
+            ),
             padding=ft.Padding.only(top=0, bottom=12, left=10, right=10),
             alignment=ft.Alignment.CENTER,
         )
@@ -1845,7 +1947,8 @@ class HinoView:
         )
 
     def _update_content_view(self, page: ft.Page | None) -> None:
-        """Atualiza o conteúdo dinâmico da letra/comparação."""
+        """Atualiza o conteúdo dinâmico da letra/comparação e o banner de feedback da edição."""
+        self._update_edition_feedback_banner()
         if self.content_container:
             self.content_container.content = self._render_current_mode_content()
         if page:
@@ -2410,6 +2513,7 @@ class HinoView:
                 padding=ft.Padding.only(left=20, top=20, right=20, bottom=40),
             )
         )
+        ensure_page_dialogs(page)
         page.show_dialog(bs)
 
     async def _navigate_filter(
@@ -2755,4 +2859,5 @@ class HinoView:
                 padding=ft.Padding.only(left=20, top=20, right=20, bottom=40),
             )
         )
+        ensure_page_dialogs(page)
         page.show_dialog(bs)

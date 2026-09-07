@@ -481,3 +481,230 @@ async def test_biblia_view_plan_b_full_screen_flow():
     await repo.close()
 
 
+@pytest.mark.asyncio
+async def test_biblia_view_font_accessibility_modal():
+    db_conn = DatabaseConnection(db_path=":memory:", read_only=True)
+    conn = await db_conn.get_connection()
+    await conn.execute("CREATE TABLE book (id INTEGER PRIMARY KEY, testament_reference_id INTEGER, name VARCHAR(50));")
+    await conn.execute("CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);")
+    await conn.execute("INSERT INTO book VALUES (1, 1, 'Gênesis');")
+    await conn.execute("INSERT INTO verse VALUES (1, 1, 1, 1, 'No princípio');")
+    await conn.commit()
+
+    repo = BibliaRepository(db_conn)
+    view_instance = BibliaView(repo)
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.show_dialog = MagicMock()
+    mock_page.pop_dialog = MagicMock()
+    mock_page.update = MagicMock()
+
+    await view_instance.build(mock_page, initial_book_id=1, initial_chapter=1)
+
+    # 1. Verifica se o item "Aparência e Fonte do Texto" existe no popup menu
+    popup_menu = None
+    for act in view_instance.normal_appbar.actions:
+        if isinstance(act, ft.PopupMenuButton) and act.icon == ft.Icons.MORE_VERT:
+            popup_menu = act
+            break
+    assert popup_menu is not None
+    font_item = None
+    for it in popup_menu.items:
+        if isinstance(it, ft.PopupMenuItem) and (
+            getattr(it, "text", None) == "Aparência e Fonte do Texto"
+            or getattr(it, "content", None) == "Aparência e Fonte do Texto"
+        ):
+            font_item = it
+            break
+    assert font_item is not None
+    assert font_item.icon == ft.Icons.FORMAT_SIZE
+
+    # 2. Abre o modal de acessibilidade de fonte
+    view_instance._show_font_accessibility_modal(mock_page)
+    mock_page.show_dialog.assert_called_once()
+    bs = mock_page.show_dialog.call_args[0][0]
+    assert isinstance(bs, ft.BottomSheet)
+    assert view_instance.font_accessibility_bs is bs
+
+    # 3. Testa alteração do tamanho e reset
+    initial_font = view_instance.font_size
+    assert initial_font == 17
+    view_instance._zoom_in()
+    assert view_instance.font_size == 19
+    view_instance._zoom_out()
+    assert view_instance.font_size == 17
+
+    # 4. Encontra controles no modal (botões de aumento, diminuição, reset e radio de fonte)
+    container_col = bs.content.content
+    assert isinstance(container_col, ft.Column)
+
+    # Encontra o RadioGroup de fontes
+    radio_group = None
+    for ctrl in container_col.controls:
+        if isinstance(ctrl, ft.RadioGroup):
+            radio_group = ctrl
+            break
+    assert radio_group is not None
+    assert radio_group.value == view_instance.font_family
+    assert len(radio_group.content.controls) == 6
+
+    # Simula troca de fonte para 'Merriweather'
+    ev_radio = MagicMock()
+    ev_radio.control.value = "Merriweather"
+    radio_group.on_change(ev_radio)
+    assert view_instance.font_family == "Merriweather"
+
+    # Encontra botões de tamanho (stepper)
+    row_stepper = None
+    for ctrl in container_col.controls:
+        if isinstance(ctrl, ft.Row) and len(ctrl.controls) >= 4:
+            row_stepper = ctrl
+            break
+    assert row_stepper is not None
+    btn_diminuir = row_stepper.controls[0]
+    btn_aumentar = row_stepper.controls[2]
+    btn_reset = row_stepper.controls[3]
+
+    btn_aumentar.on_click(None)
+    assert view_instance.font_size == 19
+    btn_diminuir.on_click(None)
+    assert view_instance.font_size == 17
+    btn_aumentar.on_click(None)
+    btn_aumentar.on_click(None)
+    assert view_instance.font_size == 21
+    btn_reset.on_click(None)
+    assert view_instance.font_size == 17
+
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_biblia_view_pesquisa_flow():
+    """Valida o fluxo completo de pesquisa da Bíblia (Sprint 4)."""
+    db_conn = DatabaseConnection(db_path=":memory:", read_only=True)
+    conn = await db_conn.get_connection()
+    await conn.execute(
+        "CREATE TABLE book (id INTEGER PRIMARY KEY, testament_reference_id INTEGER, name VARCHAR(50));"
+    )
+    await conn.execute(
+        "CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);"
+    )
+    await conn.executemany(
+        "INSERT INTO book VALUES (?, ?, ?);",
+        [
+            (1, 1, "Gênesis"),
+            (19, 1, "Salmos"),
+            (43, 2, "João"),
+        ],
+    )
+    await conn.executemany(
+        "INSERT INTO verse VALUES (?, ?, ?, ?, ?);",
+        [
+            (1, 1, 1, 3, "Disse Deus: Haja luz; e houve luz."),
+            (2, 19, 23, 1, "O SENHOR é o meu pastor; nada me faltará."),
+            (3, 43, 8, 12, "Eu sou a luz do mundo."),
+        ],
+    )
+    await conn.commit()
+
+    repo = BibliaRepository(db_conn)
+    theme_service = ThemeService(db_conn)
+    view_instance = BibliaView(repo, theme_service=theme_service)
+
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.dialogs = []
+    mock_page.update = MagicMock()
+    mock_page.show_dialog = MagicMock(side_effect=lambda d: mock_page.dialogs.append(d))
+
+    await view_instance.build(mock_page)
+
+    # 1. Abre a pesquisa
+    view_instance._abrir_pesquisa()
+    assert view_instance.active_screen == "pesquisa"
+    assert view_instance.search_input is not None
+    assert isinstance(view_instance.view.appbar, ft.AppBar)
+
+    # 2. Executa pesquisa textual
+    await view_instance._executar_pesquisa("luz")
+    assert len(view_instance.search_results) == 2
+    assert view_instance.search_results[0]["referencia"] == "Gênesis 1:3"
+    assert view_instance.search_results[1]["referencia"] == "João 8:12"
+
+    # 3. Navega para um resultado selecionado
+    await view_instance._navegar_para_resultado_pesquisa(43, 8, 12)
+    assert view_instance.active_screen == "leitor"
+    assert view_instance.current_book_id == 43
+    assert view_instance.current_chapter == 8
+
+    # 4. Testa botão de retorno ao leitor
+    view_instance._abrir_pesquisa()
+    assert view_instance.active_screen == "pesquisa"
+    view_instance._back_to_leitor()
+    assert view_instance.active_screen == "leitor"
+
+    await repo.close()
+
+
+@pytest.mark.asyncio
+async def test_biblia_view_comparador_versoes_flow():
+    """Valida o comparador multiversões da Bíblia a partir de múltiplos gatilhos (Sprint 4)."""
+    db_conn = DatabaseConnection(db_path=":memory:", read_only=True)
+    conn = await db_conn.get_connection()
+    await conn.execute("CREATE TABLE book (id INTEGER PRIMARY KEY, name VARCHAR(50));")
+    await conn.execute(
+        "CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);"
+    )
+    await conn.execute("INSERT INTO book VALUES (43, 'João');")
+    await conn.execute(
+        "INSERT INTO verse VALUES (1, 43, 3, 16, 'Porque Deus amou ao mundo de tal maneira...');"
+    )
+    await conn.commit()
+
+    repo = BibliaRepository(db_conn)
+    theme_service = ThemeService(db_conn)
+    view_instance = BibliaView(repo, theme_service=theme_service)
+
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.dialogs = []
+    mock_page.update = MagicMock()
+    mock_page.show_dialog = MagicMock(side_effect=lambda d: mock_page.dialogs.append(d))
+
+    await view_instance.build(mock_page)
+
+    # 1. Abertura direta do comparador
+    await view_instance._abrir_comparador_versoes(43, 3, 16)
+    assert len(mock_page.dialogs) == 1
+    modal = mock_page.dialogs[-1]
+    assert isinstance(modal, ft.BottomSheet)
+    assert modal.scrollable is True
+
+    # 2. Gatilho via menu de contexto de versículo
+    view_instance._show_verse_context_menu(16, "Porque Deus amou ao mundo...")
+    assert len(mock_page.dialogs) == 2
+    context_bs = mock_page.dialogs[-1]
+    # Encontra o ListTile de Comparar Versões
+    column_ctrl = context_bs.content.content
+    compare_tile = None
+    for ctrl in column_ctrl.controls:
+        if isinstance(ctrl, ft.ListTile) and hasattr(ctrl.title, "value") and ctrl.title.value == "Comparar Versões":
+            compare_tile = ctrl
+            break
+    assert compare_tile is not None
+
+    # 3. Gatilho via barra contextual de seleção (1 versículo selecionado)
+    view_instance.selected_verses = {16}
+    view_instance._update_appbar_for_selection()
+    selection_appbar = view_instance.view.appbar
+    assert selection_appbar is not None
+    # Verifica presença do botão de comparação
+    compare_btn = None
+    for act in selection_appbar.actions:
+        if isinstance(act, ft.IconButton) and act.icon == ft.Icons.COMPARE_ARROWS:
+            compare_btn = act
+            break
+    assert compare_btn is not None
+
+    await repo.close()
+
+
+
+
