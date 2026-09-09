@@ -9,6 +9,9 @@ from typing import Any
 import aiosqlite
 
 DEFAULT_DB_NAME: str = "hinario.db"
+DB_BIBLIA_LEVE: str = "biblia_leve.sqlite"
+SQLITE_MEMORY_DB: str = ":memory:"
+SQLITE_FILE_URI_PREFIX: str = "file:"
 
 
 def _is_single_threaded_env() -> bool:
@@ -241,6 +244,15 @@ class DatabaseConnection:
         elif path_input.exists():
             candidates.append(path_input.resolve())
 
+        # Diretório de módulos baixados on-demand (user_data_dir / modules)
+        user_dir = DatabaseConnection._get_user_data_dir()
+        candidates.append(user_dir / "modules" / filename)
+        candidates.append(user_dir / "modules" / "biblias" / filename)
+        env_modules = os.environ.get("HINARIO_MODULES_DIR")
+        if env_modules:
+            candidates.append(Path(env_modules) / filename)
+            candidates.append(Path(env_modules) / "biblias" / filename)
+
         # Diretório do próprio módulo (src/database)
         db_module_dir = Path(__file__).resolve().parent
         candidates.append(db_module_dir / "data" / filename)
@@ -268,6 +280,17 @@ class DatabaseConnection:
             candidates.append(project_root / "src" / "assets" / db_path)
             candidates.append(project_root / "src" / "database" / "data" / db_path)
             candidates.append(project_root / db_path)
+
+        # Fallback para o banco leve embutido para consultas bíblicas caso não haja tradução baixada
+        is_bible_target = (
+            filename in ("ARA.sqlite", "biblia.sqlite", DB_BIBLIA_LEVE)
+            or "biblia" in filename.lower()
+            or filename.endswith(".sqlite")
+        )
+        if is_bible_target:
+            candidates.append(project_root / "assets" / DB_BIBLIA_LEVE)
+            candidates.append(db_module_dir.parent / "assets" / DB_BIBLIA_LEVE)
+            candidates.append(user_dir / DB_BIBLIA_LEVE)
 
         candidates.extend(DatabaseConnection._gather_env_candidates(filename))
         candidates.extend(DatabaseConnection._gather_sys_candidates(filename))
@@ -407,7 +430,11 @@ class DatabaseConnection:
         Resolve o caminho absoluto e gravável do banco de dados SQLite de forma robusta
         para suportar Desktop, Web, Android (serious_python/Flet) e PyInstaller.
         """
-        if not db_path or db_path == ":memory:" or db_path.startswith("file:"):
+        if (
+            not db_path
+            or db_path == SQLITE_MEMORY_DB
+            or db_path.startswith(SQLITE_FILE_URI_PREFIX)
+        ):
             return db_path
 
         env_override = DatabaseConnection._resolve_env_db_path()
@@ -435,13 +462,44 @@ class DatabaseConnection:
         """Cria uma conexão assíncrona compatível via sqlite3 nativo sem criar threads de SO."""
         if self.read_only:
             try:
-                raw_conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True, timeout=30.0)
+                raw_conn = sqlite3.connect(
+                    f"{SQLITE_FILE_URI_PREFIX}{self.db_path}?mode=ro", uri=True, timeout=30.0
+                )
             except OSError:
                 raw_conn = sqlite3.connect(self.db_path, timeout=30.0)
         else:
             raw_conn = sqlite3.connect(self.db_path, timeout=30.0)
         raw_conn.row_factory = sqlite3.Row
         return _AsyncSqliteCompatConnection(raw_conn)
+
+    def _is_wal_corrupted(self) -> bool:
+        """Verifica se a tentativa de leitura causa erro de disk image malformed."""
+        test_conn = None
+        try:
+            test_conn = sqlite3.connect(self.db_path, timeout=1.0)
+            test_conn.execute("SELECT 1 FROM sqlite_master LIMIT 1;")
+            return False
+        except sqlite3.DatabaseError as exc:
+            err_msg = str(exc).lower()
+            return "malformed" in err_msg or "disk image" in err_msg
+        finally:
+            if test_conn is not None:
+                try:
+                    test_conn.close()
+                except Exception:
+                    pass
+
+    def _quarantine_corrupted_wal(self, wal_file: Path, shm_file: Path) -> None:
+        """Isola arquivos WAL e SHM corrompidos com extensão .corrupt."""
+        try:
+            backup_wal = Path(f"{self.db_path}-wal.corrupt")
+            if backup_wal.exists():
+                backup_wal.unlink()
+            wal_file.rename(backup_wal)
+            if shm_file.exists():
+                shm_file.unlink()
+        except OSError:
+            pass
 
     def _recover_stale_wal_if_needed(self) -> None:
         """
@@ -452,8 +510,8 @@ class DatabaseConnection:
         """
         if (
             not self.db_path
-            or self.db_path == ":memory:"
-            or self.db_path.startswith("file:")
+            or self.db_path == SQLITE_MEMORY_DB
+            or self.db_path.startswith(SQLITE_FILE_URI_PREFIX)
         ):
             return
 
@@ -462,29 +520,8 @@ class DatabaseConnection:
         if not wal_file.exists():
             return
 
-        test_conn = None
-        try:
-            test_conn = sqlite3.connect(self.db_path, timeout=1.0)
-            test_conn.execute("SELECT 1 FROM sqlite_master LIMIT 1;")
-            test_conn.close()
-            test_conn = None
-        except sqlite3.DatabaseError as exc:
-            err_msg = str(exc).lower()
-            if "malformed" in err_msg or "disk image" in err_msg:
-                if test_conn is not None:
-                    try:
-                        test_conn.close()
-                    except Exception:
-                        pass
-                try:
-                    backup_wal = Path(f"{self.db_path}-wal.corrupt")
-                    if backup_wal.exists():
-                        backup_wal.unlink()
-                    wal_file.rename(backup_wal)
-                    if shm_file.exists():
-                        shm_file.unlink()
-                except OSError:
-                    pass
+        if self._is_wal_corrupted():
+            self._quarantine_corrupted_wal(wal_file, shm_file)
 
     async def get_connection(self) -> AsyncConnectionType:
         """
@@ -542,8 +579,8 @@ class DatabaseConnection:
         if (
             not read_only
             and db_path
-            and db_path != ":memory:"
-            and not db_path.startswith("file:")
+            and db_path != SQLITE_MEMORY_DB
+            and not db_path.startswith(SQLITE_FILE_URI_PREFIX)
         ):
             pragmas.insert(1, "PRAGMA journal_mode = WAL;")
 
@@ -552,6 +589,107 @@ class DatabaseConnection:
                 await conn.execute(pragma)
             except Exception:
                 pass
+
+    @staticmethod
+    async def _has_table(conn: AsyncConnectionType, table_name: str) -> bool:
+        """Verifica de forma assíncrona se uma tabela existe no banco."""
+        try:
+            async with conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?;",
+                (table_name,),
+            ) as cursor:
+                row = await cursor.fetchone()
+                return row is not None
+        except Exception:
+            return False
+
+    @staticmethod
+    async def _create_hino_indexes(conn: AsyncConnectionType) -> None:
+        """Cria índices de performance essenciais para as tabelas do hinário."""
+        index_statements = [
+            "CREATE INDEX IF NOT EXISTS idx_historico_hino_data ON historico(hino_id, data_acesso DESC);",
+            "CREATE INDEX IF NOT EXISTS idx_favorito_data ON favorito(data_favoritado DESC);",
+            "CREATE INDEX IF NOT EXISTS idx_hino_numero ON hino(numero);",
+            "CREATE INDEX IF NOT EXISTS idx_hino_titulo ON hino(titulo);",
+            "CREATE INDEX IF NOT EXISTS idx_hino_tema_hino ON hino_tema(hino_id);",
+            "CREATE INDEX IF NOT EXISTS idx_hino_tema_tema ON hino_tema(tema_id);",
+            "CREATE INDEX IF NOT EXISTS idx_hino_texto_hino ON hino_texto(hino_id);",
+        ]
+        for stmt in index_statements:
+            try:
+                await conn.execute(stmt)
+            except Exception:
+                pass
+
+    @staticmethod
+    async def _create_or_repair_hino_fts(conn: AsyncConnectionType) -> None:
+        """Cria, popula e verifica integridade da tabela virtual FTS5 para busca textual."""
+        try:
+            async with conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='hino_fts';"
+            ) as cursor:
+                table_info = await cursor.fetchone()
+                if table_info and "temas" not in (table_info[0] or "").lower():
+                    await conn.execute("DROP TABLE IF EXISTS hino_fts;")
+
+            await conn.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS hino_fts USING fts5(
+                    numero, titulo, letra, categoria, subcategoria, texto_base, autor_letra, autor_musica, temas, textos,
+                    tokenize='unicode61 remove_diacritics 2'
+                );
+            """)
+            async with conn.execute("SELECT COUNT(*) FROM hino_fts;") as cursor:
+                row = await cursor.fetchone()
+                count = row[0] if row else 0
+            if count == 0:
+                await conn.execute("""
+                    INSERT INTO hino_fts(rowid, numero, titulo, letra, categoria, subcategoria, texto_base, autor_letra, autor_musica, temas, textos)
+                    SELECT 
+                        h.id, 
+                        COALESCE(h.numero, ''), 
+                        COALESCE(h.titulo, ''), 
+                        COALESCE(h.letra, ''), 
+                        COALESCE(h.categoria, ''), 
+                        COALESCE(h.subcategoria, ''), 
+                        COALESCE(h.texto_base, ''), 
+                        COALESCE(h.autor_letra, ''), 
+                        COALESCE(h.autor_musica, ''),
+                        COALESCE((SELECT GROUP_CONCAT(t.nome, ' ') FROM hino_tema ht JOIN tema t ON ht.tema_id = t.id WHERE ht.hino_id = h.id), ''),
+                        COALESCE((SELECT GROUP_CONCAT(tb.referencia, ' ') FROM hino_texto htx JOIN texto_biblico tb ON htx.texto_id = tb.id WHERE htx.hino_id = h.id), '')
+                    FROM hino h;
+                """)
+            try:
+                await conn.execute("INSERT INTO hino_fts(hino_fts) VALUES('integrity-check');")
+            except Exception:
+                try:
+                    await conn.execute("INSERT INTO hino_fts(hino_fts) VALUES('rebuild');")
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    @staticmethod
+    async def _cleanup_old_history(conn: AsyncConnectionType) -> None:
+        """Limpa registros de histórico com mais de 90 dias."""
+        try:
+            await conn.execute(
+                "DELETE FROM historico WHERE data_acesso < datetime('now', '-90 days');"
+            )
+        except Exception:
+            pass
+
+    @staticmethod
+    async def _create_preferences_table(conn: AsyncConnectionType) -> None:
+        """Cria a tabela de preferências chave-valor caso não exista."""
+        try:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS preferencias (
+                    chave TEXT PRIMARY KEY,
+                    valor TEXT
+                );
+            """)
+        except Exception:
+            pass
 
     async def _initialize_db(self, conn: AsyncConnectionType) -> None:
         """
@@ -562,108 +700,22 @@ class DatabaseConnection:
         """
         await self._apply_pragmas(conn, db_path=self.db_path, read_only=self.read_only)
 
-        # Se for somente leitura (ex: Bíblias ou comparativo), não executa DDL nem escrita
         if self.read_only:
             return
 
-        # Para bancos em arquivo físico, executa inicialização de esquema apenas uma vez por execução do app
-        if self.db_path != ":memory:" and self.db_path in DatabaseConnection._initialized_dbs:
+        if (
+            self.db_path != SQLITE_MEMORY_DB
+            and self.db_path in DatabaseConnection._initialized_dbs
+        ):
             return
 
         try:
-            # Verifica se este banco contém a tabela 'hino' antes de criar índices e FTS de hinos
-            has_hino = False
-            try:
-                async with conn.execute(
-                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hino';"
-                ) as cursor:
-                    row = await cursor.fetchone()
-                    has_hino = row is not None
-            except Exception:
-                pass
+            if await self._has_table(conn, "hino"):
+                await self._create_hino_indexes(conn)
+                await self._create_or_repair_hino_fts(conn)
+                await self._cleanup_old_history(conn)
 
-            if has_hino:
-                # Índices de performance
-                index_statements = [
-                    "CREATE INDEX IF NOT EXISTS idx_historico_hino_data ON historico(hino_id, data_acesso DESC);",
-                    "CREATE INDEX IF NOT EXISTS idx_favorito_data ON favorito(data_favoritado DESC);",
-                    "CREATE INDEX IF NOT EXISTS idx_hino_numero ON hino(numero);",
-                    "CREATE INDEX IF NOT EXISTS idx_hino_titulo ON hino(titulo);",
-                    "CREATE INDEX IF NOT EXISTS idx_hino_tema_hino ON hino_tema(hino_id);",
-                    "CREATE INDEX IF NOT EXISTS idx_hino_tema_tema ON hino_tema(tema_id);",
-                    "CREATE INDEX IF NOT EXISTS idx_hino_texto_hino ON hino_texto(hino_id);",
-                ]
-                for stmt in index_statements:
-                    try:
-                        await conn.execute(stmt)
-                    except Exception:
-                        pass
-
-                # Tabela FTS5 para busca full-text (letra, categoria, subcategoria, texto_base, autores, temas, textos)
-                try:
-                    async with conn.execute(
-                        "SELECT sql FROM sqlite_master WHERE type='table' AND name='hino_fts';"
-                    ) as cursor:
-                        table_info = await cursor.fetchone()
-                        if table_info and "temas" not in (table_info[0] or "").lower():
-                            await conn.execute("DROP TABLE IF EXISTS hino_fts;")
-
-                    await conn.execute("""
-                        CREATE VIRTUAL TABLE IF NOT EXISTS hino_fts USING fts5(
-                            numero, titulo, letra, categoria, subcategoria, texto_base, autor_letra, autor_musica, temas, textos,
-                            tokenize='unicode61 remove_diacritics 2'
-                        );
-                    """)
-                    # Verifica se o FTS está vazio e precisa ser populado
-                    async with conn.execute("SELECT COUNT(*) FROM hino_fts;") as cursor:
-                        row = await cursor.fetchone()
-                        count = row[0] if row else 0
-                    if count == 0:
-                        await conn.execute("""
-                            INSERT INTO hino_fts(rowid, numero, titulo, letra, categoria, subcategoria, texto_base, autor_letra, autor_musica, temas, textos)
-                            SELECT 
-                                h.id, 
-                                COALESCE(h.numero, ''), 
-                                COALESCE(h.titulo, ''), 
-                                COALESCE(h.letra, ''), 
-                                COALESCE(h.categoria, ''), 
-                                COALESCE(h.subcategoria, ''), 
-                                COALESCE(h.texto_base, ''), 
-                                COALESCE(h.autor_letra, ''), 
-                                COALESCE(h.autor_musica, ''),
-                                COALESCE((SELECT GROUP_CONCAT(t.nome, ' ') FROM hino_tema ht JOIN tema t ON ht.tema_id = t.id WHERE ht.hino_id = h.id), ''),
-                                COALESCE((SELECT GROUP_CONCAT(tb.referencia, ' ') FROM hino_texto htx JOIN texto_biblico tb ON htx.texto_id = tb.id WHERE htx.hino_id = h.id), '')
-                            FROM hino h;
-                        """)
-                    # Auto-verificação e reparo de integridade do índice FTS5
-                    try:
-                        await conn.execute("INSERT INTO hino_fts(hino_fts) VALUES('integrity-check');")
-                    except Exception:
-                        try:
-                            await conn.execute("INSERT INTO hino_fts(hino_fts) VALUES('rebuild');")
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
-
-                # Limpeza automática de histórico antigo (> 90 dias)
-                try:
-                    await conn.execute(
-                        "DELETE FROM historico WHERE data_acesso < datetime('now', '-90 days');"
-                    )
-                except Exception:
-                    pass
-
-            # Tabela de preferências do usuário
-            try:
-                await conn.execute("""
-                    CREATE TABLE IF NOT EXISTS preferencias (
-                        chave TEXT PRIMARY KEY,
-                        valor TEXT
-                    );
-                """)
-            except Exception:
-                pass
+            await self._create_preferences_table(conn)
 
             try:
                 await conn.commit()
@@ -673,7 +725,7 @@ class DatabaseConnection:
                 except Exception:
                     pass
 
-            if self.db_path != ":memory:":
+            if self.db_path != SQLITE_MEMORY_DB:
                 DatabaseConnection._initialized_dbs.add(self.db_path)
         except Exception:
             try:

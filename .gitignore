@@ -27,6 +27,7 @@ ENV/
 # Downloads / Media generated at runtime
 downloads/
 tmp_downloads/
+modules/
 *.mp3
 *.mp4
 *.m4a
@@ -57,4 +58,7 @@ release_apks/
 *.keystore
 .flutter-plugins
 .flutter-plugins-dependencies
+
+# Scripts locais de manutenção
+fix_git_index.sh
 

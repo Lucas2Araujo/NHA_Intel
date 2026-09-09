@@ -2,6 +2,7 @@ import asyncio
 
 import flet as ft
 
+from src.services.content_manager import ContentManager
 from src.services.theme_service import ThemeService
 from src.services.updater_service import UpdaterService
 from src.views.settings_dialog import show_settings_dialog
@@ -11,6 +12,8 @@ try:
 except ImportError:
     APP_VERSION = "0.2.2"
 
+ROUTE_DOWNLOADS = "/downloads"
+
 
 class SelecaoView:
     """
@@ -18,15 +21,18 @@ class SelecaoView:
     Apresenta uma interface moderna e acolhedora para o usuário escolher entre
     o Hinário Novo (2022) e o Hinário Tradicional/Antigo (1996), além de
     atalhos para o Agente de Cultos e Gerenciador de Downloads.
+    Exibe badges dinâmicos e redirecionamento caso módulos secundários não estejam instalados.
     """
 
     def __init__(
         self,
         theme_service: ThemeService,
         updater_service: UpdaterService | None = None,
+        content_manager: ContentManager | None = None,
     ):
         self.theme_service = theme_service
         self.updater_service = updater_service or UpdaterService()
+        self.content_manager = content_manager or ContentManager()
         self.page: ft.Page | None = None
 
     async def _navigate(self, page: ft.Page, route: str) -> None:
@@ -177,26 +183,35 @@ class SelecaoView:
             route="/novo",
         )
 
+        has_antigo = self.content_manager.is_module_installed("hinario_antigo")
         card_antigo = self._build_edition_card(
             page=page,
             title="Hinário Tradicional",
-            subtitle="Edição Clássica (1996) • 613 Hinos",
+            subtitle="Edição Clássica (1996) • 613 Hinos"
+            if has_antigo
+            else "Módulo adicional • Baixar para ler",
             description="Todas as poesias tradicionais com comparativo automático da nova edição.",
-            badge_text="CLÁSSICO",
+            badge_text="CLÁSSICO" if has_antigo else "BAIXAR",
             icon=ft.Icons.MENU_BOOK,
-            badge_color=ft.Colors.AMBER_400,
-            route="/antigo",
+            badge_color=ft.Colors.AMBER_400 if has_antigo else ft.Colors.ORANGE_400,
+            route="/antigo" if has_antigo else ROUTE_DOWNLOADS,
         )
+
+        has_biblia = self.content_manager.has_any_bible_installed()
+        installed_bibles = self.content_manager.get_installed_bible_ids()
+        bibles_summary = ", ".join(installed_bibles[:4]) if installed_bibles else "ARA, NVI..."
 
         card_biblia = self._build_edition_card(
             page=page,
             title="Bíblia Sagrada",
-            subtitle="ARA, NVI, NTLH, KJA • 66 Livros",
+            subtitle=f"{bibles_summary} • 66 Livros"
+            if has_biblia
+            else "Nenhuma tradução instalada • Baixe para ler",
             description="Leitura completa das Escrituras Sagradas com navegação rápida por livro e capítulo.",
-            badge_text="BÍBLIA",
+            badge_text="BÍBLIA" if has_biblia else "BAIXAR TRADUÇÃO",
             icon=ft.Icons.AUTO_STORIES,
-            badge_color=ft.Colors.GREEN_400,
-            route="/biblia",
+            badge_color=ft.Colors.GREEN_400 if has_biblia else ft.Colors.ORANGE_400,
+            route="/biblia" if has_biblia else ROUTE_DOWNLOADS,
         )
 
         quick_actions = ft.Container(
@@ -214,7 +229,7 @@ class SelecaoView:
                         "Downloads",
                         icon=ft.Icons.DOWNLOAD_OUTLINED,
                         on_click=lambda e: asyncio.create_task(
-                            self._navigate(page, "/downloads")
+                            self._navigate(page, ROUTE_DOWNLOADS)
                         ),
                         expand=True,
                     ),

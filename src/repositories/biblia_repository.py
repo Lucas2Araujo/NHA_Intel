@@ -1,8 +1,8 @@
+import os
 import re
 import unicodedata
-from typing import Optional, List, Dict, Tuple, Any
-
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 from src.database.connection import DatabaseConnection
 from src.models.biblia import PassagemBiblica, Versiculo
@@ -400,18 +400,27 @@ SINGLE_CHAPTER_BOOKS: set[int] = {
 }  # Obadias, Filemom, 2 João, 3 João, Judas
 
 BIBLE_VERSION_NAMES: dict[str, str] = {
+    "ACF": "Almeida Corrigida Fiel",
     "ARA": "Almeida Revista e Atualizada",
-    "NVI": "Nova Versão Internacional",
-    "NTLH": "Nova Tradução na Linguagem de Hoje",
-    "KJA": "King James Atualizada",
+    "ARC": "Almeida Revista e Corrigida",
     "AS21": "Almeida Século 21",
+    "JFAA": "João Ferreira de Almeida Atualizada",
+    "KJA": "King James Atualizada",
+    "KJF": "King James Fiel",
+    "NAA": "Nova Almeida Atualizada",
+    "NBV": "Nova Bíblia Viva",
+    "NTLH": "Nova Tradução na Linguagem de Hoje",
+    "NVI": "Nova Versão Internacional",
+    "NVT": "Nova Versão Transformadora",
+    "TB": "Tradução Brasileira",
 }
 
 
 class BibliaRepository:
     """
     Repositório assíncrono para consulta de textos bíblicos em bancos SQLite (ex: ARA.sqlite, NVI.sqlite).
-    Suporta descoberta dinâmica de múltiplas versões da Bíblia na pasta assets/biblias e chaveamento de versões.
+    Suporta descoberta dinâmica de múltiplas versões da Bíblia na pasta de módulos graváveis (modules/)
+    e chaveamento transparente de versões com fallback para o banco leve embutido (biblia_leve.sqlite).
     Opera estritamente em modo de leitura com queries parametrizadas (?).
     """
 
@@ -431,6 +440,7 @@ class BibliaRepository:
 
         self._book_names: dict[str, dict[int, str]] = {}
         self._passagem_cache: dict[str, PassagemBiblica | None] = {}
+        self._total_chapters_cache: dict[str, int] = {}
 
     @classmethod
     def get_version_name(cls, version: str) -> str:
@@ -454,51 +464,90 @@ class BibliaRepository:
         self._connections[self.active_version] = conn
 
     @staticmethod
-    def get_available_versions() -> list[str]:
-        """
-        Descobre dinamicamente as versões da Bíblia disponíveis nos diretórios de assets e dados.
-        Retorna uma lista ordenada com os nomes das versões (ex: ['ARA', 'NVI']), mantendo 'ARA' como prioritária.
-        """
-        versions: set[str] = set()
+    def _candidate_bible_dirs() -> list[Path]:
+        """Gera lista de diretórios onde arquivos de módulos bíblicos podem residir."""
         module_dir = Path(__file__).resolve().parent.parent  # src
         root_dir = module_dir.parent  # project root
+        user_dir = DatabaseConnection._get_user_data_dir()
 
         candidate_dirs = [
+            user_dir / "modules" / "biblias",
+            user_dir / "modules",
             root_dir / "assets" / "biblias",
             root_dir / "assets",
             module_dir / "assets" / "biblias",
             module_dir / "assets",
             module_dir / "database" / "data" / "biblias",
             module_dir / "database" / "data",
-            DatabaseConnection._get_user_data_dir() / "biblias",
-            DatabaseConnection._get_user_data_dir(),
+            user_dir / "biblias",
+            user_dir,
         ]
+        env_modules = os.environ.get("HINARIO_MODULES_DIR")
+        if env_modules:
+            candidate_dirs.insert(0, Path(env_modules) / "biblias")
+            candidate_dirs.insert(0, Path(env_modules))
+        return candidate_dirs
 
-        ignored_prefixes = ("hinario", "test", "temp", "cache")
+    @staticmethod
+    def _scan_bible_versions_in_dir(
+        d: Path, ignored_prefixes: tuple[str, ...], valid_extensions: set[str]
+    ) -> set[str]:
+        """Varre um diretório por bancos de dados SQLite de versões completas da Bíblia (> 500KB)."""
+        versions: set[str] = set()
+        if not d.exists() or not d.is_dir():
+            return versions
+        try:
+            for item in d.iterdir():
+                if item.is_file() and item.suffix.lower() in valid_extensions:
+                    name = item.stem
+                    if (
+                        not any(name.lower().startswith(p) for p in ignored_prefixes)
+                        and item.stat().st_size > 500_000
+                    ):
+                        versions.add(name.upper())
+        except Exception:
+            pass
+        return versions
+
+    @staticmethod
+    def get_installed_versions() -> list[str]:
+        """
+        Descobre dinamicamente as versões completas da Bíblia instaladas localmente no diretório
+        gravável de módulos ou pastas de dados. Não inclui fallbacks leves parciais.
+        """
+        versions: set[str] = set()
+        candidate_dirs = BibliaRepository._candidate_bible_dirs()
+        ignored_prefixes = ("hinario", "test", "temp", "cache", "biblia_leve", "biblia_citados")
         valid_extensions = {".sqlite", ".db", ".sqlite3"}
 
         for d in candidate_dirs:
-            if not d.exists() or not d.is_dir():
-                continue
-            try:
-                for item in d.iterdir():
-                    if item.is_file() and item.suffix.lower() in valid_extensions:
-                        name = item.stem
-                        if any(name.lower().startswith(p) for p in ignored_prefixes):
-                            continue
-                        if item.stat().st_size > 0:
-                            versions.add(name.upper())
-            except Exception:
-                pass
-
-        if not versions:
-            return ["ARA"]
+            versions.update(
+                BibliaRepository._scan_bible_versions_in_dir(
+                    d, ignored_prefixes, valid_extensions
+                )
+            )
 
         sorted_versions = sorted(versions)
         if "ARA" in sorted_versions:
             sorted_versions.remove("ARA")
             sorted_versions.insert(0, "ARA")
         return sorted_versions
+
+    @classmethod
+    def has_installed_bibles(cls) -> bool:
+        """Informa se existe ao menos uma tradução completa da Bíblia instalada no dispositivo."""
+        return len(cls.get_installed_versions()) > 0
+
+    @classmethod
+    def get_available_versions(cls) -> list[str]:
+        """
+        Descobre as versões da Bíblia disponíveis. Se traduções completas estiverem instaladas,
+        retorna a lista ordenada. Se nenhuma estiver baixada, retorna ['ARA'] como fallback.
+        """
+        installed = cls.get_installed_versions()
+        if installed:
+            return installed
+        return ["ARA"]
 
     def set_version(self, version: str) -> None:
         """Altera a versão bíblica ativa corrente."""
@@ -510,18 +559,19 @@ class BibliaRepository:
         v = (version or self.active_version or self.DEFAULT_VERSION).strip().upper()
         if v not in self._connections:
             self._connections[v] = DatabaseConnection(
-                db_path=f"biblias/{v}.sqlite", read_only=True
+                db_path=f"{v}.sqlite", read_only=True
             )
         return self._connections[v]
 
     def clear_cache(self) -> None:
-        """Limpa os caches em memória de passagens e nomes de livros."""
+        """Limpa os caches em memória de passagens, totais de capítulos e nomes de livros."""
         self._book_names.clear()
         self._passagem_cache.clear()
+        self._total_chapters_cache.clear()
 
     async def close(self) -> None:
         """Encerra todas as conexões ativas com os bancos das Bíblias."""
-        for conn in list(self._connections.values()):
+        for conn in self._connections.values():
             try:
                 await conn.close()
             except Exception:
@@ -860,10 +910,8 @@ class BibliaRepository:
             return 0
         v = (versao or self.active_version or self.DEFAULT_VERSION).strip().upper()
         cache_key = f"{v}:total_chapters:{book_id}"
-        if cache_key in self._passagem_cache:
-            val = self._passagem_cache[cache_key]
-            if isinstance(val, int):
-                return val
+        if cache_key in self._total_chapters_cache:
+            return self._total_chapters_cache[cache_key]
 
         try:
             conn_mgr = self._get_connection(v)
@@ -872,10 +920,39 @@ class BibliaRepository:
             async with conn.execute(query, (book_id,)) as cursor:
                 row = await cursor.fetchone()
                 total = int(row[0]) if row and row[0] is not None else 1
-                self._passagem_cache[cache_key] = total
+                self._total_chapters_cache[cache_key] = total
                 return total
         except Exception:
             return 1 if book_id in SINGLE_CHAPTER_BOOKS else 0
+
+    @staticmethod
+    def _map_row_to_book(r: Any) -> dict[str, Any]:
+        """Converte um registro da tabela book em dicionário com id, name e testament."""
+        bid = int(r["id"])
+        has_tid = "testament_reference_id" in r.keys() and r["testament_reference_id"] is not None
+        tid = int(r["testament_reference_id"]) if has_tid else (1 if bid <= 39 else 2)
+        return {
+            "id": bid,
+            "name": str(r["name"]),
+            "testament_reference_id": tid,
+            "testament": "AT" if tid == 1 else "NT",
+        }
+
+    @staticmethod
+    def _fallback_listar_livros(book_names: dict[int, str]) -> list[dict[str, Any]]:
+        """Gera a lista canônica dos 66 livros bíblicos em caso de fallback."""
+        livros: list[dict[str, Any]] = []
+        for bid in range(1, 67):
+            tid = 1 if bid <= 39 else 2
+            livros.append(
+                {
+                    "id": bid,
+                    "name": book_names.get(bid, f"Livro {bid}"),
+                    "testament_reference_id": tid,
+                    "testament": "AT" if tid == 1 else "NT",
+                }
+            )
+        return livros
 
     async def listar_livros(
         self, versao: str | None = None
@@ -895,33 +972,13 @@ class BibliaRepository:
             async with conn.execute(query) as cursor:
                 rows = await cursor.fetchall()
             if rows:
-                return [
-                    {
-                        "id": int(r["id"]),
-                        "name": str(r["name"]),
-                        "testament_reference_id": int(r["testament_reference_id"]) if "testament_reference_id" in r.keys() and r["testament_reference_id"] is not None else (1 if int(r["id"]) <= 39 else 2),
-                        "testament": "AT" if (int(r["testament_reference_id"]) if "testament_reference_id" in r.keys() and r["testament_reference_id"] is not None else (1 if int(r["id"]) <= 39 else 2)) == 1 else "NT",
-                    }
-                    for r in rows
-                ]
+                return [self._map_row_to_book(r) for r in rows]
         except Exception:
             pass
 
         # Fallback usando _get_book_names ou mapa canônico
         book_names = await self._get_book_names(v)
-        livros: list[dict[str, Any]] = []
-        for bid in range(1, 67):
-            name = book_names.get(bid, f"Livro {bid}")
-            tid = 1 if bid <= 39 else 2
-            livros.append(
-                {
-                    "id": bid,
-                    "name": name,
-                    "testament_reference_id": tid,
-                    "testament": "AT" if tid == 1 else "NT",
-                }
-            )
-        return livros
+        return self._fallback_listar_livros(book_names)
 
     async def buscar_capitulo(
         self, book_id: int, chapter: int, versao: str | None = None
@@ -982,6 +1039,82 @@ class BibliaRepository:
         except Exception:
             return None
 
+    async def _pesquisar_por_referencia(
+        self,
+        clean_term: str,
+        parsed_ref: dict[str, Any],
+        book_names: dict[int, str],
+        v: str,
+        book_id: int | None,
+        testamento: int | None,
+        limit: int,
+    ) -> list[dict[str, Any]]:
+        """Processa a pesquisa direta quando o termo corresponde a uma referência bíblica."""
+        try:
+            passagem = await self.buscar_passagem(clean_term, versao=v)
+            if not passagem or not passagem.versiculos:
+                return []
+            bid = parsed_ref["book_id"]
+            if book_id is not None and bid != book_id:
+                return []
+            if testamento is not None:
+                expected_tid = 1 if bid <= 39 else 2
+                if expected_tid != testamento:
+                    return []
+            bname = book_names.get(bid, passagem.livro)
+            resultados: list[dict[str, Any]] = []
+            for vers in passagem.versiculos:
+                resultados.append(
+                    {
+                        "book_id": bid,
+                        "book_name": bname,
+                        "chapter": vers.capitulo,
+                        "verse": vers.numero,
+                        "text": vers.texto,
+                        "referencia": f"{bname} {vers.capitulo}:{vers.numero}",
+                        "versao": v,
+                    }
+                )
+            return resultados[:limit]
+        except Exception:
+            return []
+
+    @staticmethod
+    def _build_search_query(
+        words: list[str],
+        book_id: int | None,
+        testamento: int | None,
+        limit: int,
+    ) -> tuple[str, list[Any]]:
+        """Constrói a cláusula WHERE, lista de parâmetros e consulta SQL para pesquisa textual."""
+        conditions = ["1=1"]
+        params: list[Any] = []
+
+        for w in words:
+            conditions.append("v.text LIKE ?")
+            params.append(f"%{w}%")
+
+        if book_id is not None and 1 <= book_id <= 66:
+            conditions.append("v.book_id = ?")
+            params.append(book_id)
+
+        if testamento == 1:
+            conditions.append("v.book_id <= 39")
+        elif testamento == 2:
+            conditions.append("v.book_id >= 40")
+
+        params.append(limit)
+        where_clause = " AND ".join(conditions)
+        query = f"""
+            SELECT v.book_id, v.chapter, v.verse, v.text, b.name as book_name
+            FROM verse v
+            LEFT JOIN book b ON b.id = v.book_id
+            WHERE {where_clause}
+            ORDER BY v.book_id ASC, v.chapter ASC, v.verse ASC
+            LIMIT ?;
+        """
+        return query, params
+
     async def pesquisar_texto(
         self,
         termo: str,
@@ -1014,72 +1147,20 @@ class BibliaRepository:
         # 1. Reconhecimento de referência bíblica direta (ex: "João 3:16", "Sl 23")
         parsed_ref = self.parse_referencia(clean_term)
         if parsed_ref:
-            try:
-                passagem = await self.buscar_passagem(clean_term, versao=v)
-                if passagem and passagem.versiculos:
-                    resultados_ref: list[dict[str, Any]] = []
-                    for vers in passagem.versiculos:
-                        bid = parsed_ref["book_id"]
-                        if book_id is not None and bid != book_id:
-                            continue
-                        if testamento is not None:
-                            expected_tid = 1 if bid <= 39 else 2
-                            if expected_tid != testamento:
-                                continue
-                        bname = book_names.get(bid, passagem.livro)
-                        resultados_ref.append(
-                            {
-                                "book_id": bid,
-                                "book_name": bname,
-                                "chapter": vers.capitulo,
-                                "verse": vers.numero,
-                                "text": vers.texto,
-                                "referencia": f"{bname} {vers.capitulo}:{vers.numero}",
-                                "versao": v,
-                            }
-                        )
-                    if resultados_ref:
-                        return resultados_ref[:limit]
-            except Exception:
-                pass
+            res_ref = await self._pesquisar_por_referencia(
+                clean_term, parsed_ref, book_names, v, book_id, testamento, limit
+            )
+            if res_ref:
+                return res_ref
 
         # 2. Busca textual flexível por palavras-chave
-        words = [w for w in re.split(r"\s+", clean_term) if len(w) >= 2]
-        if not words:
-            words = [clean_term]
+        words = [w for w in re.split(r"\s+", clean_term) if len(w) >= 2] or [clean_term]
 
         try:
             conn_mgr = self._get_connection(v)
             conn = await conn_mgr.get_connection()
+            query, params = self._build_search_query(words, book_id, testamento, limit)
 
-            conditions = ["1=1"]
-            params: list[Any] = []
-
-            for w in words:
-                conditions.append("v.text LIKE ?")
-                params.append(f"%{w}%")
-
-            if book_id is not None and 1 <= book_id <= 66:
-                conditions.append("v.book_id = ?")
-                params.append(book_id)
-
-            if testamento is not None:
-                if testamento == 1:
-                    conditions.append("v.book_id <= 39")
-                elif testamento == 2:
-                    conditions.append("v.book_id >= 40")
-
-            params.append(limit)
-
-            where_clause = " AND ".join(conditions)
-            query = f"""
-                SELECT v.book_id, v.chapter, v.verse, v.text, b.name as book_name
-                FROM verse v
-                LEFT JOIN book b ON b.id = v.book_id
-                WHERE {where_clause}
-                ORDER BY v.book_id ASC, v.chapter ASC, v.verse ASC
-                LIMIT ?;
-            """
             async with conn.execute(query, params) as cursor:
                 rows = await cursor.fetchall()
 
@@ -1089,19 +1170,14 @@ class BibliaRepository:
                 ch = int(r["chapter"])
                 vn = int(r["verse"])
                 raw_bname = r["book_name"]
-                bname = (
-                    str(raw_bname)
-                    if raw_bname
-                    else book_names.get(bid, f"Livro {bid}")
-                )
-                txt = str(r["text"]).strip()
+                bname = str(raw_bname) if raw_bname else book_names.get(bid, f"Livro {bid}")
                 resultados.append(
                     {
                         "book_id": bid,
                         "book_name": bname,
                         "chapter": ch,
                         "verse": vn,
-                        "text": txt,
+                        "text": str(r["text"]).strip(),
                         "referencia": f"{bname} {ch}:{vn}",
                         "versao": v,
                     }

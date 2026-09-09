@@ -50,3 +50,32 @@ def test_selecao_view_about_dialog():
 
     selecao_view._show_about_dialog(mock_page)
     mock_page.show_dialog.assert_called_once()
+
+
+def test_selecao_view_conditional_module_badges():
+    db_conn = DatabaseConnection(db_path=":memory:")
+    theme_service = ThemeService(db_conn)
+
+    mock_cm = MagicMock()
+    # Caso 1: Módulos NÃO instalados
+    mock_cm.is_module_installed.return_value = False
+    mock_cm.has_any_bible_installed.return_value = False
+    mock_cm.get_installed_bible_ids.return_value = []
+
+    selecao_uninstalled = SelecaoView(
+        theme_service=theme_service, content_manager=mock_cm
+    )
+    mock_page = MagicMock(spec=ft.Page)
+    view_uninstalled = selecao_uninstalled.build(mock_page)
+    assert isinstance(view_uninstalled, ft.View)
+
+    # Caso 2: Módulos INSTALADOS
+    mock_cm.is_module_installed.return_value = True
+    mock_cm.has_any_bible_installed.return_value = True
+    mock_cm.get_installed_bible_ids.return_value = ["ARA", "NVI"]
+
+    selecao_installed = SelecaoView(
+        theme_service=theme_service, content_manager=mock_cm
+    )
+    view_installed = selecao_installed.build(mock_page)
+    assert isinstance(view_installed, ft.View)
