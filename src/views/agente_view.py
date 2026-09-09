@@ -8,7 +8,7 @@ from src.services.agente_service import AgenteService
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
-    APP_VERSION = "4.2.0"
+    APP_VERSION = "0.2.2"
 
 
 class AgenteView:

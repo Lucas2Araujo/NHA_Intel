@@ -34,7 +34,7 @@ from src.views.update_dialog import show_update_dialog
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
-    APP_VERSION = "4.2.0"
+    APP_VERSION = "0.2.2"
 
 ROUTE_SELECAO = "/"
 ROUTE_NOVO = "/novo"
@@ -49,7 +49,6 @@ _background_tasks: set[asyncio.Task] = set()
 @dataclass
 class EditionContext:
     """Encapsula os repositórios e a lista em cache de IDs para uma edição do hinário."""
-
     hino_repo: HinoRepository
     fav_repo: FavoritoRepository
     hist_repo: HistoricoRepository

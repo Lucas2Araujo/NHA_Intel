@@ -124,35 +124,15 @@ class _BibliaModalSession:
             on_version_selected=self._on_versao_selected,
             theme_service=self.view.theme_service,
         )
-        self.version_dropdown = self.version_btn
-
-        self.expand_btn = ft.IconButton(
-            ft.Icons.FULLSCREEN,
-            icon_size=20,
-            tooltip="Expandir leitura (Tela Cheia)",
-            on_click=self._toggle_expand,
-        )
-
         self.copy_btn = ft.OutlinedButton(
             "Copiar",
             icon=ft.Icons.CONTENT_COPY,
             style=ft.ButtonStyle(
-                padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                 text_style=ft.TextStyle(size=12),
             ),
             tooltip="Copiar passagem com referência para a área de transferência",
             on_click=self._copiar_passagem,
-        )
-
-        self.chapter_toggle_btn = ft.OutlinedButton(
-            BTN_CAPITULO_COMPLETO,
-            icon=ft.Icons.AUTO_STORIES,
-            style=ft.ButtonStyle(
-                padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-                text_style=ft.TextStyle(size=12),
-            ),
-            tooltip="Alternar entre versículos do hino e o capítulo completo",
-            on_click=self._toggle_capitulo,
         )
 
         self.font_indicator = ft.Text(
@@ -188,24 +168,14 @@ class _BibliaModalSession:
                     expand=True,
                 ),
                 self.version_btn,
-                self.expand_btn,
-
-                ft.IconButton(
-                    ft.Icons.CLOSE,
-                    icon_size=20,
-                    tooltip="Fechar",
-                    on_click=self._close_dialog,
-                ),
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
-            spacing=4,
+            spacing=8,
         )
-
 
         self.action_bar = self.view._build_biblia_modal_action_bar(
             self.copy_btn,
-            self.chapter_toggle_btn,
             self.font_minus_btn,
             self.font_indicator,
             self.font_plus_btn,
@@ -217,7 +187,7 @@ class _BibliaModalSession:
             button_label, icon=button_icon, on_click=self._close_dialog
         )
         abrir_biblia_btn = ft.FilledButton(
-            "Abrir na Bíblia Completa",
+            "Abrir na Bíblia",
             icon=ft.Icons.OPEN_IN_NEW,
             on_click=self._abrir_na_biblia_completa,
         )
@@ -227,6 +197,7 @@ class _BibliaModalSession:
                 abrir_biblia_btn,
             ],
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
         self.modal_body = ft.Container(
@@ -248,7 +219,7 @@ class _BibliaModalSession:
                 spacing=6,
                 expand=True,
             ),
-            padding=ft.Padding.only(left=20, top=16, right=20, bottom=30),
+            padding=ft.Padding.only(left=20, top=16, right=20, bottom=24),
             height=(
                 min(float(self.page.height) * 0.85, 620)
                 if (self.page and isinstance(self.page.height, (int, float)))
@@ -287,12 +258,6 @@ class _BibliaModalSession:
 
         if passagem and passagem.versiculos:
             self.title_text.value = passagem.referencia
-            self.chapter_toggle_btn.content = (
-                BTN_APENAS_VERSICULOS if self.is_full_chapter else BTN_CAPITULO_COMPLETO
-            )
-            self.chapter_toggle_btn.icon = (
-                ft.Icons.FILTER_LIST if self.is_full_chapter else ft.Icons.AUTO_STORIES
-            )
             self.copy_btn.disabled = False
             self._render_loaded_verses()
         else:
@@ -362,26 +327,6 @@ class _BibliaModalSession:
         elif hasattr(self.page, "push_route"):
             asyncio.create_task(self.page.push_route(route))
 
-    def _toggle_expand(self, ev=None) -> None:
-        self.is_expanded = not self.is_expanded
-        if self.is_expanded:
-            self.modal_body.height = (
-                max(400, self.page.height * 0.94)
-                if self.page and self.page.height
-                else 720
-            )
-            self.expand_btn.icon = ft.Icons.FULLSCREEN_EXIT
-            self.expand_btn.tooltip = "Recolher leitura"
-        else:
-            self.modal_body.height = (
-                min(self.page.height * 0.75, 540)
-                if self.page and self.page.height
-                else 450
-            )
-            self.expand_btn.icon = ft.Icons.FULLSCREEN
-            self.expand_btn.tooltip = "Expandir leitura (Tela Cheia)"
-        self.page.update()
-
     async def _on_chip_selected(self, e, ref_target: str) -> None:
         if self.current_ref != ref_target:
             self.current_ref = ref_target
@@ -414,19 +359,6 @@ class _BibliaModalSession:
         self.view._show_snackbar(
             self.page, f"Passagem '{passagem.referencia} ({self.selected_version})' copiada!"
         )
-
-    async def _toggle_capitulo(self, ev=None) -> None:
-        self.is_full_chapter = not self.is_full_chapter
-        if self.is_full_chapter and not self.is_expanded:
-            self.is_expanded = True
-            self.modal_body.height = (
-                max(400, self.page.height * 0.94)
-                if self.page and self.page.height
-                else 720
-            )
-            self.expand_btn.icon = ft.Icons.FULLSCREEN_EXIT
-            self.expand_btn.tooltip = "Recolher leitura"
-        await self.carregar_versiculos(self.selected_version)
 
     def _zoom_in(self, ev=None) -> None:
         if self.font_size < 36:
@@ -888,21 +820,10 @@ class HinoView:
                     prev_btn,
                     next_btn,
                     self.fav_icon,
-                    ft.PopupMenuButton(
-                        icon=ft.Icons.MORE_VERT,
-                        tooltip="Opções do Hino",
-                        items=[
-                            ft.PopupMenuItem(
-                                "Texto Bíblico",
-                                icon=ft.Icons.MENU_BOOK,
-                                on_click=lambda e: self._on_menu_biblia_click(page),
-                            ),
-                            ft.PopupMenuItem(
-                                "Informações do Hino",
-                                icon=ft.Icons.INFO_OUTLINE,
-                                on_click=lambda e: self._show_info_modal(page, self.current_hino),
-                            ),
-                        ],
+                    ft.IconButton(
+                        icon=ft.Icons.INFO_OUTLINE,
+                        tooltip="Informações do Hino",
+                        on_click=lambda e: self._show_info_modal(page, self.current_hino),
                     ),
                 ],
             ),
@@ -1330,7 +1251,6 @@ class HinoView:
     def _build_biblia_modal_action_bar(
         self,
         copy_btn: ft.Control,
-        chapter_toggle_btn: ft.Control,
         font_minus_btn: ft.Control,
         font_indicator: ft.Control,
         font_plus_btn: ft.Control,
@@ -1339,21 +1259,26 @@ class HinoView:
         return ft.Container(
             content=ft.Row(
                 controls=[
+                    copy_btn,
                     ft.Row(
-                        controls=[copy_btn, chapter_toggle_btn],
-                        spacing=6,
-                    ),
-                    ft.Row(
-                        controls=[font_minus_btn, font_indicator, font_plus_btn],
+                        controls=[
+                            font_minus_btn,
+                            ft.Container(
+                                content=font_indicator,
+                                width=36,
+                                alignment=ft.Alignment.CENTER,
+                            ),
+                            font_plus_btn,
+                        ],
                         spacing=2,
                         alignment=ft.MainAxisAlignment.END,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                wrap=True,
             ),
-            padding=ft.Padding.symmetric(vertical=2),
+            padding=ft.Padding.symmetric(vertical=4),
         )
 
     async def _abrir_modal_leitura_biblica(

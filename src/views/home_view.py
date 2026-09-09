@@ -16,7 +16,7 @@ from src.views.update_dialog import show_update_dialog
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
-    APP_VERSION = "4.2.0"
+    APP_VERSION = "0.2.2"
 
 
 def parse_hino_number(numero: str) -> float:

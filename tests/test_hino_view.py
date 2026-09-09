@@ -217,11 +217,11 @@ async def test_hino_view_abrir_modal_leitura_biblica_success(in_memory_db):
     assert isinstance(version_btn, ft.PopupMenuButton)
     assert len(version_btn.items) == 2
 
-    # Verifica botão "Abrir na Bíblia Completa"
+    # Verifica botão "Abrir na Bíblia"
     footer_row = dialog_arg.content.content.controls[-1]
     assert len(footer_row.controls) == 2
     abrir_biblia_btn = footer_row.controls[1]
-    assert abrir_biblia_btn.content == "Abrir na Bíblia Completa"
+    assert abrir_biblia_btn.content == "Abrir na Bíblia"
     assert abrir_biblia_btn.icon == ft.Icons.OPEN_IN_NEW
     mock_page.go = MagicMock()
     abrir_biblia_btn.on_click(MagicMock())
@@ -407,22 +407,19 @@ async def test_hino_view_abrir_modal_leitura_biblica_interactive_features(in_mem
 
     # 3. Testa ação de copiar passagem para o clipboard
     action_bar = controls[5]
-    copy_btn = action_bar.content.controls[0].controls[0]
+    copy_btn = action_bar.content.controls[0]
     with patch("flet.Clipboard.set", new_callable=AsyncMock) as mock_clipboard_set:
         await copy_btn.on_click(MagicMock())
         mock_clipboard_set.assert_called_once()
         assert "Apocalipse 4:8" in mock_clipboard_set.call_args[0][0]
         assert view_obj._snackbar is not None
 
-    # 4. Testa alternância para ver capítulo completo
-    chapter_btn = action_bar.content.controls[0].controls[1]
-    await chapter_btn.on_click(MagicMock())
-    mock_biblia_repo.buscar_capitulo_completo.assert_called()
-
-    # 5. Testa botões de zoom in e zoom out
-    font_minus_btn = action_bar.content.controls[1].controls[0]
-    font_indicator = action_bar.content.controls[1].controls[1]
-    font_plus_btn = action_bar.content.controls[1].controls[2]
+    # 4. Testa botões de zoom in e zoom out
+    font_controls_row = action_bar.content.controls[1]
+    font_minus_btn = font_controls_row.controls[0]
+    font_indicator_container = font_controls_row.controls[1]
+    font_indicator = font_indicator_container.content
+    font_plus_btn = font_controls_row.controls[2]
 
     old_font_val = font_indicator.value
     font_plus_btn.on_click(MagicMock())

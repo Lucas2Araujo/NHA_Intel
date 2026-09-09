@@ -443,6 +443,49 @@ class DatabaseConnection:
         raw_conn.row_factory = sqlite3.Row
         return _AsyncSqliteCompatConnection(raw_conn)
 
+    def _recover_stale_wal_if_needed(self) -> None:
+        """
+        Detecta e isola arquivos WAL órfãos ou incompatíveis que causam o erro:
+        'sqlite3.DatabaseError: database disk image is malformed'.
+        Isso ocorre quando arquivos .db são atualizados/comitados enquanto arquivos
+        .db-wal (gitignorados) permanecem no sistema com salt/páginas divergentes.
+        """
+        if (
+            not self.db_path
+            or self.db_path == ":memory:"
+            or self.db_path.startswith("file:")
+        ):
+            return
+
+        wal_file = Path(f"{self.db_path}-wal")
+        shm_file = Path(f"{self.db_path}-shm")
+        if not wal_file.exists():
+            return
+
+        test_conn = None
+        try:
+            test_conn = sqlite3.connect(self.db_path, timeout=1.0)
+            test_conn.execute("SELECT 1 FROM sqlite_master LIMIT 1;")
+            test_conn.close()
+            test_conn = None
+        except sqlite3.DatabaseError as exc:
+            err_msg = str(exc).lower()
+            if "malformed" in err_msg or "disk image" in err_msg:
+                if test_conn is not None:
+                    try:
+                        test_conn.close()
+                    except Exception:
+                        pass
+                try:
+                    backup_wal = Path(f"{self.db_path}-wal.corrupt")
+                    if backup_wal.exists():
+                        backup_wal.unlink()
+                    wal_file.rename(backup_wal)
+                    if shm_file.exists():
+                        shm_file.unlink()
+                except OSError:
+                    pass
+
     async def get_connection(self) -> AsyncConnectionType:
         """
         Retorna/abre uma conexão assíncrona ativa com o SQLite com proteção de lock assíncrono.
@@ -455,6 +498,7 @@ class DatabaseConnection:
 
         async with self._lock:
             if self._connection is None:
+                self._recover_stale_wal_if_needed()
                 conn: AsyncConnectionType
                 if _is_single_threaded_env():
                     conn = self._create_compat_connection()
@@ -591,6 +635,14 @@ class DatabaseConnection:
                                 COALESCE((SELECT GROUP_CONCAT(tb.referencia, ' ') FROM hino_texto htx JOIN texto_biblico tb ON htx.texto_id = tb.id WHERE htx.hino_id = h.id), '')
                             FROM hino h;
                         """)
+                    # Auto-verificação e reparo de integridade do índice FTS5
+                    try:
+                        await conn.execute("INSERT INTO hino_fts(hino_fts) VALUES('integrity-check');")
+                    except Exception:
+                        try:
+                            await conn.execute("INSERT INTO hino_fts(hino_fts) VALUES('rebuild');")
+                        except Exception:
+                            pass
                 except Exception:
                     pass
 
@@ -635,6 +687,11 @@ class DatabaseConnection:
             self._lock = asyncio.Lock()
         async with self._lock:
             if self._connection is not None:
+                try:
+                    if not self.read_only:
+                        await self._connection.execute("PRAGMA wal_checkpoint(PASSIVE);")
+                except Exception:
+                    pass
                 await self._connection.close()
                 self._connection = None
 
