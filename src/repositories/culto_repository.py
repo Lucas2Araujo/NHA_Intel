@@ -24,23 +24,29 @@ class CultoRepository:
             return None
 
         conn = await self.db_connection.get_connection()
-
-        # Insere a lista principal
-        cursor = await conn.execute(
-            "INSERT INTO lista_culto (tema_gerador) VALUES (?)", (tema_gerador.strip(),)
-        )
-        lista_id = cursor.lastrowid
-        await cursor.close()
-
-        # Insere os itens da lista
-        for ordem, hino_id in enumerate(hino_ids, start=1):
-            await conn.execute(
-                "INSERT INTO item_lista_culto (lista_id, hino_id, ordem_execucao) VALUES (?, ?, ?)",
-                (lista_id, hino_id, ordem),
+        try:
+            # Insere a lista principal
+            cursor = await conn.execute(
+                "INSERT INTO lista_culto (tema_gerador) VALUES (?)", (tema_gerador.strip(),)
             )
+            lista_id = cursor.lastrowid
+            await cursor.close()
 
-        await conn.commit()
-        return lista_id
+            # Insere os itens da lista
+            for ordem, hino_id in enumerate(hino_ids, start=1):
+                await conn.execute(
+                    "INSERT INTO item_lista_culto (lista_id, hino_id, ordem_execucao) VALUES (?, ?, ?)",
+                    (lista_id, hino_id, ordem),
+                )
+
+            await conn.commit()
+            return lista_id
+        except Exception:
+            try:
+                await conn.rollback()
+            except Exception:
+                pass
+            return None
 
     async def get_listas_culto(self) -> list[dict[str, Any]]:
         """Retorna todas as listas de culto salvas com contagem de hinos."""
@@ -104,6 +110,10 @@ class CultoRepository:
             await conn.commit()
             return True
         except Exception:
+            try:
+                await conn.rollback()
+            except Exception:
+                pass
             return False
 
     async def rename_lista_culto(self, lista_id: int, novo_tema: str) -> bool:
@@ -119,6 +129,10 @@ class CultoRepository:
             await conn.commit()
             return True
         except Exception:
+            try:
+                await conn.rollback()
+            except Exception:
+                pass
             return False
 
     async def remove_hino_da_lista(self, lista_id: int, hino_id: int) -> bool:
@@ -143,8 +157,13 @@ class CultoRepository:
                 )
             """
             await conn.execute(query, (lista_id, hino_id))
+            await conn.commit()
             return True
         except Exception:
+            try:
+                await conn.rollback()
+            except Exception:
+                pass
             return False
 
     async def add_hino_a_lista(self, lista_id: int, hino_id: int) -> bool:
@@ -167,6 +186,10 @@ class CultoRepository:
             await conn.commit()
             return True
         except Exception:
+            try:
+                await conn.rollback()
+            except Exception:
+                pass
             return False
 
     async def update_hino_da_lista(
@@ -192,4 +215,8 @@ class CultoRepository:
             await conn.commit()
             return True
         except Exception:
+            try:
+                await conn.rollback()
+            except Exception:
+                pass
             return False

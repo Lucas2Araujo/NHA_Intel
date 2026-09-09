@@ -16,7 +16,7 @@ from src.views.update_dialog import show_update_dialog
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
-    APP_VERSION = "0.5.0"
+    APP_VERSION = "4.2.0"
 
 
 def parse_hino_number(numero: str) -> float:
@@ -319,7 +319,7 @@ class HomeView:
                 else ft.Colors.PRIMARY
             )
             if self.edition == "novo"
-            else ft.Colors.AMBER_300
+            else ft.Colors.TERTIARY
         )
 
         self._cached_view = ft.View(
@@ -525,17 +525,18 @@ class HomeView:
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Icon(icon, size=48, color=ft.Colors.GREY_600),
+                    ft.Icon(icon, size=48, color=ft.Colors.ON_SURFACE_VARIANT),
                     ft.Text(
                         msg,
                         weight=ft.FontWeight.BOLD,
                         size=16,
+                        color=ft.Colors.ON_SURFACE,
                         text_align=ft.TextAlign.CENTER,
                     ),
                     ft.Text(
                         hint,
                         size=13,
-                        color=ft.Colors.GREY_400,
+                        color=ft.Colors.ON_SURFACE_VARIANT,
                         italic=True,
                         text_align=ft.TextAlign.CENTER,
                     ),
@@ -570,9 +571,9 @@ class HomeView:
             accent
             if self.edition == "novo"
             else (
-                ft.Colors.PURPLE_200
+                ft.Colors.PRIMARY
                 if (self.theme_service and self.theme_service.is_amoled)
-                else ft.Colors.AMBER_300
+                else ft.Colors.TERTIARY
             )
         )
 
@@ -667,9 +668,12 @@ class HomeView:
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Icon(ft.Icons.EXPLORE_OFF, size=48, color=ft.Colors.GREY_600),
+                    ft.Icon(ft.Icons.EXPLORE_OFF, size=48, color=ft.Colors.ON_SURFACE_VARIANT),
                     ft.Text(
-                        "Nenhuma categoria ou tema disponível.", size=14, italic=True
+                        "Nenhuma categoria ou tema disponível.",
+                        size=14,
+                        color=ft.Colors.ON_SURFACE_VARIANT,
+                        italic=True,
                     ),
                 ],
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER,
@@ -725,7 +729,7 @@ class HomeView:
                     "🏷️ Temas",
                     temas,
                     ft.Icons.LABEL_OUTLINED,
-                    ft.Colors.AMBER_400,
+                    ft.Colors.TERTIARY,
                     self._filter_by_tema,
                 )
             )
@@ -863,7 +867,7 @@ class HomeView:
                 padding=ft.Padding.symmetric(horizontal=12, vertical=6),
                 content=ft.Row(
                     controls=[
-                        ft.Icon(ft.Icons.LABEL, size=18, color=ft.Colors.AMBER_400),
+                        ft.Icon(ft.Icons.LABEL, size=18, color=ft.Colors.TERTIARY),
                         ft.Text(
                             f"Tema: {self.active_tema} ({count} hinos)",
                             weight=ft.FontWeight.W_500,

@@ -9,7 +9,7 @@ from src.views.settings_dialog import show_settings_dialog
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
-    APP_VERSION = "0.1.0"
+    APP_VERSION = "4.2.0"
 
 
 class SelecaoView:

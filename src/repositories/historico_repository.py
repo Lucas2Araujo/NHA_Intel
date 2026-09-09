@@ -1,3 +1,6 @@
+import asyncio
+import sqlite3
+
 from src.database.connection import DatabaseConnection
 from src.models.hino import Hino
 
@@ -12,12 +15,33 @@ class HistoricoRepository:
         self.db_connection = db_connection
 
     async def add_acesso(self, hino_id: int) -> bool:
-        """Registra a visualização de um hino no histórico de acessos."""
+        """Registra a visualização de um hino no histórico de acessos com resiliência a concorrência e locks."""
         query = "INSERT INTO historico (hino_id) VALUES (?)"
-        conn = await self.db_connection.get_connection()
-        async with conn.execute(query, (hino_id,)) as cursor:
-            await conn.commit()
-            return cursor.rowcount > 0
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                conn = await self.db_connection.get_connection()
+                async with conn.execute(query, (hino_id,)) as cursor:
+                    success = cursor.rowcount > 0
+                await conn.commit()
+                return success
+            except sqlite3.OperationalError as exc:
+                try:
+                    conn = await self.db_connection.get_connection()
+                    await conn.rollback()
+                except Exception:
+                    pass
+                if ("locked" in str(exc).lower() or "busy" in str(exc).lower()) and attempt < max_retries - 1:
+                    await asyncio.sleep(0.05 * (2 ** attempt))
+                    continue
+                return False
+            except Exception:
+                try:
+                    conn = await self.db_connection.get_connection()
+                    await conn.rollback()
+                except Exception:
+                    pass
+                return False
 
     async def get_recentes(self, limit: int = 50) -> list[Hino]:
         """Retorna os hinos mais recentemente acessados (sem duplicatas consecutivas)."""
@@ -32,14 +56,17 @@ class HistoricoRepository:
             ORDER BY latest.ultimo_acesso DESC, latest.ultimo_id DESC
             LIMIT ?
         """
-        conn = await self.db_connection.get_connection()
-        async with conn.execute(query, (limit,)) as cursor:
-            rows = await cursor.fetchall()
+        try:
+            conn = await self.db_connection.get_connection()
+            async with conn.execute(query, (limit,)) as cursor:
+                rows = await cursor.fetchall()
 
-        hinos: list[Hino] = []
-        for row in rows:
-            hinos.append(
-                Hino(id=row["id"], numero=str(row["numero"]), titulo=str(row["titulo"]))
-            )
+            hinos: list[Hino] = []
+            for row in rows:
+                hinos.append(
+                    Hino(id=row["id"], numero=str(row["numero"]), titulo=str(row["titulo"]))
+                )
 
-        return hinos
+            return hinos
+        except Exception:
+            return []

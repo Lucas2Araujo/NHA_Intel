@@ -91,6 +91,10 @@ def _setup_assets_and_theme(
         theme_service.apply_theme(page)
     else:
         page.fonts = {
+            "AppSans": "fonts/AppSans-Regular.ttf",
+            "AppSans-Bold": "fonts/AppSans-SemiBold.ttf",
+            "HymnSerif": "fonts/HymnSerif-Regular.ttf",
+            "HymnSerif-Bold": "fonts/HymnSerif-Bold.ttf",
             "OpenDyslexic": "fonts/OpenDyslexic-Regular.otf",
             "Times New Roman": "Times New Roman, serif",
             "Helvetica": "fonts/Helvetica-World-Regular.ttf",
@@ -164,6 +168,27 @@ def _parse_route_query(
             if val.isdigit():
                 from_hino = int(val)
     return route_base, initial_search, initial_categoria, initial_tema, from_hino
+
+
+def _parse_bible_route_query(
+    route: str,
+) -> tuple[str | None, int | None, int | None, int | None]:
+    """Extrai parâmetros específicos da rota bíblica (?livro=...&cap=...&ver=...&hino_id=...)."""
+    if "?" not in route:
+        return None, None, None, None
+    query = urllib.parse.parse_qs(urllib.parse.urlsplit(route).query)
+    livro = query.get("livro", [None])[0]
+    if livro:
+        livro = urllib.parse.unquote(livro)
+    cap = int(query.get("cap")[0]) if "cap" in query and query["cap"][0].isdigit() else None
+    ver = int(query.get("ver")[0]) if "ver" in query and query["ver"][0].isdigit() else None
+    hino_id = (
+        int(query.get("hino_id")[0])
+        if "hino_id" in query and query["hino_id"][0].isdigit()
+        else None
+    )
+    return livro, cap, ver, hino_id
+
 
 
 async def _render_home_route(
@@ -375,7 +400,10 @@ async def main(page: ft.Page):
     agente_view_instance = AgenteView(agente_service, culto_repository)
     download_manager_instance = DownloadManagerView(hino_repository, media_service)
     biblia_view_instance = BibliaView(
-        biblia_repository, theme_service=theme_service
+        biblia_repository,
+        theme_service=theme_service,
+        hino_repository=hino_repository,
+        antigo_hino_repo=antigo_hino_repo,
     )
 
     navigation_history: list[str] = []
@@ -383,7 +411,7 @@ async def main(page: ft.Page):
     is_popping: list[bool] = [False]
 
     async def route_change(e=None):
-        route = page.route or "/"
+        route = (e.route if (e and hasattr(e, "route") and e.route) else page.route) or "/"
         (
             route_base,
             initial_search,
@@ -431,8 +459,17 @@ async def main(page: ft.Page):
                 initial_chapter = int(parts[2])
             elif len(parts) >= 2 and parts[1].isdigit():
                 initial_book_id = int(parts[1])
+
+            livro_param, cap_param, ver_param, hino_id_param = _parse_bible_route_query(route)
+
             view_cache[ROUTE_BIBLIA] = await biblia_view_instance.build(
-                page, initial_book_id=initial_book_id, initial_chapter=initial_chapter
+                page,
+                initial_book_id=initial_book_id,
+                initial_chapter=initial_chapter,
+                livro=livro_param,
+                capitulo=cap_param,
+                versiculo_foco=ver_param,
+                hino_origem_id=hino_id_param,
             )
             new_views.append(view_cache[ROUTE_BIBLIA])
 
@@ -476,8 +513,16 @@ async def main(page: ft.Page):
             await page.push_route("/")
 
 
+    async def on_disconnect(e=None):
+        for conn in (db_connection, antigo_connection, biblia_connection, comparativo_connection):
+            try:
+                await conn.close()
+            except Exception:
+                pass
+
     page.on_route_change = route_change
     page.on_view_pop = view_pop
+    page.on_disconnect = on_disconnect
 
     if not page.route or page.route == "/loading":
         page.route = "/"

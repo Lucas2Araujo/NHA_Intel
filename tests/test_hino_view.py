@@ -1,3 +1,4 @@
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import flet as ft
@@ -216,6 +217,18 @@ async def test_hino_view_abrir_modal_leitura_biblica_success(in_memory_db):
     assert isinstance(version_btn, ft.PopupMenuButton)
     assert len(version_btn.items) == 2
 
+    # Verifica botão "Abrir na Bíblia Completa"
+    footer_row = dialog_arg.content.content.controls[-1]
+    assert len(footer_row.controls) == 2
+    abrir_biblia_btn = footer_row.controls[1]
+    assert abrir_biblia_btn.content == "Abrir na Bíblia Completa"
+    assert abrir_biblia_btn.icon == ft.Icons.OPEN_IN_NEW
+    mock_page.go = MagicMock()
+    abrir_biblia_btn.on_click(MagicMock())
+    mock_page.go.assert_called_once()
+    assert "/biblia?" in mock_page.go.call_args[0][0]
+    assert "hino_id=1" in mock_page.go.call_args[0][0]
+
     # Teste 2: Aberto a partir do modal de informações (from_info_modal=True)
     mock_page.show_dialog.reset_mock()
     with patch.object(view_obj, "_show_info_modal") as mock_show_info:
@@ -388,6 +401,7 @@ async def test_hino_view_abrir_modal_leitura_biblica_interactive_features(in_mem
 
     # 2. Testa alternância de referência ao clicar no chip do Apocalipse
     chip_apoc = chips_row.controls[1]
+    assert inspect.iscoroutinefunction(chip_apoc.on_click)
     await chip_apoc.on_click(MagicMock())
     mock_biblia_repo.buscar_passagem.assert_called_with("Apocalipse 4:8", versao="ARA")
 
@@ -434,14 +448,16 @@ async def test_hino_view_info_modal_biblia_chips(in_memory_db):
     view_obj._show_info_modal(mock_page, hino)
     mock_page.show_dialog.assert_called()
 
-    # Testa _on_biblia_click com referência
+    # Testa _on_biblia_click com referência abrindo o modal BottomSheet
     view_obj._on_biblia_click(mock_page, "Apocalipse 4:8")
     mock_page.pop_dialog.assert_called_once()
     mock_page.run_task.assert_called_once_with(
-        view_obj._carregar_biblia_passagem, mock_page
+        view_obj._abrir_modal_leitura_biblica,
+        mock_page,
+        "Apocalipse 4:8",
+        False,
+        view_obj.current_hino,
     )
-    assert view_obj.selected_view_mode == "biblia"
-    assert view_obj.active_biblia_ref == "Apocalipse 4:8"
 
     # Testa com referência vazia
     mock_page.overlay = []
@@ -711,12 +727,20 @@ async def test_hino_view_modo_leitura_biblica_imersiva(in_memory_db):
 
     await view_obj.build(mock_page)
 
-    # 1. Alterna para o modo biblia através de _on_biblia_click
+    # 1. _on_biblia_click dispara o modal retrátil BottomSheet
+    mock_page.run_task = MagicMock()
     view_obj._on_biblia_click(mock_page, "Isaías 6:1-3")
-    assert view_obj.selected_view_mode == "biblia"
-    assert view_obj.active_biblia_ref == "Isaías 6:1-3"
+    mock_page.run_task.assert_called_once_with(
+        view_obj._abrir_modal_leitura_biblica,
+        mock_page,
+        "Isaías 6:1-3",
+        False,
+        view_obj.current_hino,
+    )
 
-    # 2. Carrega a passagem
+    # 2. Carrega a passagem no modo de visualização bíblica
+    view_obj.selected_view_mode = "biblia"
+    view_obj.active_biblia_ref = "Isaías 6:1-3"
     await view_obj._carregar_biblia_passagem(mock_page)
     assert view_obj.current_biblia_passagem is not None
     assert view_obj.current_biblia_passagem.referencia == "Isaías 6:1-3"
@@ -906,36 +930,17 @@ async def test_edition_feedback_banner_and_soft_colors(in_memory_db):
 
     await view_obj.build(mock_page)
 
-    # 1. Verifica presença inicial do banner de feedback
-    assert view_obj.edition_feedback_banner is not None
-    assert view_obj.edition_feedback_text is not None
-    assert view_obj.edition_feedback_text.value == "Novo Hinário selecionado"
-    assert view_obj.edition_feedback_banner.bgcolor == ft.Colors.PRIMARY_CONTAINER
+    # 1. Verifica saneamento v0.2.1: banner de feedback e chip comparativo removidos da tela principal
+    assert view_obj.edition_feedback_banner is None
+    assert not hasattr(view_obj, "comparativo_chip")
 
     # 2. Alterna para o Hinário Antigo
     view_obj._on_segment_change(mock_page, ["antigo"])
     assert view_obj.selected_view_mode == "antigo"
-    assert view_obj.edition_feedback_text.value == "Hinário Tradicional selecionado"
-    assert view_obj.edition_feedback_banner.bgcolor == ft.Colors.SECONDARY_CONTAINER
 
-    # 3. Alterna para Comparação de Mudanças
-    view_obj._on_segment_change(mock_page, ["comparacao"])
-    assert view_obj.selected_view_mode == "comparacao"
-    assert view_obj.edition_feedback_text.value == "Modo de Comparação selecionado"
-    assert view_obj.edition_feedback_banner.bgcolor == ft.Colors.TERTIARY_CONTAINER
-
-    # 4. Alterna para o modo Bíblia
-    with patch.object(view_obj, "_carregar_biblia_passagem", new_callable=AsyncMock):
-        view_obj._on_segment_change(mock_page, ["biblia"])
-        assert view_obj.selected_view_mode == "biblia"
-        assert view_obj.edition_feedback_text.value == "Texto Bíblico selecionado"
-        assert view_obj.edition_feedback_banner.bgcolor == ft.Colors.SURFACE_CONTAINER_HIGHEST
-
-    # 5. Alterna via clique no chip comparativo
-    view_obj._on_chip_comparativo_click(mock_page)
-    assert view_obj.selected_view_mode == "comparacao"
-    assert view_obj.edition_feedback_text.value == "Modo de Comparação selecionado"
-    assert view_obj.edition_feedback_banner.bgcolor == ft.Colors.TERTIARY_CONTAINER
+    # 3. Alterna de volta para o Hinário Novo
+    view_obj._on_segment_change(mock_page, ["novo"])
+    assert view_obj.selected_view_mode == "novo"
 
 
 

@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 from typing import Any
 import urllib.parse
@@ -65,11 +66,11 @@ class _BibliaModalSession:
         self.is_expanded = False
 
         self.accent_color = (
-            ft.Colors.PURPLE_200 if view.edition == "antigo" else ft.Colors.BLUE_200
+            view.theme_service.get_accent_color()
+            if view.theme_service
+            else ft.Colors.PRIMARY
         )
-        self.verse_num_color = (
-            ft.Colors.PURPLE_300 if view.edition == "antigo" else ft.Colors.TEAL_300
-        )
+        self.verse_num_color = self.accent_color
 
         versoes = view.biblia_repository.get_available_versions()
         if (
@@ -212,13 +213,20 @@ class _BibliaModalSession:
 
         button_label = "Voltar para Informações" if self.from_info_modal else "Fechar"
         button_icon = ft.Icons.ARROW_BACK if self.from_info_modal else ft.Icons.CLOSE
+        fechar_btn = ft.TextButton(
+            button_label, icon=button_icon, on_click=self._close_dialog
+        )
+        abrir_biblia_btn = ft.FilledButton(
+            "Abrir na Bíblia Completa",
+            icon=ft.Icons.OPEN_IN_NEW,
+            on_click=self._abrir_na_biblia_completa,
+        )
         self.footer_row = ft.Row(
             controls=[
-                ft.TextButton(
-                    button_label, icon=button_icon, on_click=self._close_dialog
-                )
+                fechar_btn,
+                abrir_biblia_btn,
             ],
-            alignment=ft.MainAxisAlignment.END,
+            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
         )
 
         self.modal_body = ft.Container(
@@ -323,6 +331,36 @@ class _BibliaModalSession:
         self.page.pop_dialog()
         if self.from_info_modal:
             self.view._show_info_modal(self.page, self.target_hino)
+
+    def _abrir_na_biblia_completa(self, ev=None) -> None:
+        """Fecha o modal e dispara a navegação para /biblia com livro, cap, ver e hino_id."""
+        self._close_dialog(ev)
+        livro = "Sl"
+        cap = 1
+        ver = 1
+        if self.current_passagem:
+            livro = self.current_passagem.livro
+            cap = self.current_passagem.capitulo
+            if self.current_passagem.versiculos:
+                ver = self.current_passagem.versiculos[0].numero
+        elif self.current_ref:
+            parsed = self.view.biblia_repository.parse_referencia(self.current_ref)
+            if parsed:
+                livro = parsed.get("book_name", "Sl")
+                cap = parsed.get("chapter", 1)
+                verses = parsed.get("verses")
+                ver = verses[0] if verses else 1
+
+        hino_id = (
+            self.target_hino.id
+            if self.target_hino and self.target_hino.id is not None
+            else getattr(self.view, "hino_id", 0)
+        )
+        route = f"/biblia?livro={urllib.parse.quote(str(livro))}&cap={cap}&ver={ver}&hino_id={hino_id}"
+        if hasattr(self.page, "go"):
+            self.page.go(route)
+        elif hasattr(self.page, "push_route"):
+            asyncio.create_task(self.page.push_route(route))
 
     def _toggle_expand(self, ev=None) -> None:
         self.is_expanded = not self.is_expanded
@@ -564,7 +602,11 @@ class HinoView:
             )
             await conn.commit()
         except Exception:
-            pass
+            try:
+                conn = await self.hino_repository.db_connection.get_connection()
+                await conn.rollback()
+            except Exception:
+                pass
 
     def _on_page_resize(self, e):
         """Redimensiona o tamanho da fonte dinamicamente se a janela mudar de tamanho (caso o usuário não tenha travado um tamanho customizado)."""
@@ -612,8 +654,23 @@ class HinoView:
         favorito_task = self.favorito_repository.is_favorito(self.hino_id)
         comparativo_task = self._create_comparativo_task(hino.numero)
 
-        _, self.relacionados, self.is_fav, self.comparativo = await asyncio.gather(
-            historico_task, metadados_task, favorito_task, comparativo_task
+        results = await asyncio.gather(
+            historico_task,
+            metadados_task,
+            favorito_task,
+            comparativo_task,
+            return_exceptions=True,
+        )
+        _, metadados, is_fav, comparativo = results
+
+        self.relacionados = (
+            metadados
+            if isinstance(metadados, dict)
+            else {"temas": [], "textos_biblicos": []}
+        )
+        self.is_fav = bool(is_fav) if not isinstance(is_fav, Exception) else False
+        self.comparativo = (
+            comparativo if not isinstance(comparativo, Exception) else None
         )
 
         if hino.texto_base and hino.texto_base.strip():
@@ -624,13 +681,18 @@ class HinoView:
         await self._resolve_counterpart_hino()
 
     def _build_header_container(self, page: ft.Page, hino: Hino) -> ft.Container:
-        """Constrói a seção de cabeçalho do hino (título, texto base, chip comparativo)."""
+        """Constrói a seção de cabeçalho do hino (título e chip de texto base)."""
+        accent = (
+            self.theme_service.get_accent_color()
+            if self.theme_service
+            else ft.Colors.PRIMARY
+        )
         titulo_text = ft.Text(
             hino.titulo,
             size=22,
             weight=ft.FontWeight.BOLD,
             text_align=ft.TextAlign.CENTER,
-            color=ft.Colors.BLUE_200,
+            color=accent,
         )
 
         header_controls: list[ft.Control] = [titulo_text]
@@ -641,7 +703,7 @@ class HinoView:
                 ft.Chip(
                     label=ft.Text(hino.texto_base, size=12),
                     leading=ft.Icon(
-                        ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400
+                        ft.Icons.MENU_BOOK_OUTLINED, size=15, color=accent
                     ),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                     tooltip=TOOLTIP_LER_PASSAGEM_BIBLICA,
@@ -650,10 +712,6 @@ class HinoView:
                     ),
                 )
             )
-
-        comparativo_chip = self._build_comparativo_chip(page)
-        if comparativo_chip:
-            chips_controls.append(comparativo_chip)
 
         if chips_controls:
             header_controls.append(
@@ -830,10 +888,21 @@ class HinoView:
                     prev_btn,
                     next_btn,
                     self.fav_icon,
-                    ft.IconButton(
-                        ft.Icons.INFO_OUTLINED,
-                        tooltip="Informações do Hino",
-                        on_click=lambda e: self._show_info_modal(page, self.current_hino),
+                    ft.PopupMenuButton(
+                        icon=ft.Icons.MORE_VERT,
+                        tooltip="Opções do Hino",
+                        items=[
+                            ft.PopupMenuItem(
+                                "Texto Bíblico",
+                                icon=ft.Icons.MENU_BOOK,
+                                on_click=lambda e: self._on_menu_biblia_click(page),
+                            ),
+                            ft.PopupMenuItem(
+                                "Informações do Hino",
+                                icon=ft.Icons.INFO_OUTLINE,
+                                on_click=lambda e: self._show_info_modal(page, self.current_hino),
+                            ),
+                        ],
                     ),
                 ],
             ),
@@ -1033,31 +1102,44 @@ class HinoView:
         finally:
             self._is_navigating = False
 
+    def _on_menu_biblia_click(self, page: ft.Page) -> None:
+        """Abre o modal bíblico a partir do menu superior direito."""
+        ref = None
+        if self.current_hino and self.current_hino.texto_base and self.current_hino.texto_base.strip():
+            ref = self.current_hino.texto_base.strip()
+        elif self.relacionados.get("textos_biblicos"):
+            ref = self.relacionados["textos_biblicos"][0]
+
+        if not ref:
+            self._show_snackbar(page, "Nenhum texto bíblico cadastrado para este hino.")
+            return
+
+        self._on_biblia_click(page, ref)
+
     def _on_biblia_click(
         self,
         page: ft.Page,
         ref: str,
     ) -> None:
-        """Manipula o clique em um chip bíblico, alternando a tela para o modo de leitura bíblica imersiva."""
+        """Manipula o clique em um chip bíblico, abrindo o modal BottomSheet de leitura bíblica."""
         try:
             page.pop_dialog()
         except Exception:
             pass
-        self.active_biblia_ref = ref.strip() if ref else None
-        self.selected_view_mode = "biblia"
-        if self.segmented_button:
-            self.segmented_button.selected = ["biblia"]
-        self._update_content_view(page)
+        clean_ref = ref.strip() if ref else ""
         if hasattr(page, "run_task"):
             page.run_task(
-                self._carregar_biblia_passagem,
+                self._abrir_modal_leitura_biblica,
                 page,
+                clean_ref,
+                False,
+                self.current_hino,
             )
         else:
-            if self._biblia_task and not self._biblia_task.done():
-                self._biblia_task.cancel()
-            self._biblia_task = self._create_background_task(
-                self._carregar_biblia_passagem(page)
+            self._create_background_task(
+                self._abrir_modal_leitura_biblica(
+                    page, clean_ref, from_info_modal=False, hino=self.current_hino
+                )
             )
 
     async def _carregar_biblia_passagem(self, page: ft.Page | None = None) -> None:
@@ -1188,6 +1270,14 @@ class HinoView:
         """Gera os chips horizontais de alternância entre referências bíblicas."""
         if len(all_refs) <= 1:
             return []
+        def _make_chip_click_handler(target_ref: str):
+            async def _on_chip_click(e):
+                res = on_select_callback(e, target_ref)
+                if inspect.iscoroutine(res):
+                    await res
+
+            return _on_chip_click
+
         chips = []
         for r in all_refs:
             is_active = r == active_ref
@@ -1215,7 +1305,7 @@ class HinoView:
                     border=ft.Border.all(1, accent_color) if is_active else None,
                     border_radius=12,
                     padding=ft.Padding.symmetric(horizontal=10, vertical=5),
-                    on_click=lambda e, ref_target=r: on_select_callback(e, ref_target),
+                    on_click=_make_chip_click_handler(r),
                     ink=True,
                 )
             )
@@ -1560,7 +1650,7 @@ class HinoView:
             self.edition_feedback_text.color = text_color
 
     def _build_segmented_button(self, page: ft.Page) -> ft.Control | None:
-        """Gera a barra de alternância (SegmentedButton) entre Novo, Antigo, Comparação e Texto Bíblico com banner de feedback suave."""
+        """Gera a barra de alternância (SegmentedButton) apenas entre versões da letra (ex.: NHA vs HA)."""
         if not self.comparativo:
             return None
 
@@ -1569,36 +1659,12 @@ class HinoView:
             if self.edition == "novo"
             else self.comparativo.numero_novo
         )
-        is_modificado = self.comparativo.status_comparacao == "MODIFICADO"
-        if not (has_counterpart or is_modificado):
+        if not has_counterpart:
             return None
 
         segments = self._create_edition_segments()
-        if is_modificado:
-            segments.append(
-                ft.Segment(
-                    value="comparacao",
-                    label=ft.Text("Comparar Mudanças", size=12),
-                    icon=ft.Icon(ft.Icons.COMPARE_ARROWS, size=15),
-                )
-            )
-
-        has_biblia = bool(
-            (
-                self.current_hino
-                and self.current_hino.texto_base
-                and self.current_hino.texto_base.strip()
-            )
-            or self.relacionados.get("textos_biblicos")
-        )
-        if has_biblia:
-            segments.append(
-                ft.Segment(
-                    value="biblia",
-                    label=ft.Text("Texto Bíblico", size=12),
-                    icon=ft.Icon(ft.Icons.MENU_BOOK, size=15),
-                )
-            )
+        if not segments:
+            return None
 
         self.segmented_button = ft.SegmentedButton(
             segments=segments,
@@ -1607,17 +1673,8 @@ class HinoView:
             show_selected_icon=False,
         )
 
-        self.edition_feedback_banner = self._build_edition_feedback_banner()
-
         return ft.Container(
-            content=ft.Column(
-                controls=[
-                    self.segmented_button,
-                    self.edition_feedback_banner,
-                ],
-                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-                spacing=8,
-            ),
+            content=self.segmented_button,
             padding=ft.Padding.only(top=0, bottom=12, left=10, right=10),
             alignment=ft.Alignment.CENTER,
         )
@@ -1628,11 +1685,6 @@ class HinoView:
             self.selected_view_mode = next(iter(selected))
             if self.segmented_button:
                 self.segmented_button.selected = [self.selected_view_mode]
-            if self.selected_view_mode == "biblia" and not self.current_biblia_passagem:
-                if hasattr(page, "run_task"):
-                    page.run_task(self._carregar_biblia_passagem, page)
-                else:
-                    self._create_background_task(self._carregar_biblia_passagem(page))
             self._update_content_view(page)
 
     def _render_current_mode_content(self) -> ft.Control:
@@ -1811,6 +1863,12 @@ class HinoView:
         """Constrói um único chip de navegação bíblica com feedback visual de seleção."""
         label_prefix = "✦ " if is_base else ""
         label_suffix = " (Base)" if is_base else ""
+        def _make_inline_chip_handler(target_ref: str):
+            async def _on_inline_chip_click(e):
+                await self._on_inline_biblia_ref_selected(e, target_ref)
+
+            return _on_inline_chip_click
+
         return ft.Container(
             content=ft.Text(
                 f"{label_prefix}{r}{label_suffix}",
@@ -1826,11 +1884,7 @@ class HinoView:
             border=ft.Border.all(1, accent_color) if is_active else None,
             border_radius=12,
             padding=ft.Padding.symmetric(horizontal=10, vertical=5),
-            on_click=lambda e, ref=r: (
-                self.page.run_task(self._on_inline_biblia_ref_selected, e, ref)
-                if self.page
-                else None
-            ),
+            on_click=_make_inline_chip_handler(r),
             ink=True,
         )
 
@@ -2579,7 +2633,7 @@ class HinoView:
                                 label,
                                 weight=ft.FontWeight.BOLD,
                                 size=12,
-                                color=ft.Colors.BLUE_200,
+                                color=ft.Colors.PRIMARY,
                             ),
                             ft.Text(val, size=14),
                         ],
@@ -2600,12 +2654,12 @@ class HinoView:
                     "Texto Base Bíblico:",
                     weight=ft.FontWeight.BOLD,
                     size=12,
-                    color=ft.Colors.BLUE_200,
+                    color=ft.Colors.PRIMARY,
                 ),
                 ft.Chip(
                     label=ft.Text(hino.texto_base, size=12),
                     leading=ft.Icon(
-                        ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400
+                        ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.PRIMARY
                     ),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                     tooltip=TOOLTIP_LER_PASSAGEM_BIBLICA,
@@ -2627,7 +2681,7 @@ class HinoView:
                 ft.Chip(
                     label=ft.Text(hino.categoria, size=12),
                     leading=ft.Icon(
-                        ft.Icons.FOLDER_OUTLINED, size=16, color=ft.Colors.BLUE_400
+                        ft.Icons.FOLDER_OUTLINED, size=16, color=ft.Colors.PRIMARY
                     ),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                     on_click=lambda e, c=hino.categoria: self._trigger_filter_navigation(
@@ -2642,7 +2696,7 @@ class HinoView:
                     leading=ft.Icon(
                         ft.Icons.FOLDER_SPECIAL_OUTLINED,
                         size=16,
-                        color=ft.Colors.BLUE_300,
+                        color=ft.Colors.PRIMARY,
                     ),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                     on_click=lambda e, sc=hino.subcategoria: self._trigger_filter_navigation(
@@ -2674,7 +2728,7 @@ class HinoView:
             ft.Chip(
                 label=ft.Text(t, size=11),
                 leading=ft.Icon(
-                    ft.Icons.LABEL_OUTLINED, size=15, color=ft.Colors.AMBER_400
+                    ft.Icons.LABEL_OUTLINED, size=15, color=ft.Colors.TERTIARY
                 ),
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 on_click=lambda e, tema=t: self._trigger_filter_navigation(
@@ -2689,7 +2743,7 @@ class HinoView:
                     "Temas Relacionados:",
                     weight=ft.FontWeight.BOLD,
                     size=12,
-                    color=ft.Colors.AMBER_200,
+                    color=ft.Colors.TERTIARY,
                 ),
                 ft.Row(controls=tema_chips, wrap=True, spacing=6, run_spacing=6),
             ],
@@ -2705,7 +2759,7 @@ class HinoView:
             ft.Chip(
                 label=ft.Text(tb, size=11),
                 leading=ft.Icon(
-                    ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.GREEN_400
+                    ft.Icons.MENU_BOOK_OUTLINED, size=15, color=ft.Colors.PRIMARY
                 ),
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 tooltip=TOOLTIP_LER_PASSAGEM_BIBLICA,
@@ -2719,7 +2773,7 @@ class HinoView:
                     "Textos Bíblicos Relacionados:",
                     weight=ft.FontWeight.BOLD,
                     size=12,
-                    color=ft.Colors.GREEN_200,
+                    color=ft.Colors.PRIMARY,
                 ),
                 ft.Row(controls=texto_chips, wrap=True, spacing=6, run_spacing=6),
             ],
@@ -2737,7 +2791,7 @@ class HinoView:
                 ft.Text(
                     "Hino inédito inserido nesta edição do hinário.",
                     size=13,
-                    color=ft.Colors.PURPLE_200,
+                    color=ft.Colors.PRIMARY,
                 )
             )
         elif self.comparativo.numero_antigo:
@@ -2749,7 +2803,7 @@ class HinoView:
                             "Hinário Antigo:",
                             weight=ft.FontWeight.BOLD,
                             size=12,
-                            color=ft.Colors.BLUE_200,
+                            color=ft.Colors.PRIMARY,
                         ),
                         ft.Text(
                             f"Hino #{self.comparativo.numero_antigo} - {titulo_ant}",
@@ -2768,7 +2822,7 @@ class HinoView:
                                 "Similaridade da Letra:",
                                 weight=ft.FontWeight.BOLD,
                                 size=12,
-                                color=ft.Colors.BLUE_200,
+                                color=ft.Colors.PRIMARY,
                             ),
                             ft.Text(
                                 f"{self.comparativo.similaridade_pct:.1f}%", size=13
@@ -2785,7 +2839,7 @@ class HinoView:
                                 "Resumo:",
                                 weight=ft.FontWeight.BOLD,
                                 size=12,
-                                color=ft.Colors.BLUE_200,
+                                color=ft.Colors.PRIMARY,
                             ),
                             ft.Text(
                                 self.comparativo.resumo_alteracoes, size=13, italic=True
@@ -2804,7 +2858,7 @@ class HinoView:
                     "Comparativo com Hinário Antigo:",
                     weight=ft.FontWeight.BOLD,
                     size=12,
-                    color=ft.Colors.BLUE_200,
+                    color=ft.Colors.PRIMARY,
                 ),
                 *items,
             ],

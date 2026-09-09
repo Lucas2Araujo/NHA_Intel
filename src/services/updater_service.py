@@ -23,7 +23,7 @@ from typing import Any
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
-    APP_VERSION = "0.1.0"
+    APP_VERSION = "4.2.0"
 
 
 # Mapeamento de ABIs padrão do Android

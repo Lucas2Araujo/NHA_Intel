@@ -706,5 +706,130 @@ async def test_biblia_view_comparador_versoes_flow():
     await repo.close()
 
 
+@pytest.mark.asyncio
+async def test_make_hymn_context_bar():
+    from src.views.biblia_view import (
+        ContextoHino,
+        ReferenciaRelacionada,
+        make_hymn_context_bar,
+    )
+
+    clicked = []
+
+    def on_select(livro, cap, ver):
+        clicked.append((livro, cap, ver))
+
+    hino_ctx = ContextoHino(
+        numero="42",
+        referencias_relacionadas=[
+            ReferenciaRelacionada("Sl 23:1", "Salmos", 23, 1),
+            ReferenciaRelacionada("Jo 3:16", "João", 3, 16),
+        ],
+    )
+
+    bar = make_hymn_context_bar(hino_ctx, on_select)
+    assert isinstance(bar, ft.Container)
+    assert bar.content is not None
+    row = bar.content
+    assert isinstance(row, ft.Row)
+
+    # Verifica ícone, texto e chips
+    icon = row.controls[0]
+    label = row.controls[1]
+    chips_row = row.controls[2]
+    assert isinstance(icon, ft.Icon)
+    assert label.value == "Textos do Hino 42:"
+    assert len(chips_row.controls) == 2
+
+    # Dispara o clique no primeiro chip
+    chips_row.controls[0].on_click(MagicMock())
+    assert clicked == [("Salmos", 23, 1)]
+
+
+@pytest.mark.asyncio
+async def test_biblia_view_with_hino_origem_id_and_jump():
+    from src.models.hino import Hino
+    from src.views.biblia_view import BibliaView
+
+    db_conn = DatabaseConnection(db_path=":memory:", read_only=True)
+    conn = await db_conn.get_connection()
+    await conn.execute("CREATE TABLE book (id INTEGER PRIMARY KEY, name VARCHAR(50));")
+    await conn.execute(
+        "CREATE TABLE verse (id INTEGER PRIMARY KEY, book_id INTEGER, chapter INTEGER, verse INTEGER, text TEXT);"
+    )
+    await conn.execute("INSERT INTO book VALUES (19, 'Salmos'), (43, 'João');")
+    await conn.execute(
+        "INSERT INTO verse VALUES (1, 19, 23, 1, 'O SENHOR é o meu pastor...'), (2, 43, 3, 16, 'Porque Deus amou...');"
+    )
+    await conn.commit()
+
+    biblia_repo = BibliaRepository(db_conn)
+
+    mock_hino_repo = MagicMock()
+    mock_hino = Hino(
+        id=10,
+        numero="10",
+        titulo="Pastor Divino",
+        letra="...",
+        texto_base="Salmos 23:1",
+    )
+    mock_hino_repo.get_by_id = AsyncMock(return_value=mock_hino)
+    mock_hino_repo.get_metadados_relacionados = AsyncMock(
+        return_value={"textos_biblicos": ["João 3:16"]}
+    )
+
+    view_instance = BibliaView(
+        biblia_repo,
+        hino_repository=mock_hino_repo,
+    )
+
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.update = MagicMock()
+    mock_page.height = 700
+
+    view = await view_instance.build(
+        mock_page,
+        livro="Salmos",
+        capitulo=23,
+        versiculo_foco=1,
+        hino_origem_id=10,
+    )
+
+    assert isinstance(view, ft.View)
+    await asyncio.sleep(0.1)
+    assert view_instance.hymn_context_bar is not None
+    assert view_instance.current_book_id == 19
+    assert view_instance.current_chapter == 23
+    assert view_instance.versiculo_foco == 1
+
+    # Testa salto rápido através de _jump_to_ref
+    await view_instance._jump_to_ref("João", 3, 16)
+    assert view_instance.current_book_id == 43
+    assert view_instance.current_chapter == 3
+    assert view_instance.versiculo_foco == 16
+
+    await biblia_repo.close()
+
+
+def test_main_parse_bible_route_query():
+    from main import _parse_bible_route_query
+
+    livro, cap, ver, hino_id = _parse_bible_route_query(
+        "/biblia?livro=Salmos&cap=23&ver=1&hino_id=42"
+    )
+    assert livro == "Salmos"
+    assert cap == 23
+    assert ver == 1
+    assert hino_id == 42
+
+    # Rota simples sem query
+    livro2, cap2, ver2, hino_id2 = _parse_bible_route_query("/biblia")
+    assert livro2 is None
+    assert cap2 is None
+    assert ver2 is None
+    assert hino_id2 is None
+
+
+
 
 

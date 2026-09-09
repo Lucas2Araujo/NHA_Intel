@@ -24,7 +24,7 @@ from src.services.updater_service import UpdaterService
 try:
     from src.version import __version__ as APP_VERSION
 except ImportError:
-    APP_VERSION = "0.5.0"
+    APP_VERSION = "4.2.0"
 
 
 def ensure_page_dialogs(page: ft.Page | None) -> None:

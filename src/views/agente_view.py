@@ -5,6 +5,11 @@ import flet as ft
 from src.repositories.culto_repository import CultoRepository
 from src.services.agente_service import AgenteService
 
+try:
+    from src.version import __version__ as APP_VERSION
+except ImportError:
+    APP_VERSION = "4.2.0"
+
 
 class AgenteView:
     """
@@ -36,7 +41,7 @@ class AgenteView:
         self.tab_bar: ft.SegmentedButton | None = None
 
     def build(self, page: ft.Page) -> ft.View:
-        page.title = "Agente Organizador de Cultos - v0.2"
+        page.title = f"Agente Organizador de Cultos - v{APP_VERSION}"
 
         self._init_controls(page)
 

@@ -161,7 +161,11 @@ class ThemeService:
             )
             await conn.commit()
         except Exception:
-            pass
+            try:
+                conn = await self.db_connection.get_connection()
+                await conn.rollback()
+            except Exception:
+                pass
 
     async def set_seed(self, seed_key: str, page: ft.Page | None = None) -> None:
         """Define a cor seed M3 ativa, persiste e atualiza o tema."""
@@ -222,6 +226,10 @@ class ThemeService:
         seed_hex = COLOR_SEEDS.get(self.current_seed, COLOR_SEEDS["purple"])["hex"]
 
         page.fonts = {
+            "AppSans": "fonts/AppSans-Regular.ttf",
+            "AppSans-Bold": "fonts/AppSans-SemiBold.ttf",
+            "HymnSerif": "fonts/HymnSerif-Regular.ttf",
+            "HymnSerif-Bold": "fonts/HymnSerif-Bold.ttf",
             "OpenDyslexic": "fonts/OpenDyslexic-Regular.otf",
             "Times New Roman": "Times New Roman, serif",
             "Helvetica": "fonts/Helvetica-World-Regular.ttf",

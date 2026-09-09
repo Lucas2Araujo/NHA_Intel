@@ -159,10 +159,13 @@ class DatabaseConnection:
     Suporta conexão física em arquivo ou banco em memória (:memory:).
     """
 
+    _initialized_dbs: set[str] = set()
+
     def __init__(self, db_path: str | None = DEFAULT_DB_NAME, read_only: bool = False):
         self.db_path = self._resolve_db_path(db_path or DEFAULT_DB_NAME)
         self.read_only = read_only
         self._connection: AsyncConnectionType | None = None
+        self._lock: asyncio.Lock | None = None
 
     @staticmethod
     def _resolve_env_db_path() -> str | None:
@@ -432,46 +435,51 @@ class DatabaseConnection:
         """Cria uma conexão assíncrona compatível via sqlite3 nativo sem criar threads de SO."""
         if self.read_only:
             try:
-                raw_conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
+                raw_conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True, timeout=30.0)
             except OSError:
-                raw_conn = sqlite3.connect(self.db_path)
+                raw_conn = sqlite3.connect(self.db_path, timeout=30.0)
         else:
-            raw_conn = sqlite3.connect(self.db_path)
+            raw_conn = sqlite3.connect(self.db_path, timeout=30.0)
         raw_conn.row_factory = sqlite3.Row
         return _AsyncSqliteCompatConnection(raw_conn)
 
     async def get_connection(self) -> AsyncConnectionType:
         """
-        Retorna/abre uma conexão assíncrona ativa com o SQLite.
+        Retorna/abre uma conexão assíncrona ativa com o SQLite com proteção de lock assíncrono.
         Configura o row_factory para acesso amigável às colunas.
         Suporta aiosqlite (Desktop/Android) e fallback transparente para sqlite3 puro (WebAssembly/Pyodide).
         Na primeira conexão, executa otimizações (índices, FTS5, limpeza).
         """
-        if self._connection is None:
-            conn: AsyncConnectionType
-            if _is_single_threaded_env():
-                conn = self._create_compat_connection()
-            else:
-                try:
-                    conn = await aiosqlite.connect(self.db_path)
-                    conn.row_factory = aiosqlite.Row
-                except Exception:
-                    # Se falhar ao iniciar thread (ex: Pyodide no navegador)
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+
+        async with self._lock:
+            if self._connection is None:
+                conn: AsyncConnectionType
+                if _is_single_threaded_env():
                     conn = self._create_compat_connection()
+                else:
+                    try:
+                        conn = await aiosqlite.connect(self.db_path, timeout=30.0)
+                        conn.row_factory = aiosqlite.Row
+                    except Exception:
+                        # Se falhar ao iniciar thread (ex: Pyodide no navegador)
+                        conn = self._create_compat_connection()
 
-            if not hasattr(conn, "row_factory") or conn.row_factory is None:
-                conn.row_factory = sqlite3.Row
+                if not hasattr(conn, "row_factory") or conn.row_factory is None:
+                    conn.row_factory = sqlite3.Row
 
-            await self._initialize_db(conn)
-            self._connection = conn
-        return self._connection
+                await self._initialize_db(conn)
+                self._connection = conn
+            return self._connection
 
     @staticmethod
     async def _apply_pragmas(
         conn: Any, db_path: str = "", read_only: bool = False
     ) -> None:
         """
-        Aplica PRAGMAs de alta velocidade adaptativos à arquitetura (ARMv7 32-bit vs 64-bit).
+        Aplica PRAGMAs de alta velocidade e resiliência adaptativos à arquitetura (ARMv7 32-bit vs 64-bit).
+        - busy_timeout = 30000 (30 segundos): evita falhas prematuras de 'database is locked'.
         - 32-bit (ARMv7 / x86): mmap_size limitado a 16MB e cache_size a 4MB (seguro contra fragmentação de memória virtual).
         - 64-bit (ARM64 / x86_64): mmap_size de 64MB e cache_size de 16MB.
         - synchronous = NORMAL e journal_mode = WAL aceleram I/O em memórias flash e eMMC lentos.
@@ -481,6 +489,7 @@ class DatabaseConnection:
         cache_kib = -4000 if is_32bit else -16000
 
         pragmas = [
+            "PRAGMA busy_timeout = 30000;",
             f"PRAGMA mmap_size = {mmap_bytes};",
             f"PRAGMA cache_size = {cache_kib};",
             "PRAGMA temp_store = MEMORY;",
@@ -492,7 +501,7 @@ class DatabaseConnection:
             and db_path != ":memory:"
             and not db_path.startswith("file:")
         ):
-            pragmas.insert(0, "PRAGMA journal_mode = WAL;")
+            pragmas.insert(1, "PRAGMA journal_mode = WAL;")
 
         for pragma in pragmas:
             try:
@@ -500,99 +509,134 @@ class DatabaseConnection:
             except Exception:
                 pass
 
-    @staticmethod
-    async def _initialize_db(conn: AsyncConnectionType) -> None:
+    async def _initialize_db(self, conn: AsyncConnectionType) -> None:
         """
         Executa otimizações e manutenção no banco na primeira conexão:
-        1. Aplica PRAGMAs de alta velocidade
-        2. Cria índices de performance (IF NOT EXISTS)
-        3. Cria tabela FTS5 para busca full-text
-        4. Cria tabela de preferências do usuário
-        5. Limpa histórico antigo (> 90 dias)
+        1. Aplica PRAGMAs de alta velocidade respeitando o modo somente leitura
+        2. Se não for read_only e o banco possuir a tabela 'hino', cria índices, FTS5 e limpa histórico antigo
+        3. Se não for read_only, cria a tabela 'preferencias'
         """
-        await DatabaseConnection._apply_pragmas(conn)
+        await self._apply_pragmas(conn, db_path=self.db_path, read_only=self.read_only)
 
-        # Índices de performance
-        index_statements = [
-            "CREATE INDEX IF NOT EXISTS idx_historico_hino_data ON historico(hino_id, data_acesso DESC);",
-            "CREATE INDEX IF NOT EXISTS idx_favorito_data ON favorito(data_favoritado DESC);",
-            "CREATE INDEX IF NOT EXISTS idx_hino_numero ON hino(numero);",
-            "CREATE INDEX IF NOT EXISTS idx_hino_titulo ON hino(titulo);",
-            "CREATE INDEX IF NOT EXISTS idx_hino_tema_hino ON hino_tema(hino_id);",
-            "CREATE INDEX IF NOT EXISTS idx_hino_tema_tema ON hino_tema(tema_id);",
-            "CREATE INDEX IF NOT EXISTS idx_hino_texto_hino ON hino_texto(hino_id);",
-        ]
-        for stmt in index_statements:
+        # Se for somente leitura (ex: Bíblias ou comparativo), não executa DDL nem escrita
+        if self.read_only:
+            return
+
+        # Para bancos em arquivo físico, executa inicialização de esquema apenas uma vez por execução do app
+        if self.db_path != ":memory:" and self.db_path in DatabaseConnection._initialized_dbs:
+            return
+
+        try:
+            # Verifica se este banco contém a tabela 'hino' antes de criar índices e FTS de hinos
+            has_hino = False
             try:
-                await conn.execute(stmt)
+                async with conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='hino';"
+                ) as cursor:
+                    row = await cursor.fetchone()
+                    has_hino = row is not None
             except Exception:
                 pass
 
-        # Tabela FTS5 para busca full-text (letra, categoria, subcategoria, texto_base, autores, temas, textos)
-        try:
-            async with conn.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='hino_fts';"
-            ) as cursor:
-                table_info = await cursor.fetchone()
-                if table_info and "temas" not in (table_info[0] or "").lower():
-                    await conn.execute("DROP TABLE IF EXISTS hino_fts;")
+            if has_hino:
+                # Índices de performance
+                index_statements = [
+                    "CREATE INDEX IF NOT EXISTS idx_historico_hino_data ON historico(hino_id, data_acesso DESC);",
+                    "CREATE INDEX IF NOT EXISTS idx_favorito_data ON favorito(data_favoritado DESC);",
+                    "CREATE INDEX IF NOT EXISTS idx_hino_numero ON hino(numero);",
+                    "CREATE INDEX IF NOT EXISTS idx_hino_titulo ON hino(titulo);",
+                    "CREATE INDEX IF NOT EXISTS idx_hino_tema_hino ON hino_tema(hino_id);",
+                    "CREATE INDEX IF NOT EXISTS idx_hino_tema_tema ON hino_tema(tema_id);",
+                    "CREATE INDEX IF NOT EXISTS idx_hino_texto_hino ON hino_texto(hino_id);",
+                ]
+                for stmt in index_statements:
+                    try:
+                        await conn.execute(stmt)
+                    except Exception:
+                        pass
 
-            await conn.execute("""
-                CREATE VIRTUAL TABLE IF NOT EXISTS hino_fts USING fts5(
-                    numero, titulo, letra, categoria, subcategoria, texto_base, autor_letra, autor_musica, temas, textos,
-                    tokenize='unicode61 remove_diacritics 2'
-                );
-            """)
-            # Verifica se o FTS está vazio e precisa ser populado
-            async with conn.execute("SELECT COUNT(*) FROM hino_fts;") as cursor:
-                row = await cursor.fetchone()
-                count = row[0] if row else 0
-            if count == 0:
+                # Tabela FTS5 para busca full-text (letra, categoria, subcategoria, texto_base, autores, temas, textos)
+                try:
+                    async with conn.execute(
+                        "SELECT sql FROM sqlite_master WHERE type='table' AND name='hino_fts';"
+                    ) as cursor:
+                        table_info = await cursor.fetchone()
+                        if table_info and "temas" not in (table_info[0] or "").lower():
+                            await conn.execute("DROP TABLE IF EXISTS hino_fts;")
+
+                    await conn.execute("""
+                        CREATE VIRTUAL TABLE IF NOT EXISTS hino_fts USING fts5(
+                            numero, titulo, letra, categoria, subcategoria, texto_base, autor_letra, autor_musica, temas, textos,
+                            tokenize='unicode61 remove_diacritics 2'
+                        );
+                    """)
+                    # Verifica se o FTS está vazio e precisa ser populado
+                    async with conn.execute("SELECT COUNT(*) FROM hino_fts;") as cursor:
+                        row = await cursor.fetchone()
+                        count = row[0] if row else 0
+                    if count == 0:
+                        await conn.execute("""
+                            INSERT INTO hino_fts(rowid, numero, titulo, letra, categoria, subcategoria, texto_base, autor_letra, autor_musica, temas, textos)
+                            SELECT 
+                                h.id, 
+                                COALESCE(h.numero, ''), 
+                                COALESCE(h.titulo, ''), 
+                                COALESCE(h.letra, ''), 
+                                COALESCE(h.categoria, ''), 
+                                COALESCE(h.subcategoria, ''), 
+                                COALESCE(h.texto_base, ''), 
+                                COALESCE(h.autor_letra, ''), 
+                                COALESCE(h.autor_musica, ''),
+                                COALESCE((SELECT GROUP_CONCAT(t.nome, ' ') FROM hino_tema ht JOIN tema t ON ht.tema_id = t.id WHERE ht.hino_id = h.id), ''),
+                                COALESCE((SELECT GROUP_CONCAT(tb.referencia, ' ') FROM hino_texto htx JOIN texto_biblico tb ON htx.texto_id = tb.id WHERE htx.hino_id = h.id), '')
+                            FROM hino h;
+                        """)
+                except Exception:
+                    pass
+
+                # Limpeza automática de histórico antigo (> 90 dias)
+                try:
+                    await conn.execute(
+                        "DELETE FROM historico WHERE data_acesso < datetime('now', '-90 days');"
+                    )
+                except Exception:
+                    pass
+
+            # Tabela de preferências do usuário
+            try:
                 await conn.execute("""
-                    INSERT INTO hino_fts(rowid, numero, titulo, letra, categoria, subcategoria, texto_base, autor_letra, autor_musica, temas, textos)
-                    SELECT 
-                        h.id, 
-                        COALESCE(h.numero, ''), 
-                        COALESCE(h.titulo, ''), 
-                        COALESCE(h.letra, ''), 
-                        COALESCE(h.categoria, ''), 
-                        COALESCE(h.subcategoria, ''), 
-                        COALESCE(h.texto_base, ''), 
-                        COALESCE(h.autor_letra, ''), 
-                        COALESCE(h.autor_musica, ''),
-                        COALESCE((SELECT GROUP_CONCAT(t.nome, ' ') FROM hino_tema ht JOIN tema t ON ht.tema_id = t.id WHERE ht.hino_id = h.id), ''),
-                        COALESCE((SELECT GROUP_CONCAT(tb.referencia, ' ') FROM hino_texto htx JOIN texto_biblico tb ON htx.texto_id = tb.id WHERE htx.hino_id = h.id), '')
-                    FROM hino h;
+                    CREATE TABLE IF NOT EXISTS preferencias (
+                        chave TEXT PRIMARY KEY,
+                        valor TEXT
+                    );
                 """)
-        except Exception:
-            pass
+            except Exception:
+                pass
 
-        # Tabela de preferências do usuário
-        try:
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS preferencias (
-                    chave TEXT PRIMARY KEY,
-                    valor TEXT
-                );
-            """)
-        except Exception:
-            pass
+            try:
+                await conn.commit()
+            except Exception:
+                try:
+                    await conn.rollback()
+                except Exception:
+                    pass
 
-        # Limpeza automática de histórico antigo (> 90 dias)
-        try:
-            await conn.execute(
-                "DELETE FROM historico WHERE data_acesso < datetime('now', '-90 days');"
-            )
+            if self.db_path != ":memory:":
+                DatabaseConnection._initialized_dbs.add(self.db_path)
         except Exception:
-            pass
-
-        await conn.commit()
+            try:
+                await conn.rollback()
+            except Exception:
+                pass
 
     async def close(self) -> None:
         """Encerra a conexão assíncrona ativa se existir."""
-        if self._connection is not None:
-            await self._connection.close()
-            self._connection = None
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        async with self._lock:
+            if self._connection is not None:
+                await self._connection.close()
+                self._connection = None
 
     async def __aenter__(self) -> AsyncConnectionType:
         return await self.get_connection()

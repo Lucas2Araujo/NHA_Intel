@@ -49,3 +49,38 @@ async def test_add_and_get_historico(in_memory_db: DatabaseConnection):
     # Hino 2 foi o último a ser acessado
     assert recentes[0].id == 2
     assert recentes[1].id == 1
+
+
+@pytest.mark.asyncio
+async def test_historico_add_acesso_database_locked_handling(in_memory_db: DatabaseConnection):
+    """
+    Testa que HistoricoRepository.add_acesso trata erros de 'database is locked'
+    sem lançar exceções não tratadas.
+    """
+    import sqlite3
+    from unittest.mock import AsyncMock, patch
+
+    repo = HistoricoRepository(in_memory_db)
+    conn = await in_memory_db.get_connection()
+
+    # Simula erro de database is locked na execução do cursor
+    with patch.object(conn, "execute", side_effect=sqlite3.OperationalError("database is locked")):
+        result = await repo.add_acesso(1)
+        assert result is False
+
+
+@pytest.mark.asyncio
+async def test_favorito_add_and_remove_database_locked_handling(in_memory_db: DatabaseConnection):
+    """
+    Testa que FavoritoRepository trata erros de 'database is locked'
+    com rollback e sem quebrar o app.
+    """
+    import sqlite3
+    from unittest.mock import patch
+
+    repo = FavoritoRepository(in_memory_db)
+    conn = await in_memory_db.get_connection()
+
+    with patch.object(conn, "execute", side_effect=sqlite3.OperationalError("database is locked")):
+        assert await repo.add_favorito(1) is False
+        assert await repo.remove_favorito(1) is False

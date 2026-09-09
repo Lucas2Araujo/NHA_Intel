@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import dataclass
 import json
 from typing import Any, Callable
 
@@ -12,8 +13,66 @@ from src.views.settings_dialog import ensure_page_dialogs
 PREF_BIBLIA_KEY = "biblia_prefs"
 PREF_MARCADORES_KEY = "biblia_marcadores"
 
+
+@dataclass
+class ReferenciaRelacionada:
+    """Representa uma referência bíblica correlata vinculada a um hino."""
+
+    texto_formatado: str
+    livro: str
+    capitulo: int
+    versiculo: int
+
+
+@dataclass
+class ContextoHino:
+    """Encapsula as informações mínimas de um hino para a barra de contexto."""
+
+    numero: str
+    referencias_relacionadas: list[ReferenciaRelacionada]
+
+
+if not hasattr(ft, "ActionChip"):
+    ft.ActionChip = ft.Chip
+
+
+def make_hymn_context_bar(hino, on_select_ref) -> ft.Container:
+    """Gera barra horizontal com chips de atalhos rápidos para textos correlatos do hino."""
+    chip_cls = getattr(ft, "ActionChip", ft.Chip)
+    chips = [
+        chip_cls(
+            label=ft.Text(ref.texto_formatado, size=12),
+            on_click=lambda e, r=ref: on_select_ref(r.livro, r.capitulo, r.versiculo),
+        )
+        for ref in hino.referencias_relacionadas
+    ]
+    return ft.Container(
+        content=ft.Row(
+            controls=[
+                ft.Icon(
+                    ft.Icons.AUTO_STORIES_OUTLINED, size=16, color=ft.Colors.PRIMARY
+                ),
+                ft.Text(
+                    f"Textos do Hino {hino.numero}:",
+                    size=12,
+                    weight=ft.FontWeight.BOLD,
+                ),
+                ft.Row(controls=chips, scroll=ft.ScrollMode.ADAPTIVE),
+            ],
+            alignment=ft.MainAxisAlignment.START,
+        ),
+        padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGH,
+        border=ft.Border.only(bottom=ft.BorderSide(1, ft.Colors.OUTLINE_VARIANT)),
+    )
+
+
 __all__ = [
     "BibliaView",
+    "biblia_view",
+    "make_hymn_context_bar",
+    "ReferenciaRelacionada",
+    "ContextoHino",
     "build_bible_version_button",
     "update_bible_version_button",
     "format_verse_numbers",
@@ -219,9 +278,16 @@ class BibliaView:
         self,
         biblia_repository: BibliaRepository,
         theme_service: ThemeService | None = None,
+        hino_repository: Any | None = None,
+        antigo_hino_repo: Any | None = None,
     ):
         self.biblia_repository = biblia_repository
         self.theme_service = theme_service
+        self.hino_repository = hino_repository
+        self.antigo_hino_repo = antigo_hino_repo
+        self.hino_origem_id: int | None = None
+        self.versiculo_foco: int | None = None
+        self.hymn_context_bar: ft.Container | None = None
 
         # Estado da navegação da Bíblia
         self.current_book_id: int = 1  # Gênesis por padrão
@@ -272,6 +338,7 @@ class BibliaView:
         self.search_results: list[dict[str, Any]] = []
         self.is_searching: bool = False
         self.search_input: ft.TextField | None = None
+        self._load_task: asyncio.Task | None = None
 
     def _show_snackbar(self, message: str, duration: int = 2500) -> None:
         """Exibe um SnackBar de forma segura compatível com o Flet."""
@@ -358,7 +425,11 @@ class BibliaView:
             )
             await conn.commit()
         except Exception:
-            pass
+            try:
+                conn = await self._get_prefs_connection()
+                await conn.rollback()
+            except Exception:
+                pass
 
     async def _save_bookmarks(self) -> None:
         """Persiste os versículos marcados no SQLite."""
@@ -371,7 +442,11 @@ class BibliaView:
             )
             await conn.commit()
         except Exception:
-            pass
+            try:
+                conn = await self._get_prefs_connection()
+                await conn.rollback()
+            except Exception:
+                pass
 
     async def _toggle_marcador(self, versiculo_num: int, texto: str) -> None:
         """Marca ou desmarca um versículo e persiste no banco SQLite."""
@@ -1255,6 +1330,7 @@ class BibliaView:
             v_key = f"{self.current_book_id}_{self.current_chapter}_{v.numero}"
             is_marked = v_key in self.marcadores
             is_selected = v.numero in self.selected_verses
+            is_focus = self.versiculo_foco is not None and v.numero == self.versiculo_foco
 
             if is_selected:
                 row_bgcolor = (
@@ -1263,6 +1339,9 @@ class BibliaView:
                     else ft.Colors.PRIMARY_CONTAINER
                 )
                 row_border = ft.Border.all(1.5, accent_color)
+            elif is_focus:
+                row_bgcolor = ft.Colors.SURFACE_CONTAINER_HIGHEST
+                row_border = ft.Border.all(2, accent_color)
             elif is_marked:
                 row_bgcolor = ft.Colors.SURFACE_CONTAINER_HIGHEST
                 row_border = ft.Border.only(left=ft.BorderSide(3, accent_color))
@@ -2269,32 +2348,158 @@ class BibliaView:
             self._render_verses()
             asyncio.create_task(self._save_preferences())
 
+    def _resolve_book_id(self, livro: str | int) -> int:
+        """Resolve uma referência textual de livro ou código para o ID canônico (1 a 66)."""
+        if isinstance(livro, int):
+            return livro
+        s = str(livro).strip()
+        if s.isdigit():
+            return int(s)
+        parsed = self.biblia_repository.parse_referencia(f"{s} 1")
+        if parsed and parsed.get("book_id"):
+            return parsed["book_id"]
+        norm = s.lower()
+        for b in self.livros:
+            if b.get("name", "").lower() == norm:
+                return b["id"]
+        return 1
+
+    async def _load_hymn_context(self, hino_id: int) -> ContextoHino | None:
+        """Carrega dados do hino e seus textos bíblicos correlatos para a barra de navegação rápida."""
+        hino = None
+        metadados = {}
+        if self.hino_repository:
+            try:
+                hino = await self.hino_repository.get_by_id(hino_id)
+                if hino:
+                    metadados = await self.hino_repository.get_metadados_relacionados(hino_id)
+            except Exception:
+                pass
+        if not hino and self.antigo_hino_repo:
+            try:
+                hino = await self.antigo_hino_repo.get_by_id(hino_id)
+                if hino:
+                    metadados = await self.antigo_hino_repo.get_metadados_relacionados(hino_id)
+            except Exception:
+                pass
+
+        if not hino:
+            return None
+
+        raw_refs: list[str] = []
+        if hino.texto_base and hino.texto_base.strip():
+            raw_refs.append(hino.texto_base.strip())
+        for tb in metadados.get("textos_biblicos", []):
+            if tb and tb.strip() and tb.strip() not in raw_refs:
+                raw_refs.append(tb.strip())
+
+        refs: list[ReferenciaRelacionada] = []
+        for r in raw_refs:
+            parsed = self.biblia_repository.parse_referencia(r)
+            if parsed:
+                book_name = parsed.get("book_name") or str(parsed.get("book_id", 1))
+                cap = parsed.get("chapter", 1)
+                verses = parsed.get("verses")
+                ver = verses[0] if verses else 1
+                refs.append(
+                    ReferenciaRelacionada(
+                        texto_formatado=r,
+                        livro=book_name,
+                        capitulo=cap,
+                        versiculo=ver,
+                    )
+                )
+            else:
+                refs.append(
+                    ReferenciaRelacionada(
+                        texto_formatado=r,
+                        livro=r,
+                        capitulo=1,
+                        versiculo=1,
+                    )
+                )
+
+        return ContextoHino(
+            numero=hino.numero,
+            referencias_relacionadas=refs,
+        )
+
+    def _on_context_ref_selected(
+        self, livro: str | int, capitulo: int, versiculo: int
+    ) -> None:
+        """Manipula clique nos atalhos de textos correlatos, saltando diretamente sem recarregar a view."""
+        if hasattr(self.page, "run_task"):
+            self.page.run_task(self._jump_to_ref, livro, capitulo, versiculo)
+        else:
+            asyncio.create_task(self._jump_to_ref(livro, capitulo, versiculo))
+
+    async def _jump_to_ref(
+        self, livro: str | int, capitulo: int, versiculo: int | None = None
+    ) -> None:
+        """Salta para livro, capítulo e versículo selecionados na barra de contexto."""
+        if self._load_task and not self._load_task.done():
+            self._load_task.cancel()
+        self.current_book_id = self._resolve_book_id(livro)
+        self.current_chapter = capitulo
+        self.versiculo_foco = versiculo
+        await self._carregar_capitulo(
+            self.current_book_id, self.current_chapter, versao=self.selected_version
+        )
+
     async def build(
         self,
         page: ft.Page,
         initial_book_id: int | None = None,
         initial_chapter: int | None = None,
         initial_version: str | None = None,
+        livro: str | int | None = None,
+        capitulo: int | None = None,
+        versiculo_foco: int | None = None,
+        hino_origem_id: int | None = None,
     ) -> ft.View:
         self.page = page
 
         if self.theme_service:
             self.theme_service.apply_theme(page, edition="novo")
 
+        target_book_id = initial_book_id
+        if livro is not None:
+            target_book_id = self._resolve_book_id(livro)
+
+        target_chapter = initial_chapter
+        if capitulo is not None:
+            target_chapter = capitulo
+
         # Restaura sessão do SQLite caso não seja navegação explícita por rota
-        restore_session = initial_book_id is None
+        restore_session = (target_book_id is None and target_chapter is None)
         await self._load_preferences_and_bookmarks(restore_session=restore_session)
 
-        if initial_book_id is not None:
-            self.current_book_id = initial_book_id
-        if initial_chapter is not None:
-            self.current_chapter = initial_chapter
+        if target_book_id is not None:
+            self.current_book_id = target_book_id
+        if target_chapter is not None:
+            self.current_chapter = target_chapter
         if initial_version:
             self.selected_version = initial_version.strip().upper()
             self.biblia_repository.set_version(self.selected_version)
 
+        self.versiculo_foco = versiculo_foco
+        self.hino_origem_id = hino_origem_id
+
         # Carrega os livros da Bíblia
         await self._load_books()
+
+        # Constrói barra contextual se hino de origem estiver presente
+        if self.hino_origem_id:
+            hino_ctx = await self._load_hymn_context(self.hino_origem_id)
+            if hino_ctx and hino_ctx.referencias_relacionadas:
+                self.hymn_context_bar = make_hymn_context_bar(
+                    hino_ctx,
+                    self._on_context_ref_selected,
+                )
+            else:
+                self.hymn_context_bar = None
+        else:
+            self.hymn_context_bar = None
 
         # Botão central com o Livro e Capítulo no AppBar
         self.appbar_title_btn = ft.TextButton(
@@ -2361,17 +2566,37 @@ class BibliaView:
         )
 
         # Inicia o carregamento assíncrono do capítulo inicial
-        asyncio.create_task(
+        self._load_task = asyncio.create_task(
             self._carregar_capitulo(
                 self.current_book_id, self.current_chapter, versao=self.selected_version
             )
         )
 
+        async def _go_back(e):
+            try:
+                if hasattr(page, "pop_dialog") and page.pop_dialog():
+                    return
+            except Exception:
+                pass
+
+            if hasattr(page, "on_view_pop") and page.on_view_pop:
+                await page.on_view_pop(None)
+            elif len(page.views) > 1:
+                page.views.pop()
+                top_view = page.views[-1]
+                page.route = top_view.route or "/"
+                if hasattr(page, "on_route_change") and page.on_route_change:
+                    await page.on_route_change(None)
+                else:
+                    await page.push_route(page.route)
+            else:
+                await page.push_route("/")
+
         self.normal_appbar = ft.AppBar(
             leading=ft.IconButton(
                 ft.Icons.ARROW_BACK,
                 tooltip="Voltar",
-                on_click=lambda e: asyncio.create_task(page.push_route("/")),
+                on_click=_go_back,
             ),
             title=self.appbar_title_btn,
             center_title=True,
@@ -2425,6 +2650,16 @@ class BibliaView:
         )
 
         self.active_screen = "leitor"
+        controls_col: list[ft.Control] = []
+        if self.hymn_context_bar:
+            controls_col.append(self.hymn_context_bar)
+        controls_col.append(
+            ft.Container(
+                content=self.verses_list,
+                expand=True,
+            )
+        )
+
         self.view = ft.View(
             route="/biblia",
             bgcolor=ft.Colors.SURFACE,
@@ -2432,9 +2667,47 @@ class BibliaView:
             controls=[
                 ft.SafeArea(
                     maintain_bottom_view_padding=True,
-                    content=self.verses_list,
+                    content=ft.Column(
+                        controls=controls_col,
+                        spacing=0,
+                        expand=True,
+                    ),
                     expand=True,
                 )
             ],
         )
         return self.view
+
+
+async def biblia_view(
+    page: ft.Page,
+    livro: str | int = "Sl",
+    capitulo: int = 1,
+    versiculo_foco: int | None = None,
+    hino_origem_id: int | None = None,
+    biblia_repository: BibliaRepository | None = None,
+    theme_service: ThemeService | None = None,
+    hino_repository: Any | None = None,
+    antigo_hino_repo: Any | None = None,
+) -> ft.View:
+    """Função utilitária para renderizar a tela da Bíblia com parâmetros contextuais."""
+    if biblia_repository is None:
+        from src.database.connection import DatabaseConnection
+
+        conn = DatabaseConnection(db_path="ARA.sqlite", read_only=True)
+        biblia_repository = BibliaRepository(conn)
+
+    instance = BibliaView(
+        biblia_repository=biblia_repository,
+        theme_service=theme_service,
+        hino_repository=hino_repository,
+        antigo_hino_repo=antigo_hino_repo,
+    )
+    return await instance.build(
+        page,
+        livro=livro,
+        capitulo=capitulo,
+        versiculo_foco=versiculo_foco,
+        hino_origem_id=hino_origem_id,
+    )
+
