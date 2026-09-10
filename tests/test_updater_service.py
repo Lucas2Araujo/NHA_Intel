@@ -346,3 +346,81 @@ async def test_open_in_browser():
     with patch("flet.UrlLauncher.launch_url", new_callable=AsyncMock) as mock_launch:
         await open_in_browser("https://github.com/Lucas2Araujo/NHA_Intel")
         mock_launch.assert_called_once_with("https://github.com/Lucas2Araujo/NHA_Intel")
+
+
+def test_is_android_and_get_default_download_dir(tmp_path: Path):
+    """Testa detecção de ambiente Android e resolução do diretório público de Downloads."""
+    # Cenário desktop padrão
+    with patch("src.services.updater_service.UpdaterService.is_android", return_value=False):
+        dir_desktop = UpdaterService.get_default_download_dir()
+        assert "hinario_updates" in str(dir_desktop)
+
+    # Cenário Android com pasta /storage/emulated/0/Download acessível
+    fake_android_download = tmp_path / "android_download"
+    fake_android_download.mkdir(parents=True, exist_ok=True)
+    with patch("src.services.updater_service.UpdaterService.is_android", return_value=True), \
+         patch("pathlib.Path.mkdir"), \
+         patch("os.access", return_value=True), \
+         patch("src.services.updater_service.Path", side_effect=lambda p: fake_android_download if "Download" in str(p) else Path(p)):
+        dir_android = UpdaterService.get_default_download_dir()
+        assert dir_android == fake_android_download
+
+
+@pytest.mark.asyncio
+async def test_trigger_apk_installation_never_opens_browser_when_file_exists(tmp_path: Path):
+    """Testa que trigger_apk_installation NÃO abre navegador se o APK existe no disco, mesmo que o launcher falhe."""
+    test_apk = tmp_path / "app.apk"
+    test_apk.write_bytes(b"dummy apk")
+
+    with patch("flet.UrlLauncher.launch_url", new_callable=AsyncMock, side_effect=Exception("Launcher failed")), \
+         patch("src.views.update_dialog.open_in_browser", new_callable=AsyncMock) as mock_browser:
+        res = await trigger_apk_installation(str(test_apk), fallback_url="https://example.com/app.apk")
+        assert res is False
+        # NUNCA deve tentar abrir no navegador se o arquivo já está no disco
+        mock_browser.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_trigger_apk_installation_opens_fallback_only_when_file_missing():
+    """Testa que trigger_apk_installation só usa fallback_url se o arquivo local NÃO existir."""
+    with patch("src.views.update_dialog.open_in_browser", new_callable=AsyncMock) as mock_browser:
+        res = await trigger_apk_installation("/non/existent/path/app.apk", fallback_url="https://example.com/app.apk")
+        assert res is False
+        mock_browser.assert_called_once_with("https://example.com/app.apk")
+
+
+@pytest.mark.asyncio
+async def test_update_dialog_success_ui_and_actions(tmp_path: Path):
+    """Testa que após download concluído a UI exibe os botões de Instalar e Compartilhar/Abrir."""
+    page = MagicMock(spec=ft.Page)
+    service = UpdaterService()
+    test_apk = tmp_path / "hinario_v0.6.0.apk"
+    test_apk.write_bytes(b"dummy")
+
+    update_info = {
+        "update_available": True,
+        "latest_version": "0.6.0",
+        "current_version": "0.5.0",
+        "download_url": "https://example.com/update.apk",
+        "release_notes": "Notas",
+    }
+
+    from src.views.update_dialog import UpdateDialog
+    dialog = UpdateDialog(page, update_info, service)
+
+    # Simula chamada de sucesso do download
+    dialog._handle_download_success(str(test_apk))
+
+    assert "Download concluído com sucesso" in dialog.status_text.value
+    assert "hinario_v0.6.0.apk" in dialog.status_text.value
+    button_labels = [getattr(c, "content", "") for c in dialog.actions_row.controls]
+    assert "Fechar" in button_labels
+    assert "Compartilhar / Abrir" in button_labels
+    assert "Instalar Agora" in button_labels
+
+    # Testa que acionar instalação atualiza status sem disparar navegador
+    with patch("src.views.update_dialog.trigger_apk_installation", new_callable=AsyncMock, return_value=True) as mock_trigger:
+        await dialog._acionar_instalacao(str(test_apk))
+        mock_trigger.assert_called_once_with(apk_path=str(test_apk), page=page)
+        assert "Instalador iniciado" in dialog.status_text.value
+

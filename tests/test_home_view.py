@@ -543,7 +543,7 @@ def test_hinos_view_alias_and_export():
 
 
 @pytest.mark.asyncio
-async def test_home_view_edition_selector_and_navigation(in_memory_db):
+async def test_home_view_navigation_and_tabs_layout(in_memory_db):
     from unittest.mock import AsyncMock
 
     hino_repo = HinoRepository(in_memory_db)
@@ -556,19 +556,21 @@ async def test_home_view_edition_selector_and_navigation(in_memory_db):
 
     view = await home_view_obj.build(mock_page)
 
-    # 1. Verifica presença e estrutura do edition_selector
-    assert home_view_obj.edition_selector is not None
-    assert isinstance(home_view_obj.edition_selector, ft.SegmentedButton)
-    assert home_view_obj.edition_selector.selected == ["novo"]
-    assert len(home_view_obj.edition_selector.segments) == 2
-    assert home_view_obj.edition_selector.segments[0].value == "novo"
-    assert home_view_obj.edition_selector.segments[1].value == "antigo"
+    # 1. Verifica que edition_selector foi removido da HomeView
+    assert not hasattr(home_view_obj, "edition_selector")
 
-    # 2. Testa alternância via evento disparado no SegmentedButton
-    mock_event = MagicMock()
-    mock_event.control.selected = ["antigo"]
-    await home_view_obj._on_edition_select(mock_event)
-    mock_page.push_route.assert_called_once_with("/antigo")
+    # 2. Verifica presença, expansão e alinhamento responsivo da barra de abas (filter_bar)
+    assert home_view_obj.filter_bar is not None
+    assert isinstance(home_view_obj.filter_bar, ft.SegmentedButton)
+    assert home_view_obj.filter_bar.expand is True
+
+    # Verifica se filter_bar está contido em um ft.Row para preencher a largura da tela
+    safe_area = view.controls[0]
+    main_column = safe_area.content.content
+    filter_bar_container = main_column.controls[2]  # controls: search_row, filter_banner, filter_bar_row, list
+    assert isinstance(filter_bar_container, ft.Container)
+    assert isinstance(filter_bar_container.content, ft.Row)
+    assert home_view_obj.filter_bar in filter_bar_container.content.controls
 
     # 3. Testa botão de retorno da AppBar para a raiz "/"
     assert view.appbar.leading is not None
@@ -589,12 +591,10 @@ async def test_home_view_switch_edition_in_place(in_memory_db):
 
     await home_view_obj.switch_edition("antigo")
     assert home_view_obj.edition == "antigo"
-    assert home_view_obj.edition_selector.selected == ["antigo"]
     assert "Hinário Tradicional" in mock_page.title
 
     await home_view_obj.switch_edition("novo")
     assert home_view_obj.edition == "novo"
-    assert home_view_obj.edition_selector.selected == ["novo"]
     assert "Hinário Novo" in mock_page.title
 
 

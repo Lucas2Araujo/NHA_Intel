@@ -422,6 +422,26 @@ def test_build_bible_version_button_and_update():
     assert "ARA  ✓" not in btn.items[0].content
 
 
+def test_build_bible_version_button_simplified_mode_disabled():
+    mock_repo = MagicMock(spec=BibliaRepository)
+    mock_repo.get_available_versions.return_value = ["ARA"]
+    mock_repo.has_installed_bibles.return_value = False
+
+    btn = build_bible_version_button(
+        biblia_repository=mock_repo,
+        current_version="ARA",
+        on_version_selected=lambda ver: None,
+    )
+    assert isinstance(btn, ft.PopupMenuButton)
+    assert btn.visible is False
+    assert btn.disabled is True
+
+    # Teste de atualização mantendo desativado/oculto
+    update_bible_version_button(btn, "ARA", mock_repo, lambda ver: None)
+    assert btn.visible is False
+    assert btn.disabled is True
+
+
 @pytest.mark.asyncio
 async def test_biblia_view_plan_b_full_screen_flow():
     db_conn = DatabaseConnection(db_path=":memory:", read_only=False)

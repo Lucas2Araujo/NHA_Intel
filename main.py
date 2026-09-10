@@ -330,6 +330,17 @@ async def _check_updates_background(page: ft.Page, updater_service: UpdaterServi
         pass
 
 
+@dataclass
+class AppViews:
+    """Encapsula as instâncias de visualizações principais da aplicação."""
+    selecao_view: SelecaoView
+    home_novo: HinosView
+    home_antigo: HinosView
+    agente_view: AgenteView
+    downloads_view: DownloadsView
+    biblia_view: BibliaView
+
+
 class AppRouter:
     """Controlador de rotas, histórico de navegação e ciclo de vida de conexões da aplicação."""
 
@@ -337,12 +348,7 @@ class AppRouter:
         self,
         page: ft.Page,
         connections: tuple[DatabaseConnection, ...],
-        selecao_view: SelecaoView,
-        home_novo: HinosView,
-        home_antigo: HinosView,
-        agente_view: AgenteView,
-        downloads_view: DownloadsView,
-        biblia_view: BibliaView,
+        views: AppViews,
         content_manager: ContentManager,
         media_service: MediaService,
         theme_service: ThemeService,
@@ -353,12 +359,13 @@ class AppRouter:
     ):
         self.page = page
         self.connections = connections
-        self.selecao_view = selecao_view
-        self.home_novo = home_novo
-        self.home_antigo = home_antigo
-        self.agente_view = agente_view
-        self.downloads_view = downloads_view
-        self.biblia_view = biblia_view
+        self.views = views
+        self.selecao_view = views.selecao_view
+        self.home_novo = views.home_novo
+        self.home_antigo = views.home_antigo
+        self.agente_view = views.agente_view
+        self.downloads_view = views.downloads_view
+        self.biblia_view = views.biblia_view
         self.content_manager = content_manager
         self.media_service = media_service
         self.theme_service = theme_service
@@ -513,7 +520,7 @@ class AppRouter:
         else:
             await self.page.push_route("/")
 
-    async def on_disconnect(self, e=None) -> None:
+    async def on_disconnect(self, _e=None) -> None:
         """Encerra graciosamente todas as conexões SQLite ativas."""
         for conn in self.connections:
             try:
@@ -620,6 +627,15 @@ async def main(page: ft.Page):
         antigo_hino_repo=antigo_hino_repo,
     )
 
+    views = AppViews(
+        selecao_view=selecao_view_instance,
+        home_novo=home_novo_instance,
+        home_antigo=home_antigo_instance,
+        agente_view=agente_view_instance,
+        downloads_view=downloads_view_instance,
+        biblia_view=biblia_view_instance,
+    )
+
     router = AppRouter(
         page=page,
         connections=(
@@ -628,12 +644,7 @@ async def main(page: ft.Page):
             biblia_connection,
             comparativo_connection,
         ),
-        selecao_view=selecao_view_instance,
-        home_novo=home_novo_instance,
-        home_antigo=home_antigo_instance,
-        agente_view=agente_view_instance,
-        downloads_view=downloads_view_instance,
-        biblia_view=biblia_view_instance,
+        views=views,
         content_manager=content_manager,
         media_service=media_service,
         theme_service=theme_service,

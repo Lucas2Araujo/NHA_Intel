@@ -32,15 +32,20 @@ BIBLE_MODULE_IDS: set[str] = {
     "ARA",
     "ARC",
     "AS21",
+    "BBE",
+    "BKJ",
     "JFAA",
     "KJA",
     "KJF",
+    "KJV",
+    "MSGF",
     "NAA",
     "NBV",
     "NTLH",
     "NVI",
     "NVT",
     "TB",
+    "VFL",
 }
 
 

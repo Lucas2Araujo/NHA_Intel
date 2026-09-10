@@ -1,7 +1,8 @@
 import asyncio
 from dataclasses import dataclass
+import inspect
 import json
-from typing import Any, Callable
+from typing import Any, Callable, cast
 
 import flet as ft
 
@@ -33,7 +34,7 @@ class ContextoHino:
 
 
 if not hasattr(ft, "ActionChip"):
-    ft.ActionChip = ft.Chip
+    setattr(ft, "ActionChip", ft.Chip)
 
 
 def make_hymn_context_bar(hino, on_select_ref) -> ft.Container:
@@ -204,6 +205,14 @@ def build_bible_version_button(
         for v in versoes
     ]
 
+    is_amoled = bool(theme_service and getattr(theme_service, "is_amoled", False))
+    btn_bgcolor = ft.Colors.BLACK if is_amoled else ft.Colors.SURFACE_CONTAINER_HIGH
+
+    has_installed = getattr(biblia_repository, "has_installed_bibles", None)
+    is_simplified = (
+        has_installed() is False if callable(has_installed) else False
+    ) or len(versoes) == 0
+
     button = ft.PopupMenuButton(
         content=ft.Container(
             content=ft.Row(
@@ -223,11 +232,13 @@ def build_bible_version_button(
             margin=ft.Margin.symmetric(horizontal=4),
             border_radius=16,
             border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
-            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGH,
+            bgcolor=btn_bgcolor,
             tooltip=tooltip,
         ),
         items=items,
         tooltip=tooltip,
+        visible=not is_simplified,
+        disabled=is_simplified,
     )
     return button
 
@@ -253,6 +264,14 @@ def update_bible_version_button(
                 asyncio.create_task(res)
 
         versoes = biblia_repository.get_available_versions()
+        has_installed = getattr(biblia_repository, "has_installed_bibles", None)
+        is_simplified = (
+            has_installed() is False if callable(has_installed) else False
+        ) or len(versoes) == 0
+
+        btn.visible = not is_simplified
+        btn.disabled = is_simplified
+
         btn.items = [
             ft.PopupMenuItem(
                 f"{v}  ✓" if v == new_version else v,
@@ -485,6 +504,20 @@ class BibliaView:
                     pass
                 self._show_marcadores_dialog()
 
+    async def _copy_to_clipboard(self, text: str) -> None:
+        """Copia texto para a área de transferência com suporte seguro e retrocompatível."""
+        try:
+            await ft.Clipboard().set(text)
+        except Exception:
+            pass
+        if self.page:
+            try:
+                set_cb = getattr(self.page, "set_clipboard", None)
+                if callable(set_cb):
+                    set_cb(text)
+            except Exception:
+                pass
+
     async def _copiar_versiculo(self, versiculo_num: int, texto: str) -> None:
         """Copia um versículo específico incluindo a versão da Bíblia utilizada."""
         book_name = self._get_current_book_name()
@@ -494,34 +527,18 @@ class BibliaView:
             verses=[(versiculo_num, texto)],
             version=self.selected_version,
         )
-        try:
-            await ft.Clipboard().set(texto_copia)
-        except Exception:
-            pass
-        if self.page:
-            try:
-                self.page.set_clipboard(texto_copia)
-            except Exception:
-                pass
+        await self._copy_to_clipboard(texto_copia)
         self._show_snackbar(
             f"{book_name} {self.current_chapter}:{versiculo_num} ({self.selected_version}) copiado!"
         )
 
-    async def _copiar_capitulo(self, e=None) -> None:
+    async def _copiar_capitulo(self, _e=None) -> None:
         """Copia todo o capítulo atual com a versão da Bíblia utilizada."""
         if not self.current_passagem or not self.current_passagem.versiculos:
             return
         book_name = self._get_current_book_name()
         texto_copia = f'"{self.current_passagem.texto_formatado}"\n— {book_name} {self.current_chapter} ({self.selected_version})'
-        try:
-            await ft.Clipboard().set(texto_copia)
-        except Exception:
-            pass
-        if self.page:
-            try:
-                self.page.set_clipboard(texto_copia)
-            except Exception:
-                pass
+        await self._copy_to_clipboard(texto_copia)
         self._show_snackbar(
             f"Capítulo {book_name} {self.current_chapter} ({self.selected_version}) copiado!"
         )
@@ -570,7 +587,7 @@ class BibliaView:
         if self.is_selection_mode:
             self._toggle_verse_selection(v_num)
 
-    def _on_verse_long_press(self, v_num: int, v_text: str = "") -> None:
+    def _on_verse_long_press(self, v_num: int, _v_text: str = "") -> None:
         """Manipula o toque longo ou clique com botão direito no versículo."""
         if not self.is_selection_mode:
             self._enter_selection_mode(v_num)
@@ -629,15 +646,7 @@ class BibliaView:
             verses=selected_items,
             version=self.selected_version,
         )
-        try:
-            await ft.Clipboard().set(formatted_text)
-        except Exception:
-            pass
-        if self.page:
-            try:
-                self.page.set_clipboard(formatted_text)
-            except Exception:
-                pass
+        await self._copy_to_clipboard(formatted_text)
         count = len(selected_items)
         self._show_snackbar(f"{count} versículo(s) copiado(s)!")
         self._exit_selection_mode()
@@ -720,6 +729,117 @@ class BibliaView:
             self.current_book_id, self.current_chapter, v_num
         )
 
+    def _build_comparador_card(
+        self,
+        item: dict[str, Any],
+        on_copiar: Callable[[dict[str, Any]], Any],
+        on_ler: Callable[[str], Any],
+    ) -> ft.Control:
+        """Constrói o card comparativo para uma versão específica da Bíblia."""
+        is_active = item.get("is_active", False)
+        ver = item["versao"]
+        nome_ver = item["nome_versao"]
+        txt = item["texto"]
+
+        badge_controls: list[ft.Control] = [
+            ft.Container(
+                content=ft.Text(
+                    ver,
+                    size=11,
+                    weight=ft.FontWeight.BOLD,
+                    color=(
+                        ft.Colors.ON_PRIMARY_CONTAINER
+                        if is_active
+                        else ft.Colors.ON_SURFACE_VARIANT
+                    ),
+                ),
+                bgcolor=(
+                    ft.Colors.PRIMARY_CONTAINER
+                    if is_active
+                    else ft.Colors.SURFACE_CONTAINER_HIGHEST
+                ),
+                padding=ft.Padding.symmetric(horizontal=8, vertical=3),
+                border_radius=6,
+            ),
+            ft.Text(
+                nome_ver,
+                size=13,
+                weight=ft.FontWeight.W_500,
+                color=ft.Colors.ON_SURFACE,
+                overflow=ft.TextOverflow.ELLIPSIS,
+            ),
+        ]
+        if is_active:
+            badge_controls.append(
+                ft.Container(
+                    content=ft.Text(
+                        "Em Leitura",
+                        size=10,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.ON_SECONDARY_CONTAINER,
+                    ),
+                    bgcolor=ft.Colors.SECONDARY_CONTAINER,
+                    padding=ft.Padding.symmetric(horizontal=6, vertical=2),
+                    border_radius=4,
+                )
+            )
+
+        actions_row_controls: list[ft.Control] = [
+            ft.TextButton(
+                "Copiar",
+                icon=ft.Icons.CONTENT_COPY,
+                style=ft.ButtonStyle(
+                    padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                    text_style=ft.TextStyle(size=12),
+                ),
+                on_click=lambda e, it=item: asyncio.create_task(on_copiar(it)),
+            )
+        ]
+        if not is_active:
+            actions_row_controls.append(
+                ft.TextButton(
+                    "Ler nesta versão",
+                    icon=ft.Icons.MENU_BOOK,
+                    style=ft.ButtonStyle(
+                        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
+                        text_style=ft.TextStyle(size=12),
+                    ),
+                    on_click=lambda e, v=ver: asyncio.create_task(on_ler(v)),
+                )
+            )
+
+        return ft.Container(
+            content=ft.Column(
+                controls=[
+                    ft.Row(
+                        controls=badge_controls,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                        spacing=8,
+                    ),
+                    ft.Text(
+                        txt,
+                        size=self.font_size,
+                        font_family=self.font_family,
+                        color=ft.Colors.ON_SURFACE,
+                        selectable=True,
+                    ),
+                    ft.Row(
+                        controls=actions_row_controls,
+                        alignment=ft.MainAxisAlignment.END,
+                        spacing=4,
+                    ),
+                ],
+                spacing=8,
+            ),
+            bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+            border_radius=12,
+            padding=12,
+            border=ft.Border.all(
+                1,
+                ft.Colors.PRIMARY if is_active else ft.Colors.OUTLINE_VARIANT,
+            ),
+        )
+
     async def _abrir_comparador_versoes(
         self,
         book_id: int | None = None,
@@ -746,23 +866,17 @@ class BibliaView:
 
         ref_title = f"{b_name} {ch}:{vn}"
 
-        async def _copiar_todas_as_versoes(e):
+        async def _copiar_todas_as_versoes(_e=None):
             linhas: list[str] = [f"{ref_title} em diferentes traduções:\n"]
             for item in comparacoes:
                 linhas.append(f"[{item['versao']}] {item['texto']}")
             texto_consolidado = "\n\n".join(linhas)
-            try:
-                await ft.Clipboard().set(texto_consolidado)
-            except Exception:
-                pass
+            await self._copy_to_clipboard(texto_consolidado)
             self._show_snackbar("Comparações copiadas para a área de transferência!")
 
         async def _copiar_versao_individual(item: dict[str, Any]):
             texto_ind = f'"{item["texto"]}"\n— {ref_title} ({item["versao"]})'
-            try:
-                await ft.Clipboard().set(texto_ind)
-            except Exception:
-                pass
+            await self._copy_to_clipboard(texto_ind)
             self._show_snackbar(f"Versículo na versão {item['versao']} copiado!")
 
         async def _ler_nesta_versao(nova_versao: str):
@@ -773,114 +887,14 @@ class BibliaView:
                     pass
             await self._select_version(nova_versao)
 
-        version_cards: list[ft.Control] = []
-        for item in comparacoes:
-            is_active = item.get("is_active", False)
-            ver = item["versao"]
-            nome_ver = item["nome_versao"]
-            txt = item["texto"]
-
-            badge_controls: list[ft.Control] = [
-                ft.Container(
-                    content=ft.Text(
-                        ver,
-                        size=11,
-                        weight=ft.FontWeight.BOLD,
-                        color=ft.Colors.ON_PRIMARY_CONTAINER
-                        if is_active
-                        else ft.Colors.ON_SURFACE_VARIANT,
-                    ),
-                    bgcolor=ft.Colors.PRIMARY_CONTAINER
-                    if is_active
-                    else ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    padding=ft.Padding.symmetric(horizontal=8, vertical=3),
-                    border_radius=6,
-                ),
-                ft.Text(
-                    nome_ver,
-                    size=13,
-                    weight=ft.FontWeight.W_500,
-                    color=ft.Colors.ON_SURFACE,
-                    overflow=ft.TextOverflow.ELLIPSIS,
-                ),
-            ]
-            if is_active:
-                badge_controls.append(
-                    ft.Container(
-                        content=ft.Text(
-                            "Em Leitura",
-                            size=10,
-                            weight=ft.FontWeight.BOLD,
-                            color=ft.Colors.ON_SECONDARY_CONTAINER,
-                        ),
-                        bgcolor=ft.Colors.SECONDARY_CONTAINER,
-                        padding=ft.Padding.symmetric(horizontal=6, vertical=2),
-                        border_radius=4,
-                    )
-                )
-
-            actions_row_controls: list[ft.Control] = [
-                ft.TextButton(
-                    "Copiar",
-                    icon=ft.Icons.CONTENT_COPY,
-                    style=ft.ButtonStyle(
-                        padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-                        text_style=ft.TextStyle(size=12),
-                    ),
-                    on_click=lambda e, it=item: asyncio.create_task(
-                        _copiar_versao_individual(it)
-                    ),
-                )
-            ]
-            if not is_active:
-                actions_row_controls.append(
-                    ft.TextButton(
-                        "Ler nesta versão",
-                        icon=ft.Icons.MENU_BOOK,
-                        style=ft.ButtonStyle(
-                            padding=ft.Padding.symmetric(horizontal=8, vertical=4),
-                            text_style=ft.TextStyle(size=12),
-                        ),
-                        on_click=lambda e, v=ver: asyncio.create_task(
-                            _ler_nesta_versao(v)
-                        ),
-                    )
-                )
-
-            card = ft.Container(
-                content=ft.Column(
-                    controls=[
-                        ft.Row(
-                            controls=badge_controls,
-                            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                            spacing=8,
-                        ),
-                        ft.Text(
-                            txt,
-                            size=self.font_size,
-                            font_family=self.font_family,
-                            color=ft.Colors.ON_SURFACE,
-                            selectable=True,
-                        ),
-                        ft.Row(
-                            controls=actions_row_controls,
-                            alignment=ft.MainAxisAlignment.END,
-                            spacing=4,
-                        ),
-                    ],
-                    spacing=8,
-                ),
-                bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
-                border_radius=12,
-                padding=12,
-                border=ft.Border.all(
-                    1,
-                    ft.Colors.PRIMARY
-                    if is_active
-                    else ft.Colors.OUTLINE_VARIANT,
-                ),
+        version_cards = [
+            self._build_comparador_card(
+                item,
+                on_copiar=_copiar_versao_individual,
+                on_ler=_ler_nesta_versao,
             )
-            version_cards.append(card)
+            for item in comparacoes
+        ]
 
         bs = ft.BottomSheet(
             scrollable=True,
@@ -1165,7 +1179,7 @@ class BibliaView:
                 self.view.controls = [
                     ft.SafeArea(
                         maintain_bottom_view_padding=True,
-                        content=self.verses_list,
+                        content=self.verses_list or ft.Container(),
                         expand=True,
                     )
                 ]
@@ -1229,7 +1243,10 @@ class BibliaView:
 
         if self.version_btn and hasattr(self.version_btn, "content"):
             try:
-                self.version_btn.content.content.controls[0].value = self.selected_version
+                btn_content = getattr(self.version_btn, "content", None)
+                if isinstance(btn_content, ft.Container) and isinstance(btn_content.content, ft.Row):
+                    first_ctrl = btn_content.content.controls[0]
+                    setattr(first_ctrl, "value", self.selected_version)
             except Exception:
                 pass
 
@@ -1398,14 +1415,18 @@ class BibliaView:
         footer_nav = ft.Container(
             content=ft.Row(
                 controls=[
-                    self.prev_chip_btn,
-                    ft.Text(
-                        f"{self.current_chapter} / {self.total_chapters}",
-                        size=12,
-                        color=ft.Colors.GREY_400,
-                        weight=ft.FontWeight.BOLD,
-                    ),
-                    self.next_chip_btn,
+                    c
+                    for c in [
+                        self.prev_chip_btn,
+                        ft.Text(
+                            f"{self.current_chapter} / {self.total_chapters}",
+                            size=12,
+                            color=ft.Colors.GREY_400,
+                            weight=ft.FontWeight.BOLD,
+                        ),
+                        self.next_chip_btn,
+                    ]
+                    if c is not None
                 ],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -1698,7 +1719,7 @@ class BibliaView:
             self.selected_testament = "AT" if self.current_book_id <= 39 else "NT"
 
         def _on_testament_change(ev):
-            val = list(ev.control.selected)[0]
+            val = next(iter(ev.control.selected))
             self.selected_testament = val
             if self.books_grid_container:
                 self.books_grid_container.content = self._build_books_grid_view()
@@ -1866,14 +1887,14 @@ class BibliaView:
             self.view.controls = [
                 ft.SafeArea(
                     maintain_bottom_view_padding=True,
-                    content=self.verses_list,
+                    content=self.verses_list or ft.Container(),
                     expand=True,
                 )
             ]
         if self.page:
             self.page.update()
 
-    def _abrir_pesquisa(self, e=None) -> None:
+    def _abrir_pesquisa(self, _e=None) -> None:
         """Abre a tela de pesquisa da Bíblia."""
         self.active_screen = "pesquisa"
         self._render_active_screen()
@@ -2117,11 +2138,13 @@ class BibliaView:
 
     async def _executar_pesquisa(self, query: str | None = None) -> None:
         """Executa a pesquisa de versículos através do repositório."""
-        q = (
-            query
-            if query is not None
-            else (self.search_input.value if self.search_input else self.search_query)
-        ).strip()
+        if query is not None:
+            raw_q = query
+        elif self.search_input:
+            raw_q = self.search_input.value or ""
+        else:
+            raw_q = self.search_query or ""
+        q = raw_q.strip()
         self.search_query = q
         if not q:
             self.search_results = []
@@ -2133,11 +2156,11 @@ class BibliaView:
         self._render_active_screen()
 
         book_id = self.current_book_id if self.search_scope == "livro" else None
-        testamento = (
-            1
-            if self.search_scope == "at"
-            else (2 if self.search_scope == "nt" else None)
-        )
+        testamento = None
+        if self.search_scope == "at":
+            testamento = 1
+        elif self.search_scope == "nt":
+            testamento = 2
 
         results = await self.biblia_repository.pesquisar_texto(
             termo=q,
@@ -2151,7 +2174,7 @@ class BibliaView:
         self._render_active_screen()
 
     async def _navegar_para_resultado_pesquisa(
-        self, book_id: int, chapter: int, verse_num: int
+        self, book_id: int, chapter: int, _verse_num: int = 1
     ) -> None:
         """Navega para o capítulo e versículo selecionado nos resultados de busca."""
         self.current_book_id = book_id
@@ -2336,13 +2359,13 @@ class BibliaView:
             ensure_page_dialogs(p)
             p.show_dialog(bs)
 
-    def _zoom_in(self, e=None) -> None:
+    def _zoom_in(self, _e=None) -> None:
         if self.font_size < 32:
             self.font_size += 2
             self._render_verses()
             asyncio.create_task(self._save_preferences())
 
-    def _zoom_out(self, e=None) -> None:
+    def _zoom_out(self, _e=None) -> None:
         if self.font_size > 12:
             self.font_size -= 2
             self._render_verses()
@@ -2352,7 +2375,7 @@ class BibliaView:
         """Resolve uma referência textual de livro ou código para o ID canônico (1 a 66)."""
         if isinstance(livro, int):
             return livro
-        s = str(livro).strip()
+        s = livro.strip()
         if s.isdigit():
             return int(s)
         parsed = self.biblia_repository.parse_referencia(f"{s} 1")
@@ -2364,25 +2387,46 @@ class BibliaView:
                 return b["id"]
         return 1
 
-    async def _load_hymn_context(self, hino_id: int) -> ContextoHino | None:
-        """Carrega dados do hino e seus textos bíblicos correlatos para a barra de navegação rápida."""
+    async def _fetch_hino_and_metadata(self, hino_id: int):
+        """Busca o hino e seus metadados nos repositórios disponíveis."""
         hino = None
         metadados = {}
-        if self.hino_repository:
+        for repo in (self.hino_repository, self.antigo_hino_repo):
+            if not repo or hino:
+                continue
             try:
-                hino = await self.hino_repository.get_by_id(hino_id)
-                if hino:
-                    metadados = await self.hino_repository.get_metadados_relacionados(hino_id)
+                h = await repo.get_by_id(hino_id)
+                if h:
+                    hino = h
+                    metadados = await repo.get_metadados_relacionados(hino_id)
             except Exception:
                 pass
-        if not hino and self.antigo_hino_repo:
-            try:
-                hino = await self.antigo_hino_repo.get_by_id(hino_id)
-                if hino:
-                    metadados = await self.antigo_hino_repo.get_metadados_relacionados(hino_id)
-            except Exception:
-                pass
+        return hino, metadados
 
+    def _parse_related_reference(self, raw_ref: str) -> ReferenciaRelacionada:
+        """Converte uma string de referência bíblica em um objeto ReferenciaRelacionada."""
+        parsed = self.biblia_repository.parse_referencia(raw_ref)
+        if parsed:
+            book_name = parsed.get("book_name") or str(parsed.get("book_id", 1))
+            cap = parsed.get("chapter", 1)
+            verses = parsed.get("verses")
+            ver = verses[0] if verses else 1
+            return ReferenciaRelacionada(
+                texto_formatado=raw_ref,
+                livro=book_name,
+                capitulo=cap,
+                versiculo=ver,
+            )
+        return ReferenciaRelacionada(
+            texto_formatado=raw_ref,
+            livro=raw_ref,
+            capitulo=1,
+            versiculo=1,
+        )
+
+    async def _load_hymn_context(self, hino_id: int) -> ContextoHino | None:
+        """Carrega dados do hino e seus textos bíblicos correlatos para a barra de navegação rápida."""
+        hino, metadados = await self._fetch_hino_and_metadata(hino_id)
         if not hino:
             return None
 
@@ -2393,32 +2437,7 @@ class BibliaView:
             if tb and tb.strip() and tb.strip() not in raw_refs:
                 raw_refs.append(tb.strip())
 
-        refs: list[ReferenciaRelacionada] = []
-        for r in raw_refs:
-            parsed = self.biblia_repository.parse_referencia(r)
-            if parsed:
-                book_name = parsed.get("book_name") or str(parsed.get("book_id", 1))
-                cap = parsed.get("chapter", 1)
-                verses = parsed.get("verses")
-                ver = verses[0] if verses else 1
-                refs.append(
-                    ReferenciaRelacionada(
-                        texto_formatado=r,
-                        livro=book_name,
-                        capitulo=cap,
-                        versiculo=ver,
-                    )
-                )
-            else:
-                refs.append(
-                    ReferenciaRelacionada(
-                        texto_formatado=r,
-                        livro=r,
-                        capitulo=1,
-                        versiculo=1,
-                    )
-                )
-
+        refs = [self._parse_related_reference(r) for r in raw_refs]
         return ContextoHino(
             numero=hino.numero,
             referencias_relacionadas=refs,
@@ -2446,69 +2465,33 @@ class BibliaView:
             self.current_book_id, self.current_chapter, versao=self.selected_version
         )
 
-    async def build(
+    def _resolve_target_coordinates(
         self,
-        page: ft.Page,
-        initial_book_id: int | None = None,
-        initial_chapter: int | None = None,
-        initial_version: str | None = None,
-        livro: str | int | None = None,
-        capitulo: int | None = None,
-        versiculo_foco: int | None = None,
-        hino_origem_id: int | None = None,
-    ) -> ft.View:
-        self.page = page
-
-        if self.theme_service:
-            self.theme_service.apply_theme(page, edition="novo")
-
+        initial_book_id: int | None,
+        initial_chapter: int | None,
+        livro: str | int | None,
+        capitulo: int | None,
+    ) -> tuple[int | None, int | None]:
+        """Calcula o livro e capítulo alvo a partir dos argumentos fornecidos."""
         target_book_id = initial_book_id
         if livro is not None:
             target_book_id = self._resolve_book_id(livro)
-
         target_chapter = initial_chapter
         if capitulo is not None:
             target_chapter = capitulo
+        return target_book_id, target_chapter
 
-        # Restaura sessão do SQLite caso não seja navegação explícita por rota
-        restore_session = (target_book_id is None and target_chapter is None)
-        await self._load_preferences_and_bookmarks(restore_session=restore_session)
-
-        if target_book_id is not None:
-            self.current_book_id = target_book_id
-        if target_chapter is not None:
-            self.current_chapter = target_chapter
-        if initial_version:
-            self.selected_version = initial_version.strip().upper()
-            self.biblia_repository.set_version(self.selected_version)
-
-        self.versiculo_foco = versiculo_foco
-        self.hino_origem_id = hino_origem_id
-
-        # Carrega os livros da Bíblia
-        await self._load_books()
-
-        # Constrói barra contextual se hino de origem estiver presente
-        if self.hino_origem_id:
-            hino_ctx = await self._load_hymn_context(self.hino_origem_id)
-            if hino_ctx and hino_ctx.referencias_relacionadas:
-                self.hymn_context_bar = make_hymn_context_bar(
-                    hino_ctx,
-                    self._on_context_ref_selected,
-                )
-            else:
-                self.hymn_context_bar = None
-        else:
-            self.hymn_context_bar = None
-
-        # Botão central com o Livro e Capítulo no AppBar
+    def _init_view_controls(self) -> None:
+        """Inicializa os controles de visualização e navegação da tela da Bíblia."""
         self.appbar_title_btn = ft.TextButton(
             f"{self._get_current_book_name()} {self.current_chapter}",
             icon=ft.Icons.KEYBOARD_ARROW_DOWN,
             style=ft.ButtonStyle(
-                color=ft.Colors.WHITE
-                if self.theme_service and self.theme_service.is_amoled
-                else None,
+                color=(
+                    ft.Colors.WHITE
+                    if self.theme_service and self.theme_service.is_amoled
+                    else None
+                ),
                 text_style=ft.TextStyle(size=16, weight=ft.FontWeight.BOLD),
             ),
             tooltip="Selecionar Livro e Capítulo",
@@ -2565,38 +2548,13 @@ class BibliaView:
             padding=ft.Padding.symmetric(horizontal=16, vertical=8),
         )
 
-        # Inicia o carregamento assíncrono do capítulo inicial
-        self._load_task = asyncio.create_task(
-            self._carregar_capitulo(
-                self.current_book_id, self.current_chapter, versao=self.selected_version
-            )
-        )
-
-        async def _go_back(e):
-            try:
-                if hasattr(page, "pop_dialog") and page.pop_dialog():
-                    return
-            except Exception:
-                pass
-
-            if hasattr(page, "on_view_pop") and page.on_view_pop:
-                await page.on_view_pop(None)
-            elif len(page.views) > 1:
-                page.views.pop()
-                top_view = page.views[-1]
-                page.route = top_view.route or "/"
-                if hasattr(page, "on_route_change") and page.on_route_change:
-                    await page.on_route_change(None)
-                else:
-                    await page.push_route(page.route)
-            else:
-                await page.push_route("/")
-
-        self.normal_appbar = ft.AppBar(
+    def _build_normal_appbar(self, page: ft.Page, go_back_callback: Any) -> ft.AppBar:
+        """Constrói a AppBar padrão da tela de leitura bíblica."""
+        return ft.AppBar(
             leading=ft.IconButton(
                 ft.Icons.ARROW_BACK,
                 tooltip="Voltar",
-                on_click=_go_back,
+                on_click=go_back_callback,
             ),
             title=self.appbar_title_btn,
             center_title=True,
@@ -2648,6 +2606,88 @@ class BibliaView:
                 ),
             ],
         )
+
+    async def build(
+        self,
+        page: ft.Page,
+        initial_book_id: int | None = None,
+        initial_chapter: int | None = None,
+        initial_version: str | None = None,
+        livro: str | int | None = None,
+        capitulo: int | None = None,
+        versiculo_foco: int | None = None,
+        hino_origem_id: int | None = None,
+    ) -> ft.View:
+        self.page = page
+
+        if self.theme_service:
+            self.theme_service.apply_theme(page, edition="novo")
+
+        target_book_id, target_chapter = self._resolve_target_coordinates(
+            initial_book_id, initial_chapter, livro, capitulo
+        )
+
+        restore_session = (target_book_id is None and target_chapter is None)
+        await self._load_preferences_and_bookmarks(restore_session=restore_session)
+
+        if target_book_id is not None:
+            self.current_book_id = target_book_id
+        if target_chapter is not None:
+            self.current_chapter = target_chapter
+        if initial_version:
+            self.selected_version = initial_version.strip().upper()
+            self.biblia_repository.set_version(self.selected_version)
+
+        self.versiculo_foco = versiculo_foco
+        self.hino_origem_id = hino_origem_id
+
+        await self._load_books()
+
+        if self.hino_origem_id:
+            hino_ctx = await self._load_hymn_context(self.hino_origem_id)
+            if hino_ctx and hino_ctx.referencias_relacionadas:
+                self.hymn_context_bar = make_hymn_context_bar(
+                    hino_ctx,
+                    self._on_context_ref_selected,
+                )
+            else:
+                self.hymn_context_bar = None
+        else:
+            self.hymn_context_bar = None
+
+        self._init_view_controls()
+
+        self._load_task = asyncio.create_task(
+            self._carregar_capitulo(
+                self.current_book_id, self.current_chapter, versao=self.selected_version
+            )
+        )
+
+        async def _go_back(e):
+            try:
+                if hasattr(page, "pop_dialog") and page.pop_dialog():
+                    return
+            except Exception:
+                pass
+
+            if hasattr(page, "on_view_pop") and page.on_view_pop:
+                res = cast(Any, page.on_view_pop)(None)
+                if inspect.iscoroutine(res):
+                    await res
+            elif len(page.views) > 1:
+                page.views.pop()
+                top_view = page.views[-1]
+                page.route = top_view.route or "/"
+                if hasattr(page, "on_route_change") and page.on_route_change:
+                    res = cast(Any, page.on_route_change)(None)
+                    if inspect.iscoroutine(res):
+                        await res
+                else:
+                    await page.push_route(page.route)
+            else:
+                await page.push_route("/")
+
+        self.normal_appbar = self._build_normal_appbar(page, _go_back)
 
         self.active_screen = "leitor"
         controls_col: list[ft.Control] = []

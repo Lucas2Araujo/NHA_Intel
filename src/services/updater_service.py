@@ -38,7 +38,7 @@ async def _run_sync_or_thread(func, *args, **kwargs):
     """Executa a função em thread ou síncrona se o ambiente não suportar threads (WebAssembly/Pyodide)."""
     try:
         return await asyncio.to_thread(func, *args, **kwargs)
-    except (RuntimeError, NotImplementedError):
+    except RuntimeError:
         return func(*args, **kwargs)
 
 
@@ -63,6 +63,49 @@ class UpdaterService:
         # Cache em memória para mitigar rate-limit do GitHub (60 req/h sem token)
         self._cached_release_data: dict[str, Any] | None = None
         self._cache_timestamp: float = 0.0
+
+    @staticmethod
+    def is_android() -> bool:
+        """Informa se a aplicação está rodando sob o ecossistema Android."""
+        import sys
+
+        return bool(
+            os.environ.get("ANDROID_BOOTLOGO")
+            or os.environ.get("ANDROID_ROOT")
+            or os.environ.get("ANDROID_STORAGE")
+            or hasattr(sys, "getandroidapilevel")
+            or "android" in sys.platform.lower()
+        )
+
+    @staticmethod
+    def get_default_download_dir() -> Path:
+        """
+        Retorna o diretório preferencial para salvar os instaladores APK baixados.
+        No Android, tenta salvar na pasta pública de Downloads (/storage/emulated/0/Download ou /sdcard/Download)
+        para que o arquivo fique visível ao usuário e ao PackageInstaller nativo do sistema operacional.
+        Em desktop ou como fallback, utiliza o diretório temporário do sistema.
+        """
+        if UpdaterService.is_android():
+            candidate_paths = [
+                Path("/storage/emulated/0/Download"),
+                Path("/sdcard/Download"),
+                Path(os.environ.get("EXTERNAL_STORAGE", "/sdcard")) / "Download",
+            ]
+            for cp in candidate_paths:
+                try:
+                    cp.mkdir(parents=True, exist_ok=True)
+                    if os.access(cp, os.W_OK):
+                        return cp
+                except Exception:
+                    pass
+
+        # Fallback para Desktop ou quando a pasta pública não for acessível
+        temp_dir = Path(tempfile.gettempdir()) / "hinario_updates"
+        try:
+            temp_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return temp_dir
 
     @staticmethod
     def get_device_architecture() -> str:
@@ -138,6 +181,29 @@ class UpdaterService:
             return "Universal"
         return abi.upper()
 
+    @staticmethod
+    def _compute_abi_score(
+        target_abi: str,
+        is_arm64: bool,
+        is_armv7: bool,
+        is_x86_64: bool,
+        is_x86: bool,
+        is_universal: bool,
+    ) -> int:
+        priority_map = {
+            ABI_ARM64: [(is_arm64, 100), (is_universal, 60), (is_armv7, 30)],
+            ABI_ARMV7: [(is_armv7, 100), (is_universal, 60)],
+            ABI_X86_64: [(is_x86_64, 100), (is_universal, 60), (is_x86, 30)],
+            ABI_X86: [(is_x86, 100), (is_universal, 60)],
+        }
+        rules = priority_map.get(target_abi)
+        if rules is not None:
+            for condition, score in rules:
+                if condition:
+                    return score
+            return 0
+        return 50 if is_universal else 10
+
     @classmethod
     def select_best_apk_asset(
         cls, assets: list[dict[str, Any]], current_arch: str | None = None
@@ -166,7 +232,6 @@ class UpdaterService:
 
         def score_asset(asset: dict[str, Any]) -> int:
             name = asset.get("name", "").lower()
-            # Mapeamento de termos de busca por arquitetura
             is_arm64_asset = any(t in name for t in ("arm64", "aarch64", "armv8"))
             is_armv7_asset = any(t in name for t in ("armv7", "armeabi", "arm32")) or (
                 "arm" in name and not is_arm64_asset
@@ -182,42 +247,16 @@ class UpdaterService:
                 and not is_x86_asset
             )
 
-            if target_abi == ABI_ARM64:
-                if is_arm64_asset:
-                    return 100
-                elif is_universal:
-                    return 60
-                elif is_armv7_asset:
-                    return 30
-                return 0
+            return cls._compute_abi_score(
+                target_abi,
+                is_arm64_asset,
+                is_armv7_asset,
+                is_x86_64_asset,
+                is_x86_asset,
+                is_universal,
+            )
 
-            elif target_abi == ABI_ARMV7:
-                if is_armv7_asset:
-                    return 100
-                elif is_universal:
-                    return 60
-                return 0  # ARMv7 não roda ARM64 nem x86
-
-            elif target_abi == ABI_X86_64:
-                if is_x86_64_asset:
-                    return 100
-                elif is_universal:
-                    return 60
-                elif is_x86_asset:
-                    return 30
-                return 0
-
-            elif target_abi == ABI_X86:
-                if is_x86_asset:
-                    return 100
-                elif is_universal:
-                    return 60
-                return 0
-
-            return 50 if is_universal else 10
-
-        best_asset = max(apk_assets, key=score_asset)
-        return best_asset
+        return max(apk_assets, key=score_asset)
 
     @staticmethod
     def parse_version_tuple(version_str: str) -> tuple[int, ...]:
@@ -261,6 +300,31 @@ class UpdaterService:
         return sha256.hexdigest().lower()
 
     @staticmethod
+    def _find_sha256_in_checksums(asset_name: str, checksums_content: str) -> str | None:
+        for line in checksums_content.splitlines():
+            clean_line = line.strip()
+            if asset_name.lower() in clean_line.lower():
+                match = re.search(r"\b([a-f0-9]{64})\b", clean_line, re.IGNORECASE)
+                if match:
+                    return match.group(1).lower()
+        return None
+
+    @staticmethod
+    def _find_sha256_in_body(asset_name: str, release_body: str) -> str | None:
+        # Procura por menção direta ao arquivo e seu hash
+        pattern = rf"{re.escape(asset_name)}.*?\b([a-f0-9]{{64}})\b"
+        match = re.search(pattern, release_body, re.IGNORECASE | re.DOTALL)
+        if match:
+            return match.group(1).lower()
+        # Procura por padrão genérico "sha256: <hash>"
+        generic_match = re.search(
+            r"sha256\s*[:=]\s*([a-f0-9]{64})", release_body, re.IGNORECASE
+        )
+        if generic_match:
+            return generic_match.group(1).lower()
+        return None
+
+    @staticmethod
     def extract_expected_sha256(
         asset_name: str, release_body: str, checksums_content: str | None = None
     ) -> str | None:
@@ -271,28 +335,13 @@ class UpdaterService:
         if not asset_name:
             return None
 
-        # 1. Procura no arquivo de checksums (formato: "<hash>  <filename>" ou "<hash> *<filename>")
         if checksums_content:
-            for line in checksums_content.splitlines():
-                clean_line = line.strip()
-                if asset_name.lower() in clean_line.lower():
-                    match = re.search(r"\b([a-fA-F0-9]{64})\b", clean_line)
-                    if match:
-                        return match.group(1).lower()
+            found = UpdaterService._find_sha256_in_checksums(asset_name, checksums_content)
+            if found:
+                return found
 
-        # 2. Procura nas notas de lançamento (ex: "SHA256: <hash>" ou "<asset_name>: <hash>")
         if release_body:
-            # Procura por menção direta ao arquivo e seu hash
-            pattern = rf"{re.escape(asset_name)}.*?\b([a-fA-F0-9]{{64}})\b"
-            match = re.search(pattern, release_body, re.IGNORECASE | re.DOTALL)
-            if match:
-                return match.group(1).lower()
-            # Procura por padrão genérico "sha256: <hash>"
-            generic_match = re.search(
-                r"sha256\s*[:=]\s*([a-fA-F0-9]{64})", release_body, re.IGNORECASE
-            )
-            if generic_match:
-                return generic_match.group(1).lower()
+            return UpdaterService._find_sha256_in_body(asset_name, release_body)
 
         return None
 
@@ -323,6 +372,36 @@ class UpdaterService:
         with urllib.request.urlopen(req, timeout=self.timeout_seconds) as response:
             return response.read().decode("utf-8", errors="ignore")
 
+    async def _extract_checksums_content(self, assets: list[dict[str, Any]]) -> str | None:
+        checksum_extensions = (
+            "checksums.txt",
+            "sha256sums",
+            "sha256sums.txt",
+            ".sha256",
+            "hashes.txt",
+        )
+        for asset in assets:
+            name_low = asset.get("name", "").lower()
+            if any(name_low.endswith(ext) for ext in checksum_extensions):
+                chk_url = asset.get("browser_download_url")
+                if chk_url:
+                    try:
+                        return await _run_sync_or_thread(self._fetch_checksums_sync, chk_url)
+                    except Exception:
+                        return None
+        return None
+
+    @staticmethod
+    def _format_http_error(e: urllib.error.HTTPError) -> str:
+        if e.code == 403:
+            return (
+                "Limite de requisições da API do GitHub atingido (HTTP 403). "
+                "Tente novamente em alguns minutos ou acesse a página de releases."
+            )
+        if e.code == 404:
+            return "Nenhuma versão publicada encontrada no repositório (HTTP 404)."
+        return f"Erro no GitHub (HTTP {e.code}): {e.reason}"
+
     async def check_for_updates(
         self,
         current_version: str | None = None,
@@ -332,26 +411,6 @@ class UpdaterService:
         """
         Consulta a API do GitHub Releases para verificar se há uma nova versão disponível.
         Usa cache em memória para evitar atingir o limite de 60 req/hora do GitHub.
-
-        Args:
-            current_version: Versão atual do aplicativo (ex: '0.5.0').
-            force_refresh: Se True, ignora o cache em memória e faz nova requisição.
-            target_arch: Arquitetura alvo para seleção de APK (se None, detecta automaticamente).
-
-        Retorna:
-            dict com:
-                - update_available: bool
-                - latest_version: str
-                - current_version: str
-                - download_url: Optional[str] (URL do asset .apk ou link da release)
-                - release_notes: str (corpo das notas de lançamento)
-                - published_at: Optional[str]
-                - asset_name: Optional[str]
-                - asset_size: Optional[int]
-                - expected_sha256: Optional[str]
-                - detected_arch: str
-                - html_url: Optional[str]
-                - error: Optional[str]
         """
         cur_ver = current_version or APP_VERSION
         current_arch = target_arch or self.get_device_architecture()
@@ -377,49 +436,16 @@ class UpdaterService:
             body = data.get("body", "") or ""
             published_at = data.get("published_at")
             html_url = data.get("html_url")
-
             assets = data.get("assets", [])
 
             # 2. Seleciona o melhor APK correspondente à arquitetura do dispositivo
             best_apk = self.select_best_apk_asset(assets, current_arch)
-
-            download_url = None
-            asset_name = None
-            asset_size = None
-
-            if best_apk:
-                download_url = best_apk.get("browser_download_url")
-                asset_name = best_apk.get("name")
-                asset_size = best_apk.get("size")
-
-            # Se não houver asset APK publicado, usa o link direto da release no GitHub
-            if not download_url:
-                download_url = html_url
+            download_url = best_apk.get("browser_download_url") if best_apk else html_url
+            asset_name = best_apk.get("name") if best_apk else None
+            asset_size = best_apk.get("size") if best_apk else None
 
             # 3. Procura por arquivo de checksums entre os assets
-            checksums_content = None
-            for asset in assets:
-                name_low = asset.get("name", "").lower()
-                if any(
-                    name_low.endswith(ext)
-                    for ext in (
-                        "checksums.txt",
-                        "sha256sums",
-                        "sha256sums.txt",
-                        ".sha256",
-                        "hashes.txt",
-                    )
-                ):
-                    chk_url = asset.get("browser_download_url")
-                    if chk_url:
-                        try:
-                            checksums_content = await _run_sync_or_thread(
-                                self._fetch_checksums_sync, chk_url
-                            )
-                        except Exception:
-                            checksums_content = None
-                        break
-
+            checksums_content = await self._extract_checksums_content(assets)
             expected_sha256 = self.extract_expected_sha256(
                 asset_name or "", body, checksums_content
             )
@@ -442,18 +468,6 @@ class UpdaterService:
             }
 
         except urllib.error.HTTPError as e:
-            if e.code == 403:
-                error_msg = (
-                    "Limite de requisições da API do GitHub atingido (HTTP 403). "
-                    "Tente novamente em alguns minutos ou acesse a página de releases."
-                )
-            elif e.code == 404:
-                error_msg = (
-                    "Nenhuma versão publicada encontrada no repositório (HTTP 404)."
-                )
-            else:
-                error_msg = f"Erro no GitHub (HTTP {e.code}): {e.reason}"
-
             return {
                 "update_available": False,
                 "latest_version": cur_ver,
@@ -466,7 +480,7 @@ class UpdaterService:
                 "expected_sha256": None,
                 "detected_arch": current_arch,
                 "html_url": None,
-                "error": error_msg,
+                "error": self._format_http_error(e),
             }
         except Exception as e:
             return {
@@ -483,6 +497,52 @@ class UpdaterService:
                 "html_url": None,
                 "error": str(e),
             }
+
+    @staticmethod
+    def _stream_response_to_file(
+        response,
+        temp_file: Path,
+        total_size: int,
+        on_progress: Callable[[float, int, int], None] | None = None,
+    ) -> int:
+        downloaded = 0
+        chunk_size = 64 * 1024  # 64 KB por bloco
+        with open(temp_file, "wb") as f:
+            while True:
+                chunk = response.read(chunk_size)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if on_progress and total_size > 0:
+                    progress = min(1.0, downloaded / total_size)
+                    on_progress(progress, downloaded, total_size)
+        return downloaded
+
+    def _validate_download_integrity(
+        self,
+        temp_file: Path,
+        downloaded: int,
+        total_size: int,
+        expected_sha256: str | None = None,
+    ) -> None:
+        # 1. Validação de tamanho final (se fornecido)
+        if total_size > 0 and downloaded < total_size:
+            if temp_file.exists():
+                temp_file.unlink()
+            raise ValueError(
+                f"Download incompleto: recebidos {downloaded} bytes de {total_size} esperados."
+            )
+
+        # 2. Validação de Hash SHA-256 (se fornecido)
+        if expected_sha256:
+            actual_sha256 = self.calculate_sha256(temp_file)
+            if actual_sha256.lower() != expected_sha256.lower():
+                if temp_file.exists():
+                    temp_file.unlink()
+                raise ValueError(
+                    f"Falha de integridade SHA-256: obtido '{actual_sha256}', esperado '{expected_sha256}'."
+                )
 
     def _download_apk_sync(
         self,
@@ -507,38 +567,13 @@ class UpdaterService:
                     if total_size_header and total_size_header.isdigit()
                     else (expected_size or 0)
                 )
-
-                downloaded = 0
-                chunk_size = 64 * 1024  # 64 KB por bloco
-
-                with open(temp_file, "wb") as f:
-                    while True:
-                        chunk = response.read(chunk_size)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if on_progress and total_size > 0:
-                            progress = min(1.0, downloaded / total_size)
-                            on_progress(progress, downloaded, total_size)
-
-            # 1. Validação de tamanho final (se fornecido)
-            if total_size > 0 and downloaded < total_size:
-                if temp_file.exists():
-                    temp_file.unlink()
-                raise ValueError(
-                    f"Download incompleto: recebidos {downloaded} bytes de {total_size} esperados."
+                downloaded = self._stream_response_to_file(
+                    response, temp_file, total_size, on_progress
                 )
 
-            # 2. Validação de Hash SHA-256 (se fornecido)
-            if expected_sha256:
-                actual_sha256 = self.calculate_sha256(temp_file)
-                if actual_sha256.lower() != expected_sha256.lower():
-                    if temp_file.exists():
-                        temp_file.unlink()
-                    raise ValueError(
-                        f"Falha de integridade SHA-256: obtido '{actual_sha256}', esperado '{expected_sha256}'."
-                    )
+            self._validate_download_integrity(
+                temp_file, downloaded, total_size, expected_sha256
+            )
 
             # 3. Renomeação atômica
             if target_path.exists():
@@ -578,7 +613,7 @@ class UpdaterService:
             Caminho absoluto do arquivo APK baixado e validado.
         """
         if not target_dir:
-            temp_dir = Path(tempfile.gettempdir()) / "hinario_updates"
+            temp_dir = self.get_default_download_dir()
         else:
             temp_dir = Path(target_dir)
 

@@ -21,48 +21,29 @@ class ComparativoRepository:
 
     @staticmethod
     def _row_to_comparativo(row) -> HinoComparativo:
-        keys = row.keys()
+        data = dict(row)
+
+        def _str_or_none(val) -> str | None:
+            return str(val) if val is not None else None
+
+        modificado_val = data.get("modificado")
+        sim_val = data.get("similaridade_pct")
+
         return HinoComparativo(
-            id=row["id"] if "id" in keys else None,
-            numero_novo=(
-                str(row["numero_novo"]) if row["numero_novo"] is not None else None
-            ),
-            numero_antigo=(
-                str(row["numero_antigo"]) if row["numero_antigo"] is not None else None
-            ),
-            titulo_novo=(
-                str(row["titulo_novo"]) if row["titulo_novo"] is not None else None
-            ),
-            titulo_antigo=(
-                str(row["titulo_antigo"]) if row["titulo_antigo"] is not None else None
-            ),
-            categoria_nova=row["categoria_nova"] if "categoria_nova" in keys else None,
-            categoria_antiga=(
-                row["categoria_antiga"] if "categoria_antiga" in keys else None
-            ),
-            status_comparacao=(
-                str(row["status_comparacao"])
-                if "status_comparacao" in keys and row["status_comparacao"]
-                else ""
-            ),
-            modificado=(
-                int(row["modificado"])
-                if "modificado" in keys and row["modificado"] is not None
-                else 0
-            ),
-            similaridade_pct=(
-                float(row["similaridade_pct"])
-                if "similaridade_pct" in keys and row["similaridade_pct"] is not None
-                else 0.0
-            ),
-            diff_texto=row["diff_texto"] if "diff_texto" in keys else None,
-            diff_json=row["diff_json"] if "diff_json" in keys else None,
-            resumo_alteracoes=(
-                row["resumo_alteracoes"] if "resumo_alteracoes" in keys else None
-            ),
-            metodo_cruzamento=(
-                row["metodo_cruzamento"] if "metodo_cruzamento" in keys else None
-            ),
+            id=data.get("id"),
+            numero_novo=_str_or_none(data.get("numero_novo")),
+            numero_antigo=_str_or_none(data.get("numero_antigo")),
+            titulo_novo=_str_or_none(data.get("titulo_novo")),
+            titulo_antigo=_str_or_none(data.get("titulo_antigo")),
+            categoria_nova=data.get("categoria_nova"),
+            categoria_antiga=data.get("categoria_antiga"),
+            status_comparacao=str(data.get("status_comparacao") or ""),
+            modificado=int(modificado_val) if modificado_val is not None else 0,
+            similaridade_pct=float(sim_val) if sim_val is not None else 0.0,
+            diff_texto=data.get("diff_texto"),
+            diff_json=data.get("diff_json"),
+            resumo_alteracoes=data.get("resumo_alteracoes"),
+            metodo_cruzamento=data.get("metodo_cruzamento"),
         )
 
     async def get_by_numero_novo(self, numero_novo: str) -> HinoComparativo | None:

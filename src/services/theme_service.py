@@ -214,6 +214,166 @@ class ThemeService:
             return ANTIGO_DARK_PRIMARY
         return COLOR_SEEDS.get(self.current_seed, COLOR_SEEDS["purple"])["hex"]
 
+    def _resolve_theme_mode_and_bg(self, page: ft.Page) -> None:
+        """Configura o theme_mode e bgcolor básico da página."""
+        if self.theme_mode == "light":
+            page.theme_mode = ft.ThemeMode.LIGHT
+            page.bgcolor = None
+        elif self.theme_mode == "dark":
+            page.theme_mode = ft.ThemeMode.DARK
+            page.bgcolor = AMOLED_BG_COLOR if self.is_amoled else None
+        else:  # "system"
+            if self.is_amoled:
+                page.theme_mode = ft.ThemeMode.DARK
+                page.bgcolor = AMOLED_BG_COLOR
+            else:
+                page.theme_mode = ft.ThemeMode.SYSTEM
+                page.bgcolor = None
+
+    def _apply_antigo_theme(
+        self, page: ft.Page, seed_hex: str, transitions: ft.PageTransitionsTheme
+    ) -> None:
+        """Aplica estilos específicos do Hinário Antigo."""
+        if self.is_amoled and page.theme_mode == ft.ThemeMode.DARK:
+            page.bgcolor = ANTIGO_AMOLED_BG
+            amoled_scheme = ft.ColorScheme(
+                surface=ANTIGO_AMOLED_BG,
+                surface_dim=ANTIGO_AMOLED_BG,
+                surface_bright=ANTIGO_AMOLED_CONTAINER_HIGHEST,
+                surface_container_lowest=ANTIGO_AMOLED_BG,
+                surface_container_low=ANTIGO_AMOLED_SURFACE,
+                surface_container=ANTIGO_AMOLED_CONTAINER,
+                surface_container_high=ANTIGO_AMOLED_CONTAINER_HIGH,
+                surface_container_highest=ANTIGO_AMOLED_CONTAINER_HIGHEST,
+                on_surface=ft.Colors.WHITE,
+                on_surface_variant=ANTIGO_DARK_ON_SURFACE_VARIANT,
+                primary=ANTIGO_AMOLED_PRIMARY,
+                on_primary=ft.Colors.BLACK,
+                outline=ANTIGO_AMOLED_OUTLINE,
+            )
+            page.dark_theme = ft.Theme(
+                color_scheme_seed=seed_hex,
+                use_material3=True,
+                font_family=self.font_family,
+                page_transitions=transitions,
+                color_scheme=amoled_scheme,
+                system_overlay_style=ft.SystemOverlayStyle(
+                    status_bar_color=ANTIGO_AMOLED_BG,
+                    system_navigation_bar_color=ANTIGO_AMOLED_BG,
+                ),
+            )
+            page.theme = ft.Theme(
+                color_scheme_seed=seed_hex,
+                use_material3=True,
+                font_family=self.font_family,
+                page_transitions=transitions,
+            )
+            return
+
+        antigo_light_scheme = ft.ColorScheme(
+            surface=ANTIGO_LIGHT_BG,
+            surface_dim=ANTIGO_LIGHT_SURFACE,
+            surface_bright=ANTIGO_LIGHT_CONTAINER,
+            surface_container_lowest=ANTIGO_LIGHT_BG,
+            surface_container_low=ANTIGO_LIGHT_SURFACE,
+            surface_container=ANTIGO_LIGHT_CONTAINER,
+            surface_container_high=ANTIGO_LIGHT_CONTAINER_HIGH,
+            surface_container_highest=ANTIGO_LIGHT_CONTAINER_HIGHEST,
+            on_surface=ANTIGO_LIGHT_ON_SURFACE,
+            on_surface_variant=ANTIGO_LIGHT_ON_SURFACE_VARIANT,
+            primary=ANTIGO_LIGHT_PRIMARY,
+            on_primary=ft.Colors.WHITE,
+            outline=ANTIGO_LIGHT_OUTLINE,
+        )
+
+        antigo_dark_scheme = ft.ColorScheme(
+            surface=ANTIGO_DARK_BG,
+            surface_dim=ANTIGO_DARK_SURFACE,
+            surface_bright=ANTIGO_DARK_CONTAINER_HIGHEST,
+            surface_container_lowest=ANTIGO_DARK_BG,
+            surface_container_low=ANTIGO_DARK_SURFACE,
+            surface_container=ANTIGO_DARK_CONTAINER,
+            surface_container_high=ANTIGO_DARK_CONTAINER_HIGH,
+            surface_container_highest=ANTIGO_DARK_CONTAINER_HIGHEST,
+            on_surface=ANTIGO_DARK_ON_SURFACE,
+            on_surface_variant=ANTIGO_DARK_ON_SURFACE_VARIANT,
+            primary=ANTIGO_DARK_PRIMARY,
+            on_primary=ft.Colors.BLACK,
+            outline=ANTIGO_DARK_OUTLINE,
+        )
+
+        page.theme = ft.Theme(
+            color_scheme_seed=seed_hex,
+            use_material3=True,
+            font_family=self.font_family,
+            page_transitions=transitions,
+            color_scheme=antigo_light_scheme,
+        )
+        page.dark_theme = ft.Theme(
+            color_scheme_seed=seed_hex,
+            use_material3=True,
+            font_family=self.font_family,
+            page_transitions=transitions,
+            color_scheme=antigo_dark_scheme,
+            system_overlay_style=ft.SystemOverlayStyle(
+                status_bar_color=ANTIGO_DARK_BG,
+                system_navigation_bar_color=ANTIGO_DARK_BG,
+            ),
+        )
+
+    def _apply_novo_theme(
+        self, page: ft.Page, seed_hex: str, transitions: ft.PageTransitionsTheme
+    ) -> None:
+        """Aplica estilos da Edição Hinário Novo (Seed M3 Unificada)."""
+        if self.is_amoled and page.theme_mode == ft.ThemeMode.DARK:
+            page.bgcolor = AMOLED_BG_COLOR
+            amoled_color_scheme = ft.ColorScheme(
+                surface=AMOLED_BG_COLOR,
+                surface_dim=AMOLED_BG_COLOR,
+                surface_bright=AMOLED_SURFACE_CONTAINER_HIGHEST,
+                surface_container_lowest=AMOLED_BG_COLOR,
+                surface_container_low=AMOLED_SURFACE_COLOR,
+                surface_container=AMOLED_SURFACE_CONTAINER,
+                surface_container_high=AMOLED_SURFACE_CONTAINER_HIGH,
+                surface_container_highest=AMOLED_SURFACE_CONTAINER_HIGHEST,
+                on_surface=ft.Colors.WHITE,
+                on_surface_variant=ft.Colors.GREY_400,
+                primary=seed_hex,
+                on_primary=ft.Colors.BLACK,
+                outline=AMOLED_DIVIDER_COLOR,
+            )
+
+            page.dark_theme = ft.Theme(
+                color_scheme_seed=seed_hex,
+                use_material3=True,
+                font_family=self.font_family,
+                page_transitions=transitions,
+                color_scheme=amoled_color_scheme,
+                system_overlay_style=ft.SystemOverlayStyle(
+                    status_bar_color=AMOLED_BG_COLOR,
+                    system_navigation_bar_color=AMOLED_BG_COLOR,
+                ),
+            )
+            page.theme = ft.Theme(
+                color_scheme_seed=seed_hex,
+                use_material3=True,
+                font_family=self.font_family,
+                page_transitions=transitions,
+            )
+        else:
+            page.theme = ft.Theme(
+                color_scheme_seed=seed_hex,
+                use_material3=True,
+                font_family=self.font_family,
+                page_transitions=transitions,
+            )
+            page.dark_theme = ft.Theme(
+                color_scheme_seed=seed_hex,
+                use_material3=True,
+                font_family=self.font_family,
+                page_transitions=transitions,
+            )
+
     def apply_theme(self, page: ft.Page, edition: str | None = None) -> None:
         """
         Aplica o tema configurado à página do Flet.
@@ -247,155 +407,10 @@ class ThemeService:
             windows=ft.PageTransitionTheme.CUPERTINO,
         )
 
-        # Determina o ThemeMode e fundo da página
-        if self.theme_mode == "light":
-            page.theme_mode = ft.ThemeMode.LIGHT
-            page.bgcolor = None
-        elif self.theme_mode == "dark":
-            page.theme_mode = ft.ThemeMode.DARK
-            page.bgcolor = AMOLED_BG_COLOR if self.is_amoled else None
-        else:  # "system"
-            if self.is_amoled:
-                page.theme_mode = ft.ThemeMode.DARK
-                page.bgcolor = AMOLED_BG_COLOR
-            else:
-                page.theme_mode = ft.ThemeMode.SYSTEM
-                page.bgcolor = None
+        self._resolve_theme_mode_and_bg(page)
 
         if active_edition == EDITION_ANTIGO:
-            if self.is_amoled and page.theme_mode == ft.ThemeMode.DARK:
-                page.bgcolor = ANTIGO_AMOLED_BG
-                amoled_scheme = ft.ColorScheme(
-                    surface=ANTIGO_AMOLED_BG,
-                    surface_dim=ANTIGO_AMOLED_BG,
-                    surface_bright=ANTIGO_AMOLED_CONTAINER_HIGHEST,
-                    surface_container_lowest=ANTIGO_AMOLED_BG,
-                    surface_container_low=ANTIGO_AMOLED_SURFACE,
-                    surface_container=ANTIGO_AMOLED_CONTAINER,
-                    surface_container_high=ANTIGO_AMOLED_CONTAINER_HIGH,
-                    surface_container_highest=ANTIGO_AMOLED_CONTAINER_HIGHEST,
-                    on_surface=ft.Colors.WHITE,
-                    on_surface_variant=ANTIGO_DARK_ON_SURFACE_VARIANT,
-                    primary=ANTIGO_AMOLED_PRIMARY,
-                    on_primary=ft.Colors.BLACK,
-                    outline=ANTIGO_AMOLED_OUTLINE,
-                )
-                page.dark_theme = ft.Theme(
-                    color_scheme_seed=seed_hex,
-                    use_material3=True,
-                    font_family=self.font_family,
-                    page_transitions=transitions,
-                    color_scheme=amoled_scheme,
-                    system_overlay_style=ft.SystemOverlayStyle(
-                        status_bar_color=ANTIGO_AMOLED_BG,
-                        system_navigation_bar_color=ANTIGO_AMOLED_BG,
-                    ),
-                )
-                page.theme = ft.Theme(
-                    color_scheme_seed=seed_hex,
-                    use_material3=True,
-                    font_family=self.font_family,
-                    page_transitions=transitions,
-                )
-            else:
-                antigo_light_scheme = ft.ColorScheme(
-                    surface=ANTIGO_LIGHT_BG,
-                    surface_dim=ANTIGO_LIGHT_SURFACE,
-                    surface_bright=ANTIGO_LIGHT_CONTAINER,
-                    surface_container_lowest=ANTIGO_LIGHT_BG,
-                    surface_container_low=ANTIGO_LIGHT_SURFACE,
-                    surface_container=ANTIGO_LIGHT_CONTAINER,
-                    surface_container_high=ANTIGO_LIGHT_CONTAINER_HIGH,
-                    surface_container_highest=ANTIGO_LIGHT_CONTAINER_HIGHEST,
-                    on_surface=ANTIGO_LIGHT_ON_SURFACE,
-                    on_surface_variant=ANTIGO_LIGHT_ON_SURFACE_VARIANT,
-                    primary=ANTIGO_LIGHT_PRIMARY,
-                    on_primary=ft.Colors.WHITE,
-                    outline=ANTIGO_LIGHT_OUTLINE,
-                )
-
-                antigo_dark_scheme = ft.ColorScheme(
-                    surface=ANTIGO_DARK_BG,
-                    surface_dim=ANTIGO_DARK_SURFACE,
-                    surface_bright=ANTIGO_DARK_CONTAINER_HIGHEST,
-                    surface_container_lowest=ANTIGO_DARK_BG,
-                    surface_container_low=ANTIGO_DARK_SURFACE,
-                    surface_container=ANTIGO_DARK_CONTAINER,
-                    surface_container_high=ANTIGO_DARK_CONTAINER_HIGH,
-                    surface_container_highest=ANTIGO_DARK_CONTAINER_HIGHEST,
-                    on_surface=ANTIGO_DARK_ON_SURFACE,
-                    on_surface_variant=ANTIGO_DARK_ON_SURFACE_VARIANT,
-                    primary=ANTIGO_DARK_PRIMARY,
-                    on_primary=ft.Colors.BLACK,
-                    outline=ANTIGO_DARK_OUTLINE,
-                )
-
-                page.theme = ft.Theme(
-                    color_scheme_seed=seed_hex,
-                    use_material3=True,
-                    font_family=self.font_family,
-                    page_transitions=transitions,
-                    color_scheme=antigo_light_scheme,
-                )
-                page.dark_theme = ft.Theme(
-                    color_scheme_seed=seed_hex,
-                    use_material3=True,
-                    font_family=self.font_family,
-                    page_transitions=transitions,
-                    color_scheme=antigo_dark_scheme,
-                    system_overlay_style=ft.SystemOverlayStyle(
-                        status_bar_color=ANTIGO_DARK_BG,
-                        system_navigation_bar_color=ANTIGO_DARK_BG,
-                    ),
-                )
+            self._apply_antigo_theme(page, seed_hex, transitions)
         else:
-            # Edição Hinário Novo (Seed M3 Unificada)
-            if self.is_amoled and page.theme_mode == ft.ThemeMode.DARK:
-                page.bgcolor = AMOLED_BG_COLOR
-                amoled_color_scheme = ft.ColorScheme(
-                    surface=AMOLED_BG_COLOR,
-                    surface_dim=AMOLED_BG_COLOR,
-                    surface_bright=AMOLED_SURFACE_CONTAINER_HIGHEST,
-                    surface_container_lowest=AMOLED_BG_COLOR,
-                    surface_container_low=AMOLED_SURFACE_COLOR,
-                    surface_container=AMOLED_SURFACE_CONTAINER,
-                    surface_container_high=AMOLED_SURFACE_CONTAINER_HIGH,
-                    surface_container_highest=AMOLED_SURFACE_CONTAINER_HIGHEST,
-                    on_surface=ft.Colors.WHITE,
-                    on_surface_variant=ft.Colors.GREY_400,
-                    primary=seed_hex,
-                    on_primary=ft.Colors.BLACK,
-                    outline=AMOLED_DIVIDER_COLOR,
-                )
-
-                page.dark_theme = ft.Theme(
-                    color_scheme_seed=seed_hex,
-                    use_material3=True,
-                    font_family=self.font_family,
-                    page_transitions=transitions,
-                    color_scheme=amoled_color_scheme,
-                    system_overlay_style=ft.SystemOverlayStyle(
-                        status_bar_color=AMOLED_BG_COLOR,
-                        system_navigation_bar_color=AMOLED_BG_COLOR,
-                    ),
-                )
-                page.theme = ft.Theme(
-                    color_scheme_seed=seed_hex,
-                    use_material3=True,
-                    font_family=self.font_family,
-                    page_transitions=transitions,
-                )
-            else:
-                page.theme = ft.Theme(
-                    color_scheme_seed=seed_hex,
-                    use_material3=True,
-                    font_family=self.font_family,
-                    page_transitions=transitions,
-                )
-                page.dark_theme = ft.Theme(
-                    color_scheme_seed=seed_hex,
-                    use_material3=True,
-                    font_family=self.font_family,
-                    page_transitions=transitions,
-                )
+            self._apply_novo_theme(page, seed_hex, transitions)
 

@@ -14,6 +14,13 @@ class FavoritoRepository:
     def __init__(self, db_connection: DatabaseConnection):
         self.db_connection = db_connection
 
+    async def _safe_rollback(self) -> None:
+        try:
+            conn = await self.db_connection.get_connection()
+            await conn.rollback()
+        except Exception:
+            pass
+
     async def add_favorito(self, hino_id: int) -> bool:
         """Adiciona um hino aos favoritos se ainda não estiver presente com resiliência a locks."""
         query = "INSERT OR IGNORE INTO favorito (hino_id) VALUES (?)"
@@ -26,22 +33,16 @@ class FavoritoRepository:
                 await conn.commit()
                 return success
             except sqlite3.OperationalError as exc:
-                try:
-                    conn = await self.db_connection.get_connection()
-                    await conn.rollback()
-                except Exception:
-                    pass
-                if ("locked" in str(exc).lower() or "busy" in str(exc).lower()) and attempt < max_retries - 1:
+                await self._safe_rollback()
+                is_lock = "locked" in str(exc).lower() or "busy" in str(exc).lower()
+                if is_lock and attempt < max_retries - 1:
                     await asyncio.sleep(0.05 * (2 ** attempt))
                     continue
                 return False
             except Exception:
-                try:
-                    conn = await self.db_connection.get_connection()
-                    await conn.rollback()
-                except Exception:
-                    pass
+                await self._safe_rollback()
                 return False
+        return False
 
     async def remove_favorito(self, hino_id: int) -> bool:
         """Remove um hino dos favoritos com resiliência a locks."""
@@ -55,22 +56,16 @@ class FavoritoRepository:
                 await conn.commit()
                 return success
             except sqlite3.OperationalError as exc:
-                try:
-                    conn = await self.db_connection.get_connection()
-                    await conn.rollback()
-                except Exception:
-                    pass
-                if ("locked" in str(exc).lower() or "busy" in str(exc).lower()) and attempt < max_retries - 1:
+                await self._safe_rollback()
+                is_lock = "locked" in str(exc).lower() or "busy" in str(exc).lower()
+                if is_lock and attempt < max_retries - 1:
                     await asyncio.sleep(0.05 * (2 ** attempt))
                     continue
                 return False
             except Exception:
-                try:
-                    conn = await self.db_connection.get_connection()
-                    await conn.rollback()
-                except Exception:
-                    pass
+                await self._safe_rollback()
                 return False
+        return False
 
     async def is_favorito(self, hino_id: int) -> bool:
         """Verifica se um hino está marcado como favorito."""

@@ -35,7 +35,7 @@ async def _run_sync_or_thread(func, *args, **kwargs):
     """Executa a função em thread ou síncrona se o ambiente não suportar threads (WebAssembly/Pyodide)."""
     try:
         return await asyncio.to_thread(func, *args, **kwargs)
-    except (RuntimeError, NotImplementedError):
+    except RuntimeError:
         return func(*args, **kwargs)
 
 
@@ -215,6 +215,54 @@ class MediaService:
 
     # ── Download de Vídeo ─────────────────────────────────────────────
 
+    @staticmethod
+    def _make_progress_hook(callback: Callable[[float], None]):
+        def _hook(d):
+            if d.get("status") == "downloading":
+                total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
+                downloaded = d.get("downloaded_bytes", 0)
+                if total > 0:
+                    callback(downloaded / total)
+
+        return _hook
+
+    async def _try_ydl_download(
+        self,
+        format_str: str,
+        output_template: str,
+        output_path: str,
+        sanitized_url: str,
+        progress_callback: Callable[[float], None] | None,
+        merge_mp4: bool = False,
+    ) -> str | None:
+        ydl_opts: dict[str, Any] = {
+            "format": format_str,
+            "outtmpl": output_template,
+            "quiet": True,
+            "no_warnings": True,
+        }
+        if merge_mp4:
+            ydl_opts["merge_output_format"] = "mp4"
+        if progress_callback:
+            ydl_opts["progress_hooks"] = [self._make_progress_hook(progress_callback)]
+
+        if not yt_dlp:
+            return None
+
+        def _download():
+            ydl_module = cast(Any, yt_dlp)
+            with ydl_module.YoutubeDL(cast(Any, ydl_opts)) as ydl:
+                ydl.download([sanitized_url])
+            return output_path
+
+        try:
+            result = await _run_sync_or_thread(_download)
+            if os.path.isfile(result):
+                return result
+        except Exception:
+            pass
+        return None
+
     async def download_video(
         self,
         hino_id: int,
@@ -236,70 +284,43 @@ class MediaService:
         video_dir = os.path.join(self.download_dir, subdir)
         output_path = os.path.join(video_dir, f"hino_{hino_id}.mp4")
         output_template = os.path.join(video_dir, f"hino_{hino_id}.%(ext)s")
-
         format_str = (
             _YDL_FORMAT_VIDEO_HD if quality == QUALITY_HD else _YDL_FORMAT_VIDEO_SD
         )
 
-        def _make_progress_hook(callback):
-            def _hook(d):
-                if callback and d.get("status") == "downloading":
-                    total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
-                    downloaded = d.get("downloaded_bytes", 0)
-                    if total > 0:
-                        callback(downloaded / total)
+        # 1. Tentativa com formato solicitado e merge para mp4
+        result = await self._try_ydl_download(
+            format_str, output_template, output_path, sanitized_url, progress_callback, merge_mp4=True
+        )
+        if result:
+            return result
 
-            return _hook
-
-        ydl_opts: dict[str, Any] = {
-            "format": format_str,
-            "outtmpl": output_template,
-            "merge_output_format": "mp4",
-            "quiet": True,
-            "no_warnings": True,
-        }
-        if progress_callback:
-            ydl_opts["progress_hooks"] = [_make_progress_hook(progress_callback)]
-
-        def _download():
-            with yt_dlp.YoutubeDL(cast(Any, ydl_opts)) as ydl:
-                ydl.download([sanitized_url])
-            return output_path
-
-        try:
-            result = await _run_sync_or_thread(_download)
-            if os.path.isfile(result):
-                return result
-        except Exception:
-            pass
-
-        # Fallback: tenta formato genérico "best" como MP4
-        ydl_opts_fallback: dict[str, Any] = {
-            "format": "best[ext=mp4]/best",
-            "outtmpl": output_template,
-            "quiet": True,
-            "no_warnings": True,
-        }
-        if progress_callback:
-            ydl_opts_fallback["progress_hooks"] = [
-                _make_progress_hook(progress_callback)
-            ]
-
-        def _download_fallback():
-            with yt_dlp.YoutubeDL(cast(Any, ydl_opts_fallback)) as ydl:
-                ydl.download([sanitized_url])
-            return output_path
-
-        try:
-            result = await _run_sync_or_thread(_download_fallback)
-            if os.path.isfile(result):
-                return result
-        except Exception:
-            pass
-
-        return None
+        # 2. Fallback: tenta formato genérico "best" como MP4
+        return await self._try_ydl_download(
+            "best[ext=mp4]/best", output_template, output_path, sanitized_url, progress_callback
+        )
 
     # ── Download em Lote (Batch) ──────────────────────────────────────
+
+    async def _download_batch_item(
+        self,
+        hino_info: dict[str, Any],
+        quality: str,
+    ) -> str:
+        """Retorna 'skipped', 'completed' ou 'failed' para um item do batch."""
+        hino_id = hino_info.get("id")
+        link = hino_info.get("link_video", "")
+        if hino_id is None or not link:
+            return "skipped"
+
+        if self.is_video_downloaded(hino_id, quality):
+            return "skipped"
+
+        try:
+            result = await self.download_video(hino_id, link, quality)
+            return "completed" if result else "failed"
+        except Exception:
+            return "failed"
 
     async def download_library_batch(
         self,
@@ -321,60 +342,22 @@ class MediaService:
             Dict com 'completed', 'failed', 'skipped', 'cancelled'.
         """
         total = len(hino_list)
-        completed = 0
-        failed = 0
-        skipped = 0
+        stats = {"completed": 0, "failed": 0, "skipped": 0, "cancelled": False, "total": total}
 
-        for i, hino_info in enumerate(hino_list):
-            # Verifica cancelamento
+        for hino_info in hino_list:
             if cancel_event and cancel_event.is_set():
-                return {
-                    "completed": completed,
-                    "failed": failed,
-                    "skipped": skipped,
-                    "cancelled": True,
-                    "total": total,
-                }
+                stats["cancelled"] = True
+                return stats
 
-            hino_id = hino_info.get("id")
-            link = hino_info.get("link_video", "")
-            titulo = hino_info.get("titulo", f"Hino {hino_id}")
-
-            if hino_id is None or not link:
-                skipped += 1
-                if progress_callback:
-                    progress_callback(completed + skipped + failed, total, titulo)
-                continue
-
-            # Verifica se já baixado
-            already = self.is_video_downloaded(hino_id, quality)
-
-            if already:
-                skipped += 1
-                if progress_callback:
-                    progress_callback(completed + skipped + failed, total, titulo)
-                continue
-
-            # Executa download
-            try:
-                result = await self.download_video(hino_id, link, quality)
-                if result:
-                    completed += 1
-                else:
-                    failed += 1
-            except Exception:
-                failed += 1
+            status = await self._download_batch_item(hino_info, quality)
+            stats[status] += 1
 
             if progress_callback:
-                progress_callback(completed + skipped + failed, total, titulo)
+                processed = stats["completed"] + stats["skipped"] + stats["failed"]
+                titulo = hino_info.get("titulo", f"Hino {hino_info.get('id')}")
+                progress_callback(processed, total, titulo)
 
-        return {
-            "completed": completed,
-            "failed": failed,
-            "skipped": skipped,
-            "cancelled": False,
-            "total": total,
-        }
+        return stats
 
     # ── Gerenciamento de Armazenamento ────────────────────────────────
 
@@ -393,30 +376,36 @@ class MediaService:
                         usage[category] += os.path.getsize(fp)
         return usage
 
+    def _clear_single_dir(self, dir_path: str) -> int:
+        if not os.path.isdir(dir_path):
+            return 0
+        removed = 0
+        for f in os.listdir(dir_path):
+            fp = os.path.join(dir_path, f)
+            if os.path.isfile(fp):
+                try:
+                    os.remove(fp)
+                    removed += 1
+                except Exception:
+                    pass
+        return removed
+
     def clear_downloads(self, media_type: str | None = None) -> int:
         """
         Remove downloads de vídeos. Se media_type for None, remove tudo.
         Retorna o número de arquivos removidos.
         """
-        count = 0
         subdirs = {
             "video_sd": self.VIDEO_SD_SUBDIR,
             "video_hd": self.VIDEO_HD_SUBDIR,
         }
         if media_type and media_type in subdirs:
-            targets = {media_type: subdirs[media_type]}
+            targets = [subdirs[media_type]]
         else:
-            targets = subdirs
+            targets = list(subdirs.values())
 
-        for _, subdir in targets.items():
+        count = 0
+        for subdir in targets:
             dir_path = os.path.join(self.download_dir, subdir)
-            if os.path.isdir(dir_path):
-                for f in os.listdir(dir_path):
-                    fp = os.path.join(dir_path, f)
-                    if os.path.isfile(fp):
-                        try:
-                            os.remove(fp)
-                            count += 1
-                        except Exception:
-                            pass
+            count += self._clear_single_dir(dir_path)
         return count

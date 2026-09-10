@@ -13,7 +13,8 @@ Oferece interface Material 3 com duas abas dedicadas:
 """
 
 import asyncio
-from typing import Any
+import inspect
+from typing import Any, cast
 import weakref
 
 import flet as ft
@@ -35,14 +36,16 @@ def ensure_page_dialogs(page: ft.Page | None) -> None:
     """
     if not page:
         return
-    if hasattr(page, "_dialogs") and getattr(page._dialogs, "parent", None) is None:
+    dialogs = getattr(page, "_dialogs", None)
+    if dialogs is not None and getattr(dialogs, "parent", None) is None:
         try:
-            page._dialogs._parent = weakref.ref(page)
+            setattr(dialogs, "_parent", weakref.ref(page))
         except Exception:
             pass
-    if hasattr(page, "_overlay") and getattr(page._overlay, "parent", None) is None:
+    overlay = getattr(page, "_overlay", None)
+    if overlay is not None and getattr(overlay, "parent", None) is None:
         try:
-            page._overlay._parent = weakref.ref(page)
+            setattr(overlay, "_parent", weakref.ref(page))
         except Exception:
             pass
 
@@ -95,8 +98,8 @@ class SettingsDialogController:
             except Exception:
                 pass
 
-    def _on_tab_change(self, e: ft.ControlEvent) -> None:
-        selected_set = e.control.selected
+    def _on_tab_change(self, e: Any) -> None:
+        selected_set = getattr(e.control, "selected", None)
         if selected_set:
             self.active_tab = next(iter(selected_set))
             self._update_tab_visibility()
@@ -118,8 +121,8 @@ class SettingsDialogController:
         if self.tab_selector:
             self.tab_selector.selected = [self.active_tab]
 
-    async def _on_theme_mode_change(self, e: ft.ControlEvent) -> None:
-        selected_set = e.control.selected
+    async def _on_theme_mode_change(self, e: Any) -> None:
+        selected_set = getattr(e.control, "selected", None)
         if selected_set:
             mode = next(iter(selected_set))
             await self.theme_service.set_theme_mode(mode, self.page)
@@ -133,6 +136,8 @@ class SettingsDialogController:
         if self.theme_service.theme_mode == "light":
             if self.amoled_switch:
                 self.amoled_switch.value = False
+            return
+        if not self.page:
             return
         await self.theme_service.toggle_amoled(
             self.page, enabled, edition=self.edition
@@ -153,7 +158,7 @@ class SettingsDialogController:
         if self.font_dropdown:
             self.font_dropdown.value = self.theme_service.font_family
         if self.seed_chips_row:
-            self.seed_chips_row.controls = self._build_seed_chips()
+            self.seed_chips_row.controls = cast(list[ft.Control], self._build_seed_chips())
         self._update_amoled_state()
         if self.page:
             self.page.update()
@@ -179,8 +184,8 @@ class SettingsDialogController:
                     "Preto puro (#000000) e economia em telas OLED"
                 )
 
-    def _build_seed_chips(self) -> list[ft.Container]:
-        chips: list[ft.Container] = []
+    def _build_seed_chips(self) -> list[ft.Control]:
+        chips: list[ft.Control] = []
         current_seed = self.theme_service.current_seed
 
         for key, info in COLOR_SEEDS.items():
@@ -558,7 +563,7 @@ class SettingsDialogController:
 
     async def _trigger_check_updates(self) -> None:
         if self.on_check_updates and callable(self.on_check_updates):
-            if asyncio.iscoroutinefunction(self.on_check_updates):
+            if inspect.iscoroutinefunction(self.on_check_updates):
                 await self.on_check_updates()
             else:
                 self.on_check_updates()
@@ -619,5 +624,5 @@ def show_settings_dialog(
         try:
             ensure_page_dialogs(page)
             page.show_dialog(bs)
-        except Exception as final_ex:
-            logging.getLogger("flet").error("Erro ao exibir modal de configurações: %s", final_ex)
+        except Exception:
+            logging.getLogger("flet").exception("Erro ao exibir modal de configurações:")

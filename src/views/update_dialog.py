@@ -6,6 +6,7 @@ validação de integridade e disparo da instalação do pacote .apk ou fallback 
 """
 
 import asyncio
+import contextlib
 import os
 from typing import Any
 
@@ -24,25 +25,90 @@ async def open_in_browser(url: str) -> None:
         pass
 
 
-async def trigger_apk_installation(apk_path: str, fallback_url: str | None = None):
+async def trigger_apk_installation(
+    apk_path: str,
+    fallback_url: str | None = None,
+    page: ft.Page | None = None,
+) -> bool:
     """
-    Dispara a instalação do arquivo .apk no Android via Intent nativa do PackageInstaller.
-    Se não for possível abrir localmente, aciona o fallback para o navegador.
+    Dispara a instalação do arquivo .apk no Android via PackageInstaller / FileProvider / Intent.
+    Retorna True se alguma chamada de instalação/compartilhamento foi disparada com sucesso.
+    NUNCA abre automaticamente o navegador para baixar o arquivo novamente se o APK já existe localmente.
     """
-    launched = False
+    if not apk_path or not os.path.exists(apk_path):
+        # Arquivo não existe; se houver URL de fallback informada, só aí pode abrir
+        if fallback_url:
+            await open_in_browser(fallback_url)
+        return False
 
-    # 1. Tenta disparar o instalador via URI local (Intent do Android)
-    if apk_path and os.path.exists(apk_path):
-        local_uri = f"file://{os.path.abspath(apk_path)}"
+    abs_path = os.path.abspath(apk_path)
+
+    # 1. Tenta via PyJNIus / Android Intent nativo (PackageInstaller) se estiver em ambiente Android nativo
+    try:
+        from jnius import autoclass
+
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        Intent = autoclass("android.content.Intent")
+        Uri = autoclass("android.net.Uri")
+        File = autoclass("java.io.File")
+        FileProvider = autoclass("androidx.core.content.FileProvider")
+
+        activity = PythonActivity.mActivity
+        context = activity.getApplicationContext()
+        file_obj = File(abs_path)
+
         try:
-            await ft.UrlLauncher().launch_url(local_uri)
-            launched = True
+            package_name = context.getPackageName()
+            content_uri = FileProvider.getUriForFile(
+                context, f"{package_name}.fileprovider", file_obj
+            )
         except Exception:
-            launched = False
+            content_uri = Uri.fromFile(file_obj)
 
-    # 2. Fallback: se não conseguiu abrir via file:// ou se falhou, abre no navegador
-    if not launched and fallback_url:
-        await open_in_browser(fallback_url)
+        intent = Intent(Intent.ACTION_VIEW)
+        intent.setDataAndType(content_uri, "application/vnd.android.package-archive")
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        activity.startActivity(intent)
+        return True
+    except Exception:
+        pass
+
+    # 2. Tenta via ft.Share (utiliza o plugin share_plus do Flutter com FileProvider nativo content://)
+    # Abre a folha de compartilhamento/ação do sistema permitindo selecionar "Instalador do Pacote"
+    try:
+        share_service = ft.Share()
+        if page:
+            if hasattr(page, "_services"):
+                with contextlib.suppress(Exception):
+                    page._services.register_service(share_service)
+            elif hasattr(page, "overlay") and share_service not in page.overlay:
+                page.overlay.append(share_service)
+                page.update()
+        await share_service.share_files(
+            [
+                ft.ShareFile(
+                    path=abs_path,
+                    mime_type="application/vnd.android.package-archive",
+                    name=os.path.basename(abs_path),
+                )
+            ],
+            title="Instalar Hinário",
+            subject="Instalação de Atualização",
+        )
+        return True
+    except Exception:
+        pass
+
+    # 3. Disparo via UrlLauncher local (file://) - funciona em desktops (Linux/macOS/Windows)
+    try:
+        local_uri = f"file://{abs_path}"
+        await ft.UrlLauncher().launch_url(local_uri)
+        return True
+    except Exception:
+        pass
+
+    return False
 
 
 class UpdateDialog:
@@ -124,19 +190,83 @@ class UpdateDialog:
             self.status_text.value = f"Baixando: {mb_down:.1f} MB"
         self.page.update()
 
+    async def _acionar_instalacao(self, saved_apk_path: str) -> None:
+        """Tenta acionar o instalador nativo do sistema para o APK baixado."""
+        self.status_text.value = "Abrindo instalador de pacotes..."
+        self.status_text.color = ft.Colors.BLUE_200
+        self.page.update()
+
+        success = await trigger_apk_installation(
+            apk_path=saved_apk_path,
+            page=self.page,
+        )
+        if success:
+            self.status_text.value = (
+                "Instalador iniciado! Conclua a atualização na tela do sistema."
+            )
+            self.status_text.color = ft.Colors.GREEN_400
+        else:
+            filename = os.path.basename(saved_apk_path)
+            self.status_text.value = (
+                f"APK salvo com sucesso ({filename}).\n"
+                "Toque em 'Compartilhar / Abrir' ou abra o arquivo na sua pasta de Downloads."
+            )
+            self.status_text.color = ft.Colors.AMBER_300
+        self.page.update()
+
+    async def _compartilhar_apk(self, saved_apk_path: str) -> None:
+        """Abre a folha de compartilhamento/ações nativa para o arquivo APK."""
+        try:
+            abs_path = os.path.abspath(saved_apk_path)
+            share_service = ft.Share()
+            if hasattr(self.page, "_services"):
+                with contextlib.suppress(Exception):
+                    self.page._services.register_service(share_service)
+            elif hasattr(self.page, "overlay") and share_service not in self.page.overlay:
+                self.page.overlay.append(share_service)
+                self.page.update()
+
+            await share_service.share_files(
+                [
+                    ft.ShareFile(
+                        path=abs_path,
+                        mime_type="application/vnd.android.package-archive",
+                        name=os.path.basename(abs_path),
+                    )
+                ],
+                title="Instalar Hinário",
+                subject="Instalação de Atualização",
+            )
+        except Exception:
+            with contextlib.suppress(Exception):
+                await ft.UrlLauncher().launch_url(
+                    f"file://{os.path.abspath(saved_apk_path)}"
+                )
+
     def _handle_download_success(self, saved_apk_path: str) -> None:
         self.progress_bar.value = 1.0
+        filename = os.path.basename(saved_apk_path)
+        dir_name = os.path.dirname(saved_apk_path)
         self.status_text.value = (
-            "Download concluído e validado! Iniciando instalador..."
+            f"✓ Download concluído com sucesso!\n"
+            f"Salvo em: {dir_name}/\n"
+            f"Arquivo: {filename}"
         )
         self.status_text.color = ft.Colors.GREEN_400
         self.actions_row.controls = [
             ft.TextButton("Fechar", on_click=self._close_dialog),
+            ft.OutlinedButton(
+                "Compartilhar / Abrir",
+                icon=ft.Icons.SHARE,
+                on_click=lambda ev: asyncio.create_task(
+                    self._compartilhar_apk(saved_apk_path)
+                ),
+            ),
             ft.FilledButton(
                 "Instalar Agora",
                 icon=ft.Icons.INSTALL_MOBILE,
                 on_click=lambda ev: asyncio.create_task(
-                    trigger_apk_installation(saved_apk_path, self.download_url)
+                    self._acionar_instalacao(saved_apk_path)
                 ),
             ),
         ]
@@ -209,7 +339,7 @@ class UpdateDialog:
             )
             saved_apk_path = await self.download_task
             self._handle_download_success(saved_apk_path)
-            await trigger_apk_installation(saved_apk_path, self.download_url)
+            await self._acionar_instalacao(saved_apk_path)
         except asyncio.CancelledError:
             self._handle_download_cancelled()
             raise

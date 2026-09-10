@@ -940,6 +940,111 @@ async def test_edition_feedback_banner_and_soft_colors(in_memory_db):
     assert view_obj.selected_view_mode == "novo"
 
 
+@pytest.mark.asyncio
+async def test_hino_view_simplified_bible_mode_deactivates_version_buttons(in_memory_db):
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    mock_biblia_repo = MagicMock(spec=BibliaRepository)
+    mock_biblia_repo.get_available_versions.return_value = ["ARA"]
+    mock_biblia_repo.has_installed_bibles.return_value = False
+
+    view_obj = HinoView(
+        1,
+        hino_repo,
+        fav_repo,
+        hist_repo,
+        biblia_repository=mock_biblia_repo,
+        edition="novo",
+    )
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.height = 800
+    mock_page.update = MagicMock()
+    view_obj.page = mock_page
+
+    assert view_obj.is_simplified_bible is True
+
+    # 1. Barra inline da visualização do texto bíblico
+    view_obj._build_biblia_inline_toolbar(accent_color="#6750A4")
+    assert view_obj.inline_version_btn is not None
+    assert view_obj.inline_version_btn.visible is False
+    assert view_obj.inline_version_btn.disabled is True
+
+    # 2. Modal de leitura bíblica rápida
+    from src.views.hino_view import _BibliaModalSession
+    modal = _BibliaModalSession(view_obj, mock_page, "Salmos 23:1")
+    assert modal.is_simplified_bible is True
+    assert modal.version_btn.visible is False
+    assert modal.version_btn.disabled is True
+
+
+@pytest.mark.asyncio
+async def test_hino_view_version_selector_shows_only_installed_bibles(in_memory_db):
+    """Testa que quando há ao menos uma versão baixada, o seletor fica ativo e mostra apenas as instaladas."""
+    hino_repo = HinoRepository(in_memory_db)
+    fav_repo = FavoritoRepository(in_memory_db)
+    hist_repo = HistoricoRepository(in_memory_db)
+
+    mock_biblia_repo = MagicMock(spec=BibliaRepository)
+    mock_biblia_repo.has_installed_bibles.return_value = True
+    # Cenário com apenas 1 Bíblia instalada (ex: NVI)
+    mock_biblia_repo.get_available_versions.return_value = ["NVI"]
+    mock_biblia_repo.get_version_name.side_effect = lambda v: "Nova Versão Internacional" if v == "NVI" else v
+
+    view_obj = HinoView(
+        1,
+        hino_repo,
+        fav_repo,
+        hist_repo,
+        biblia_repository=mock_biblia_repo,
+        edition="novo",
+    )
+    mock_page = MagicMock(spec=ft.Page)
+    mock_page.height = 800
+    mock_page.update = MagicMock()
+    view_obj.page = mock_page
+
+    assert view_obj.is_simplified_bible is False
+
+    # 1. Barra inline
+    view_obj._build_biblia_inline_toolbar(accent_color="#6750A4")
+    assert view_obj.inline_version_btn is not None
+    assert view_obj.inline_version_btn.visible is True
+    assert view_obj.inline_version_btn.disabled is False
+    assert len(view_obj.inline_version_btn.items) == 1
+    assert "NVI" in view_obj.inline_version_btn.items[0].content
+
+    # 2. Modal mini visualizador
+    from src.views.hino_view import _BibliaModalSession
+    modal = _BibliaModalSession(view_obj, mock_page, "Salmos 23:1")
+    assert modal.is_simplified_bible is False
+    assert modal.version_btn.visible is True
+    assert modal.version_btn.disabled is False
+    assert len(modal.version_btn.items) == 1
+    assert "NVI" in modal.version_btn.items[0].content
+
+    # 3. Cenário com múltiplas versões instaladas
+    mock_biblia_repo.get_available_versions.return_value = ["ARA", "NVI", "NTLH"]
+    from src.views.biblia_view import build_bible_version_button
+    multi_btn = build_bible_version_button(
+        biblia_repository=mock_biblia_repo,
+        current_version="NVI",
+        on_version_selected=lambda ver: None,
+    )
+    assert multi_btn.visible is True
+    assert multi_btn.disabled is False
+    assert len(multi_btn.items) == 3
+    item_contents = [item.content for item in multi_btn.items]
+    assert "ARA" in item_contents
+    assert "NVI  ✓" in item_contents
+    assert "NTLH" in item_contents
+    # Garante que versões não instaladas não aparecem
+    assert "KJA" not in item_contents
+    assert "NVT" not in item_contents
+
+
+
 
 
 

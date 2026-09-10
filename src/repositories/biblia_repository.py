@@ -404,15 +404,20 @@ BIBLE_VERSION_NAMES: dict[str, str] = {
     "ARA": "Almeida Revista e Atualizada",
     "ARC": "Almeida Revista e Corrigida",
     "AS21": "Almeida Século 21",
+    "BKJ": "Bíblia King James 1611",
     "JFAA": "João Ferreira de Almeida Atualizada",
     "KJA": "King James Atualizada",
     "KJF": "King James Fiel",
+    "KJV": "King James Version",
+    "MSGF": "A Mensagem",
     "NAA": "Nova Almeida Atualizada",
     "NBV": "Nova Bíblia Viva",
     "NTLH": "Nova Tradução na Linguagem de Hoje",
     "NVI": "Nova Versão Internacional",
     "NVT": "Nova Versão Transformadora",
     "TB": "Tradução Brasileira",
+    "VFL": "Versão Fácil de Ler",
+    "BBE": "Bible in Basic English",
 }
 
 
@@ -482,6 +487,15 @@ class BibliaRepository:
             user_dir / "biblias",
             user_dir,
         ]
+        try:
+            from src.services.content_manager import ContentManager
+
+            cm_dir = ContentManager.get_modules_dir()
+            candidate_dirs.insert(0, cm_dir / "biblias")
+            candidate_dirs.insert(0, cm_dir)
+        except Exception:
+            pass
+
         env_modules = os.environ.get("HINARIO_MODULES_DIR")
         if env_modules:
             candidate_dirs.insert(0, Path(env_modules) / "biblias")
@@ -929,8 +943,9 @@ class BibliaRepository:
     def _map_row_to_book(r: Any) -> dict[str, Any]:
         """Converte um registro da tabela book em dicionário com id, name e testament."""
         bid = int(r["id"])
-        has_tid = "testament_reference_id" in r.keys() and r["testament_reference_id"] is not None
-        tid = int(r["testament_reference_id"]) if has_tid else (1 if bid <= 39 else 2)
+        has_tid = "testament_reference_id" in r and r["testament_reference_id"] is not None
+        default_tid = 1 if bid <= 39 else 2
+        tid = int(r["testament_reference_id"]) if has_tid else default_tid
         return {
             "id": bid,
             "name": str(r["name"]),

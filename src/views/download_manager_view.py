@@ -182,7 +182,7 @@ class DownloadManagerView:
         page: ft.Page,
         title: str,
         subtitle: str,
-        icon: str,
+        icon: Any,
         color: str,
         media_type: str,
         quality: str,

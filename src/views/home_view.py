@@ -1,5 +1,6 @@
 import asyncio
 import re
+from typing import Any
 import unicodedata
 
 import flet as ft
@@ -56,6 +57,9 @@ def strip_accents(s: str) -> str:
     return unicodedata.normalize("NFKD", s).encode("ASCII", "ignore").decode("utf-8")
 
 
+TOOLTIP_LIMPAR_BUSCA = "Limpar busca"
+
+
 class HomeView:
     """
     Interface da Home do Hinário Inteligente v0.2.
@@ -94,24 +98,19 @@ class HomeView:
         )
         self.edition: str = edition
 
-        self._novo_repos = (
-            (novo_hino_repo, novo_fav_repo, novo_hist_repo)
-            if (novo_hino_repo and novo_fav_repo and novo_hist_repo)
-            else (
-                (hino_repository, favorito_repository, historico_repository)
-                if edition == "novo"
-                else None
-            )
-        )
-        self._antigo_repos = (
-            (antigo_hino_repo, antigo_fav_repo, antigo_hist_repo)
-            if (antigo_hino_repo and antigo_fav_repo and antigo_hist_repo)
-            else (
-                (hino_repository, favorito_repository, historico_repository)
-                if edition == "antigo"
-                else None
-            )
-        )
+        if novo_hino_repo and novo_fav_repo and novo_hist_repo:
+            self._novo_repos = (novo_hino_repo, novo_fav_repo, novo_hist_repo)
+        elif edition == "novo":
+            self._novo_repos = (hino_repository, favorito_repository, historico_repository)
+        else:
+            self._novo_repos = None
+
+        if antigo_hino_repo and antigo_fav_repo and antigo_hist_repo:
+            self._antigo_repos = (antigo_hino_repo, antigo_fav_repo, antigo_hist_repo)
+        elif edition == "antigo":
+            self._antigo_repos = (hino_repository, favorito_repository, historico_repository)
+        else:
+            self._antigo_repos = None
 
         self._search_task: asyncio.Task | None = None
         self._sort_task: asyncio.Task | None = None
@@ -127,7 +126,6 @@ class HomeView:
         self.explore_container: ft.Column | None = None
         self.search_field: ft.TextField | None = None
         self.sort_button: ft.PopupMenuButton | None = None
-        self.edition_selector: ft.SegmentedButton | None = None
         self.filter_bar: ft.SegmentedButton | None = None
         self.active_filter_banner: ft.Container | None = None
         self._explore_sections_cached: list[ft.Control] | None = None
@@ -168,7 +166,7 @@ class HomeView:
                     self.search_field.suffix = ft.IconButton(
                         ft.Icons.CLEAR,
                         on_click=self._clear_search,
-                        tooltip="Limpar busca",
+                        tooltip=TOOLTIP_LIMPAR_BUSCA,
                         icon_size=18,
                     )
                 self.current_filter = "todos"
@@ -238,7 +236,7 @@ class HomeView:
                 ft.IconButton(
                     ft.Icons.CLEAR,
                     on_click=self._clear_search,
-                    tooltip="Limpar busca",
+                    tooltip=TOOLTIP_LIMPAR_BUSCA,
                     icon_size=18,
                 )
                 if self.current_search
@@ -248,34 +246,13 @@ class HomeView:
             border_radius=12,
             expand=True,
             content_padding=ft.Padding.symmetric(vertical=12, horizontal=16),
-            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            value=self.current_search,
+            dense=True,
         )
 
         self.sort_button = ft.PopupMenuButton(
             icon=ft.Icons.SORT,
             tooltip="Modo de Ordenação",
             items=self._build_sort_menu_items(),
-        )
-
-        self.edition_selector = ft.SegmentedButton(
-            selected=[self.edition],
-            allow_empty_selection=False,
-            show_selected_icon=False,
-            segments=[
-                ft.Segment(
-                    value="novo",
-                    label=ft.Text("Novo (2022)", size=12),
-                    icon=ft.Icon(ft.Icons.AUTO_AWESOME_OUTLINED, size=15),
-                ),
-                ft.Segment(
-                    value="antigo",
-                    label=ft.Text("Tradicional (1996)", size=12),
-                    icon=ft.Icon(ft.Icons.HISTORY_EDU_OUTLINED, size=15),
-                ),
-            ],
-            on_change=self._on_edition_select,
-            expand=True,
         )
 
         self.filter_bar = ft.SegmentedButton(
@@ -312,15 +289,14 @@ class HomeView:
         )
 
         badge_year = "2022" if self.edition == "novo" else "1996"
-        badge_color = (
-            (
+        if self.edition == "novo":
+            badge_color = (
                 self.theme_service.get_accent_color()
                 if self.theme_service
                 else ft.Colors.PRIMARY
             )
-            if self.edition == "novo"
-            else ft.Colors.TERTIARY
-        )
+        else:
+            badge_color = ft.Colors.TERTIARY
 
         self._cached_view = ft.View(
             route=f"/{self.edition}",
@@ -346,53 +322,51 @@ class HomeView:
                             padding=ft.Padding.symmetric(horizontal=6, vertical=2),
                         ),
                     ],
-                    alignment=ft.MainAxisAlignment.CENTER,
-                    tight=True,
+                    spacing=8,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                 ),
                 center_title=True,
                 bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
                 actions=[
-                    ft.IconButton(
-                        ft.Icons.INFO_OUTLINE,
-                        tooltip="Sobre o App e Configurações",
-                        on_click=self._show_about_dialog,
+                    self._build_action_button(
+                        ft.Icons.SETTINGS_OUTLINED,
+                        "Configurações e Temas",
+                        self._show_about_dialog,
+                    ),
+                    self._build_action_button(
+                        ft.Icons.DOWNLOAD_FOR_OFFLINE_OUTLINED,
+                        "Gerenciar Downloads",
+                        lambda e: asyncio.create_task(self._navigate("/downloads")),
                     ),
                 ],
             ),
             controls=[
                 ft.SafeArea(
                     maintain_bottom_view_padding=True,
-                    content=ft.Column(
-                        controls=[
-                            ft.Container(
-                                content=ft.Row(
-                                    controls=[
-                                        self.search_field,
-                                        self.sort_button,
-                                    ],
-                                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    content=ft.Container(
+                        content=ft.Column(
+                            controls=[
+                                ft.Container(
+                                    content=ft.Row(
+                                        controls=[
+                                            self.search_field,
+                                            self.sort_button,
+                                        ],
+                                        spacing=8,
+                                    ),
+                                    padding=ft.Padding.symmetric(horizontal=12, vertical=4),
                                 ),
-                                padding=ft.Padding.only(
-                                    left=16, top=16, right=16, bottom=6
+                                self.active_filter_banner,
+                                ft.Container(
+                                    content=ft.Row(
+                                        controls=[self.filter_bar],
+                                    ),
+                                    padding=ft.Padding.symmetric(horizontal=12, vertical=4),
                                 ),
-                            ),
-                            ft.Container(
-                                content=ft.Row(
-                                    controls=[self.edition_selector],
-                                ),
-                                alignment=ft.Alignment.CENTER,
-                                padding=ft.Padding.symmetric(horizontal=16, vertical=2),
-                            ),
-                            ft.Container(
-                                content=ft.Row(
-                                    controls=[self.filter_bar],
-                                ),
-                                alignment=ft.Alignment.CENTER,
-                                padding=ft.Padding.symmetric(horizontal=16, vertical=4),
-                            ),
-                            self.active_filter_banner,
-                            self.main_content_container,
-                        ],
+                                self.main_content_container,
+                            ],
+                            expand=True,
+                        ),
                         expand=True,
                     ),
                     expand=True,
@@ -401,17 +375,13 @@ class HomeView:
         )
         return self._cached_view
 
-    async def _on_edition_select(self, e: ft.ControlEvent):
-        selected = e.control.selected
-        if not selected:
-            return
-        new_edition = next(iter(selected))
-        if new_edition == self.edition:
-            return
-        if self.page:
-            await self.page.push_route(f"/{new_edition}")
-        else:
-            await self.switch_edition(new_edition)
+    @staticmethod
+    def _build_action_button(icon: Any, tooltip: str, on_click: Any) -> ft.IconButton:
+        return ft.IconButton(
+            icon=icon,
+            tooltip=tooltip,
+            on_click=on_click,
+        )
 
     async def switch_edition(self, new_edition: str):
         """Alterna a edição de hinos assincronamente e recarrega os dados."""
@@ -422,9 +392,6 @@ class HomeView:
             self.hino_repository, self.favorito_repository, self.historico_repository = self._novo_repos
         elif new_edition == "antigo" and self._antigo_repos:
             self.hino_repository, self.favorito_repository, self.historico_repository = self._antigo_repos
-
-        if self.edition_selector:
-            self.edition_selector.selected = [new_edition]
 
         edition_title = (
             "Hinário Novo" if self.edition == "novo" else "Hinário Tradicional"
@@ -548,6 +515,47 @@ class HomeView:
             padding=ft.Padding.all(40),
         )
 
+    def _resolve_num_color(self) -> str:
+        if self.edition == "novo":
+            return (
+                self.theme_service.get_accent_color()
+                if self.theme_service
+                else ft.Colors.PRIMARY
+            )
+        if self.theme_service and self.theme_service.is_amoled:
+            return ft.Colors.PRIMARY
+        return ft.Colors.TERTIARY
+
+    def _create_hino_tile(self, hino: Hino, num_color: str) -> ft.Control:
+        return ft.ListTile(
+            leading=ft.Container(
+                content=ft.Text(
+                    format_hino_number(hino.numero),
+                    weight=ft.FontWeight.BOLD,
+                    size=13,
+                    color=num_color,
+                ),
+                width=52,
+                height=36,
+                border_radius=8,
+                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                alignment=ft.Alignment.CENTER,
+            ),
+            title=ft.Text(
+                hino.titulo,
+                weight=ft.FontWeight.W_500,
+                size=15,
+                color=ft.Colors.ON_SURFACE,
+            ),
+            bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
+            shape=ft.RoundedRectangleBorder(radius=12),
+            hover_color=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+            content_padding=ft.Padding.symmetric(horizontal=12, vertical=4),
+            on_click=lambda e=None, h_id=hino.id: asyncio.create_task(
+                self._navigate(f"/{self.edition}/hino/{h_id}")
+            ),
+        )
+
     def _render_hino_tiles(self, hinos: list[Hino]):
         if not self.list_container:
             return
@@ -555,73 +563,29 @@ class HomeView:
         seen_ids = set()
         unique_hinos = []
         for h in hinos:
-            if h.id is None:
-                continue
-            h_id = h.id
-            if h_id not in seen_ids:
-                seen_ids.add(h_id)
+            if h.id is not None and h.id not in seen_ids:
+                seen_ids.add(h.id)
                 unique_hinos.append(h)
 
-        accent = (
-            self.theme_service.get_accent_color()
-            if self.theme_service
-            else ft.Colors.PRIMARY
-        )
-        num_color = (
-            accent
-            if self.edition == "novo"
-            else (
-                ft.Colors.PRIMARY
-                if (self.theme_service and self.theme_service.is_amoled)
-                else ft.Colors.TERTIARY
-            )
-        )
-
+        num_color = self._resolve_num_color()
         tiles: list[ft.Control] = [
-            ft.ListTile(
-                leading=ft.Container(
-                    content=ft.Text(
-                        format_hino_number(hino.numero),
-                        weight=ft.FontWeight.BOLD,
-                        size=13,
-                        color=num_color,
-                    ),
-                    width=52,
-                    height=36,
-                    border_radius=8,
-                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                    alignment=ft.Alignment.CENTER,
-                ),
-                title=ft.Text(
-                    hino.titulo,
-                    weight=ft.FontWeight.W_500,
-                    size=15,
-                    color=ft.Colors.ON_SURFACE,
-                ),
-                bgcolor=ft.Colors.SURFACE_CONTAINER_LOW,
-                shape=ft.RoundedRectangleBorder(radius=12),
-                hover_color=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                content_padding=ft.Padding.symmetric(horizontal=12, vertical=4),
-                on_click=lambda e=None, h_id=hino.id: asyncio.create_task(
-                    self._navigate(f"/{self.edition}/hino/{h_id}")
-                ),
-            )
-            for hino in unique_hinos
+            self._create_hino_tile(hino, num_color) for hino in unique_hinos
         ]
 
         if not tiles:
             self.list_container.controls = [self._create_empty_state_control()]
+            return
+
+        chunk_size = 40
+        if len(tiles) <= chunk_size:
+            self.list_container.controls = tiles
         else:
-            chunk_size = 40
-            if len(tiles) <= chunk_size:
-                self.list_container.controls = tiles
-            else:
-                self.list_container.controls = tiles[:chunk_size]
-                if self._chunk_render_task and not self._chunk_render_task.done():
-                    self._chunk_render_task.cancel()
-                self._chunk_render_task = asyncio.create_task(
-                    self._append_remaining_tiles(tiles[chunk_size:])
-                )
+            self.list_container.controls = tiles[:chunk_size]
+            if self._chunk_render_task and not self._chunk_render_task.done():
+                self._chunk_render_task.cancel()
+            self._chunk_render_task = asyncio.create_task(
+                self._append_remaining_tiles(tiles[chunk_size:])
+            )
 
     async def _append_remaining_tiles(self, remaining: list[ft.Control]):
         """Anexa o restante dos hinos de forma não-bloqueante para não travar a UI em ARMv7."""
@@ -802,98 +766,87 @@ class HomeView:
         if self.page:
             self.page.update()
 
+    def _build_banner_content(
+        self,
+        icon: Any,
+        color: Any,
+        text: str,
+        btn_label: str,
+        btn_action: Any,
+        clear_tooltip: str,
+    ) -> ft.Container:
+        return ft.Container(
+            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+            border_radius=8,
+            padding=ft.Padding.symmetric(horizontal=12, vertical=6),
+            content=ft.Row(
+                controls=[
+                    ft.Icon(icon, size=18, color=color),
+                    ft.Text(text, weight=ft.FontWeight.W_500, size=13, expand=True),
+                    ft.TextButton(
+                        content=ft.Text(btn_label),
+                        icon=ft.Icons.ARROW_BACK,
+                        on_click=btn_action,
+                    ),
+                    ft.IconButton(
+                        icon=ft.Icons.CLOSE,
+                        tooltip=clear_tooltip,
+                        icon_size=18,
+                        on_click=lambda e: asyncio.create_task(
+                            self._clear_category_or_theme_filter()
+                        ),
+                    ),
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            ),
+        )
+
     def _update_filter_banner(self, count: int = 0):
         """Atualiza a exibição do banner de filtro ativo (Categoria ou Tema)."""
         if not self.active_filter_banner:
             return
 
-        if self.current_filter == "categoria" and self.active_category:
-            self.active_filter_banner.visible = True
-            btn_label = "Voltar para o hino" if self.origin_hino_id else "Explorar Categorias"
-            btn_action = (
-                (lambda e: asyncio.create_task(self._navigate_back_to_hino()))
-                if self.origin_hino_id
-                else (lambda e: asyncio.create_task(self._return_to_explore()))
-            )
-            self.active_filter_banner.content = ft.Container(
-                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                border_radius=8,
-                padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-                content=ft.Row(
-                    controls=[
-                        ft.Icon(
-                            ft.Icons.FOLDER,
-                            size=18,
-                            color=(
-                                self.theme_service.get_accent_color()
-                                if self.theme_service
-                                else ft.Colors.PRIMARY
-                            ),
-                        ),
-                        ft.Text(
-                            f"Categoria: {self.active_category} ({count} hinos)",
-                            weight=ft.FontWeight.W_500,
-                            size=13,
-                            expand=True,
-                        ),
-                        ft.TextButton(
-                            content=ft.Text(btn_label),
-                            icon=ft.Icons.ARROW_BACK,
-                            on_click=btn_action,
-                        ),
-                        ft.IconButton(
-                            icon=ft.Icons.CLOSE,
-                            tooltip="Limpar filtro de categoria",
-                            icon_size=18,
-                            on_click=lambda e: asyncio.create_task(
-                                self._clear_category_or_theme_filter()
-                            ),
-                        ),
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                ),
-            )
-        elif self.current_filter == "tema" and self.active_tema:
-            self.active_filter_banner.visible = True
-            btn_label = "Voltar para o hino" if self.origin_hino_id else "Explorar Temas"
-            btn_action = (
-                (lambda e: asyncio.create_task(self._navigate_back_to_hino()))
-                if self.origin_hino_id
-                else (lambda e: asyncio.create_task(self._return_to_explore()))
-            )
-            self.active_filter_banner.content = ft.Container(
-                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-                border_radius=8,
-                padding=ft.Padding.symmetric(horizontal=12, vertical=6),
-                content=ft.Row(
-                    controls=[
-                        ft.Icon(ft.Icons.LABEL, size=18, color=ft.Colors.TERTIARY),
-                        ft.Text(
-                            f"Tema: {self.active_tema} ({count} hinos)",
-                            weight=ft.FontWeight.W_500,
-                            size=13,
-                            expand=True,
-                        ),
-                        ft.TextButton(
-                            content=ft.Text(btn_label),
-                            icon=ft.Icons.ARROW_BACK,
-                            on_click=btn_action,
-                        ),
-                        ft.IconButton(
-                            icon=ft.Icons.CLOSE,
-                            tooltip="Limpar filtro de tema",
-                            icon_size=18,
-                            on_click=lambda e: asyncio.create_task(
-                                self._clear_category_or_theme_filter()
-                            ),
-                        ),
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                ),
-            )
-        else:
+        is_categoria = self.current_filter == "categoria" and self.active_category
+        is_tema = self.current_filter == "tema" and self.active_tema
+
+        if not (is_categoria or is_tema):
             self.active_filter_banner.visible = False
             self.active_filter_banner.content = None
+            return
+
+        self.active_filter_banner.visible = True
+        btn_label = "Voltar para o hino" if self.origin_hino_id else (
+            "Explorar Categorias" if is_categoria else "Explorar Temas"
+        )
+        btn_action = (
+            (lambda e: asyncio.create_task(self._navigate_back_to_hino()))
+            if self.origin_hino_id
+            else (lambda e: asyncio.create_task(self._return_to_explore()))
+        )
+
+        if is_categoria:
+            icon = ft.Icons.FOLDER
+            color = (
+                self.theme_service.get_accent_color()
+                if self.theme_service
+                else ft.Colors.PRIMARY
+            )
+            text = f"Categoria: {self.active_category} ({count} hinos)"
+            clear_tooltip = "Limpar filtro de categoria"
+        else:
+            icon = ft.Icons.LABEL
+            color = ft.Colors.TERTIARY
+            text = f"Tema: {self.active_tema} ({count} hinos)"
+            clear_tooltip = "Limpar filtro de tema"
+
+        self.active_filter_banner.content = self._build_banner_content(
+            icon=icon,
+            color=color,
+            text=text,
+            btn_label=btn_label,
+            btn_action=btn_action,
+            clear_tooltip=clear_tooltip,
+        )
 
     async def _navigate_back_to_hino(self) -> None:
         """Navega de volta para o hino de onde o filtro se originou."""
@@ -927,7 +880,7 @@ class HomeView:
         if self.active_filter_banner:
             self.active_filter_banner.visible = False
 
-    async def _handle_empty_filter_selection(self) -> None:
+    def _handle_empty_filter_selection(self) -> None:
         """Restaura o filtro quando ocorre desseleção acidental de aba."""
         if self.current_filter in ("categoria", "tema"):
             return
@@ -1126,7 +1079,7 @@ class HomeView:
     async def _on_filter_select(self, e):
         selected = e.control.selected
         if not selected:
-            await self._handle_empty_filter_selection()
+            self._handle_empty_filter_selection()
             return
 
         self._reset_search_state()

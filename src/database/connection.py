@@ -248,6 +248,14 @@ class DatabaseConnection:
         user_dir = DatabaseConnection._get_user_data_dir()
         candidates.append(user_dir / "modules" / filename)
         candidates.append(user_dir / "modules" / "biblias" / filename)
+        try:
+            from src.services.content_manager import ContentManager
+
+            cm_dir = ContentManager.get_modules_dir()
+            candidates.append(cm_dir / filename)
+            candidates.append(cm_dir / "biblias" / filename)
+        except Exception:
+            pass
         env_modules = os.environ.get("HINARIO_MODULES_DIR")
         if env_modules:
             candidates.append(Path(env_modules) / filename)
