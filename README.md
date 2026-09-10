@@ -7,7 +7,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/Lucas2Araujo/NHA_Intel?color=blue&label=Vers%C3%A3o&style=flat-square)](https://github.com/Lucas2Araujo/NHA_Intel/releases/latest)
 [![Testes Automatizados](https://img.shields.io/badge/Testes-197%20passando-brightgreen?style=flat-square&logo=pytest&logoColor=white)](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%20%7C%203.14-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![Flet 0.85+](https://img.shields.io/badge/Flet-0.85%2B-5c2d91?style=flat-square&logo=flutter&logoColor=white)](https://flet.dev/)
+[![Flet 0.86+](https://img.shields.io/badge/Flet-0.85%2B-5c2d91?style=flat-square&logo=flutter&logoColor=white)](https://flet.dev/)
 [![SQLite FTS5](https://img.shields.io/badge/SQLite-FTS5%20Inside-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 [![License: MIT](https://img.shields.io/badge/Licen%C3%A7a-MIT-green.svg?style=flat-square)](LICENSE)
 
