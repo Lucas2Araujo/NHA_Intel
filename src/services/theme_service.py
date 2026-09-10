@@ -267,7 +267,7 @@ class ThemeService:
         page.update()
 
     async def set_glass_blur_enabled(
-        self, enabled: bool, page: Optional[ft.Page] = None
+        self, enabled: bool, page: ft.Page | None = None
     ) -> None:
         """Ativa ou desativa o desfoque de fundo (Backdrop Blur) do Liquid Glass."""
         await self.theme_engine.set_glass_blur_enabled(enabled, page)
