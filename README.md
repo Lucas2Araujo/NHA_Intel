@@ -259,7 +259,7 @@ python main.py
 ## 🧪 Testes e Qualidade de Código
 
 ### Executar a Suíte de Testes (Pytest)
-O projeto conta com **165 testes assíncronos** cobrindo repositórios, serviços, views, comparador de versões, persistência e integridade do banco:
+O projeto conta com **172 testes assíncronos** cobrindo repositórios, serviços, views, comparador de versões, persistência e integridade do banco:
 ```bash
 pytest -v
 ```
@@ -283,7 +283,7 @@ O repositório possui fluxos de automação contínua via **GitHub Actions**:
 
 1. **Integração Contínua (CI - `.github/workflows/ci.yml`)**:
    - Disparada em todo `push` ou `pull_request` para as branches `main` e `master`.
-   - Executa a suíte completa de 165 testes unitários e de integração no ambiente Linux com Python 3.14.
+   - Executa a suíte completa de 172 testes unitários e de integração no ambiente Linux com Python 3.14.
    - Sincroniza dinamicamente a contagem de testes no `README.md` a cada push na branch principal.
 
 2. **Entrega Contínua (CD - `.github/workflows/cd.yml`)**:
