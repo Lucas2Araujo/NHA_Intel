@@ -1,6 +1,7 @@
 import asyncio
 import inspect
 import json
+import re
 from typing import Any, cast
 import urllib.parse
 
@@ -16,6 +17,14 @@ from src.repositories.hino_repository import HinoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.services.media_service import MediaService
 from src.services.theme_service import ThemeService
+from src.theme import (
+    ThemeEngine,
+    ThemeModeType,
+    ThemePalette,
+    build_kids_badge,
+    build_verse_card,
+    is_kids_hymn,
+)
 from src.views.biblia_view import (
     build_bible_version_button,
     update_bible_version_button,
@@ -41,6 +50,115 @@ BTN_CAPITULO_COMPLETO = "Capítulo Completo"
 BTN_APENAS_VERSICULOS = "Apenas Versículos"
 MSG_LETRA_NAO_DISPONIVEL = "Letra não disponível no banco local."
 MSG_HINO_NAO_ENCONTRADO = "Hino correspondente não encontrado."
+
+
+class LetraViewContainer(ft.Container):
+    """
+    Contêiner dinâmico e reativo para a renderização estruturada das estrofes da letra.
+    Mantém compatibilidade com a interface de atributo `.letra_text` (.value, .size, .font_family)
+    enquanto isola a roupagem lúdica dos hinos infantis (508-557) e formatação editorial.
+    """
+
+    def __init__(
+        self,
+        letra: str | None,
+        hino_numero: int | str,
+        font_size: int,
+        font_family: str | None,
+        theme_engine: Any,
+        page_width: Any = None,
+    ):
+        is_num = isinstance(page_width, (int, float))
+        width_val = 650 if (is_num and page_width > 650) else None
+        column = ft.Column(
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=0,
+        )
+        super().__init__(
+            content=column,
+            alignment=ft.Alignment.TOP_CENTER,
+            width=width_val,
+            expand=False,
+        )
+        self._column = column
+        self._letra = letra or ""
+        self._hino_numero = hino_numero
+        self._font_size = font_size
+        self._font_family = font_family
+        self.theme_engine = theme_engine
+        self._rebuild_controls()
+
+    @property
+    def value(self) -> str:
+        return self._letra
+
+    @value.setter
+    def value(self, val: str | None):
+        self._letra = val or ""
+        self._rebuild_controls()
+
+    @property
+    def size(self) -> int:
+        return self._font_size
+
+    @size.setter
+    def size(self, val: int):
+        self._font_size = val
+        self._rebuild_controls()
+
+    @property
+    def font_family(self) -> str | None:
+        return self._font_family
+
+    @font_family.setter
+    def font_family(self, val: str | None):
+        self._font_family = val
+        self._rebuild_controls()
+
+    def update_hino(self, letra: str | None, hino_numero: int | str):
+        self._letra = letra or ""
+        self._hino_numero = hino_numero
+        self._rebuild_controls()
+
+    def update_width(self, page_width: Any):
+        is_num = isinstance(page_width, (int, float))
+        self.width = 650 if (is_num and page_width > 650) else None
+
+    def _rebuild_controls(self):
+        raw = (self._letra or "").strip()
+        if not raw or raw == MSG_LETRA_NAO_DISPONIVEL:
+            palette = getattr(self.theme_engine, "get_current_palette", None)
+            pal = palette() if callable(palette) else None
+            text_col = pal.text_primary if pal else ft.Colors.ON_SURFACE
+            self._column.controls = [
+                ft.Text(
+                    MSG_LETRA_NAO_DISPONIVEL,
+                    size=self._font_size,
+                    color=text_col,
+                    font_family=self._font_family,
+                    text_align=ft.TextAlign.CENTER,
+                )
+            ]
+            return
+
+        stanzas = [s.strip() for s in re.split(r"\n\s*\n", raw) if s.strip()]
+        controls: list[ft.Control] = []
+
+        if is_kids_hymn(self._hino_numero):
+            controls.append(build_kids_badge())
+
+        for idx, estrofe in enumerate(stanzas, start=1):
+            card = build_verse_card(
+                estrofe=estrofe,
+                index=idx,
+                hino_numero=self._hino_numero,
+                theme_engine=self.theme_engine,
+                font_size=self._font_size,
+                font_family=self._font_family,
+            )
+            controls.append(card)
+
+        self._column.controls = controls
 
 
 class _BibliaModalSession:
@@ -411,6 +529,7 @@ class HinoView:
         novo_repository: HinoRepository | None = None,
         edition: str = "novo",
         theme_service: ThemeService | None = None,
+        theme_engine: ThemeEngine | None = None,
     ):
         self.hino_id = hino_id
         self.hino_repository = hino_repository
@@ -424,6 +543,11 @@ class HinoView:
         self.novo_repository = novo_repository
         self.edition: str = edition
         self.theme_service = theme_service
+        self.theme_engine = (
+            theme_engine
+            or getattr(theme_service, "theme_engine", None)
+            or ThemeEngine()
+        )
 
         # Estado da visualização comparativa (Hinário Novo vs Antigo)
         self.comparativo: HinoComparativo | None = None
@@ -561,6 +685,8 @@ class HinoView:
         if not self.is_custom_font and self.page:
             self.font_size = self._calculate_responsive_font_size(self.page)
             self._update_font(self.page)
+        if self.letra_text and hasattr(self.letra_text, "update_width") and self.page:
+            self.letra_text.update_width(getattr(self.page, "width", None))
 
     def _create_comparativo_task(self, numero: str):
         """Retorna a corrotina de busca no repositório de comparativo conforme a edição."""
@@ -721,13 +847,13 @@ class HinoView:
 
     def _build_view_structure(self, page: ft.Page, hino: Hino) -> None:
         """Inicializa os componentes visuais principais da tela do hino."""
-        self.letra_text = ft.Text(
-            hino.letra if hino.letra else MSG_LETRA_NAO_DISPONIVEL,
-            size=self.font_size,
-            text_align=ft.TextAlign.CENTER,
-            weight=ft.FontWeight.W_400,
+        self.letra_text = LetraViewContainer(
+            letra=hino.letra if hino.letra else MSG_LETRA_NAO_DISPONIVEL,
+            hino_numero=hino.numero,
+            font_size=self.font_size,
             font_family=FONT_FAMILY_MAP.get(self.selected_font),
-            expand=True,
+            theme_engine=self.theme_engine,
+            page_width=getattr(page, "width", None),
         )
 
         self.content_container = ft.Container(
@@ -984,9 +1110,12 @@ class HinoView:
                 pass
 
         if self.letra_text:
-            self.letra_text.value = (
-                new_hino.letra if new_hino.letra else MSG_LETRA_NAO_DISPONIVEL
-            )
+            if hasattr(self.letra_text, "update_hino"):
+                self.letra_text.update_hino(new_hino.letra, new_hino.numero)
+            else:
+                self.letra_text.value = (
+                    new_hino.letra if new_hino.letra else MSG_LETRA_NAO_DISPONIVEL
+                )
 
         self.selected_view_mode = self.edition
 

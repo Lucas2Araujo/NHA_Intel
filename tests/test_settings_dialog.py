@@ -257,3 +257,42 @@ def test_show_settings_dialog_real_flet_page(in_memory_db):
     assert opened_dialog.open is True
 
 
+@pytest.mark.asyncio
+async def test_settings_dialog_glass_blur_toggle(in_memory_db):
+    """Valida o switch de desfoque/performance do Liquid Glass dentro do modal de configurações."""
+    from src.theme.palette import ThemeModeType
+
+    theme_service = ThemeService(in_memory_db)
+    mock_page = MagicMock(spec=ft.Page)
+
+    controller = SettingsDialogController(
+        page=mock_page,
+        theme_service=theme_service,
+        initial_tab="aparencia",
+    )
+    controller.build_bottom_sheet()
+
+    # Inicialmente em Material You -> tile de blur oculto
+    assert controller.glass_blur_tile.visible is False
+
+    # Altera para Liquid Glass
+    mock_ev_style = MagicMock()
+    mock_ev_style.control.selected = {"liquid_glass"}
+    await controller._on_theme_style_change(mock_ev_style)
+
+    assert controller.glass_blur_tile.visible is True
+    assert controller.glass_blur_switch.value is True
+
+    # Desativa o blur (modo desempenho)
+    await controller._on_glass_blur_toggle(False)
+    assert theme_service.theme_engine.glass_blur_enabled is False
+    assert controller.glass_blur_switch.value is False
+
+    # Muda para Classic Book -> tile deve ficar oculto
+    mock_ev_cb = MagicMock()
+    mock_ev_cb.control.selected = {"classic_book"}
+    await controller._on_theme_style_change(mock_ev_cb)
+    assert controller.glass_blur_tile.visible is False
+
+
+

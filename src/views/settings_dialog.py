@@ -79,6 +79,9 @@ class SettingsDialogController:
         self.aparencia_font_container: ft.Container | None = None
 
         # Controles reativos da aba Aparência
+        self.theme_style_segmented: ft.SegmentedButton | None = None
+        self.glass_blur_switch: ft.Switch | None = None
+        self.glass_blur_tile: ft.Container | None = None
         self.theme_mode_segmented: ft.SegmentedButton | None = None
         self.seed_chips_row: ft.Row | None = None
         self.amoled_switch: ft.Switch | None = None
@@ -128,6 +131,21 @@ class SettingsDialogController:
             await self.theme_service.set_theme_mode(mode, self.page)
             self._update_controls_state()
 
+    async def _on_theme_style_change(self, e) -> None:
+        selected = getattr(e.control, "selected", None)
+        if selected:
+            val = next(iter(selected))
+            if hasattr(self.theme_service, "set_theme_style"):
+                await self.theme_service.set_theme_style(val, self.page)
+            self._update_controls_state()
+
+    async def _on_glass_blur_toggle(self, enabled: bool) -> None:
+        if hasattr(self.theme_service, "set_glass_blur_enabled"):
+            await self.theme_service.set_glass_blur_enabled(enabled, self.page)
+        elif hasattr(self.theme_service, "theme_engine"):
+            await self.theme_service.theme_engine.set_glass_blur_enabled(enabled, self.page)
+        self._update_controls_state()
+
     async def _on_seed_select(self, seed_key: str) -> None:
         await self.theme_service.set_seed(seed_key, self.page)
         self._update_controls_state()
@@ -151,6 +169,15 @@ class SettingsDialogController:
 
     def _update_controls_state(self) -> None:
         """Atualiza os controles visuais dentro da aba de Aparência."""
+        if self.theme_style_segmented and hasattr(self.theme_service, "theme_style"):
+            style_val = getattr(self.theme_service.theme_style, "value", str(self.theme_service.theme_style))
+            self.theme_style_segmented.selected = [style_val]
+        if self.glass_blur_switch:
+            engine = getattr(self.theme_service, "theme_engine", None)
+            self.glass_blur_switch.value = getattr(engine, "glass_blur_enabled", True) if engine else True
+        if self.glass_blur_tile and hasattr(self.theme_service, "theme_style"):
+            style_val = getattr(self.theme_service.theme_style, "value", str(self.theme_service.theme_style))
+            self.glass_blur_tile.visible = (style_val == "liquid_glass")
         if self.theme_mode_segmented:
             self.theme_mode_segmented.selected = [self.theme_service.theme_mode]
         if self.amoled_switch:
@@ -367,6 +394,75 @@ class SettingsDialogController:
         )
 
         # 4. Conteúdo da Aba APARÊNCIA
+        # 4.0 Seletor de Estilo de Tema (Theme Engine)
+        current_style = getattr(self.theme_service, "theme_style", None)
+        current_style_val = (
+            current_style.value
+            if hasattr(current_style, "value")
+            else str(current_style or "material_you")
+        )
+        self.theme_style_segmented = ft.SegmentedButton(
+            segments=[
+                ft.Segment(
+                    value="material_you",
+                    label=ft.Text("Material You", size=10),
+                    icon=ft.Icon(ft.Icons.AUTO_AWESOME_OUTLINED, size=14),
+                ),
+                ft.Segment(
+                    value="liquid_glass",
+                    label=ft.Text("Liquid Glass", size=10),
+                    icon=ft.Icon(ft.Icons.BLUR_ON, size=14),
+                ),
+                ft.Segment(
+                    value="classic_book",
+                    label=ft.Text("Classic Book", size=10),
+                    icon=ft.Icon(ft.Icons.MENU_BOOK, size=14),
+                ),
+            ],
+            selected=[current_style_val],
+            allow_multiple_selection=False,
+            on_change=lambda e: asyncio.create_task(self._on_theme_style_change(e)),
+        )
+
+        # 4.0.1 Modo Desempenho / Desfoque Liquid Glass
+        engine = getattr(self.theme_service, "theme_engine", None)
+        blur_enabled = getattr(engine, "glass_blur_enabled", True) if engine else True
+
+        self.glass_blur_switch = ft.Switch(
+            value=blur_enabled,
+            on_change=lambda e: asyncio.create_task(
+                self._on_glass_blur_toggle(e.control.value)
+            ),
+        )
+        self.glass_blur_tile = ft.Container(
+            content=ft.Row(
+                controls=[
+                    ft.Icon(ft.Icons.BLUR_ON, size=20, color=ft.Colors.PRIMARY),
+                    ft.Column(
+                        controls=[
+                            ft.Text(
+                                "Desfoque Vítreo Avançado",
+                                size=13,
+                                weight=ft.FontWeight.W_500,
+                            ),
+                            ft.Text(
+                                "Desative se notar lentidão no aparelho",
+                                size=11,
+                                color=ft.Colors.ON_SURFACE_VARIANT,
+                            ),
+                        ],
+                        spacing=1,
+                        expand=True,
+                    ),
+                    self.glass_blur_switch,
+                ],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            ),
+            padding=ft.Padding.symmetric(vertical=4),
+            visible=(current_style_val == "liquid_glass"),
+        )
+
         # 4.1 Seletor de Modo de Tema
         self.theme_mode_segmented = ft.SegmentedButton(
             segments=[
@@ -482,6 +578,15 @@ class SettingsDialogController:
         self.aparencia_container = ft.Container(
             content=ft.Column(
                 controls=[
+                    ft.Text(
+                        "Estilo Visual (Theme Engine)",
+                        size=13,
+                        weight=ft.FontWeight.BOLD,
+                        color=ft.Colors.PRIMARY,
+                    ),
+                    self.theme_style_segmented,
+                    self.glass_blur_tile,
+                    ft.Container(height=4),
                     ft.Text(
                         "Modo de Tema",
                         size=13,

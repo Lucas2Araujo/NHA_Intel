@@ -11,6 +11,7 @@ from src.repositories.hino_repository import HinoRepository
 from src.repositories.historico_repository import HistoricoRepository
 from src.services.theme_service import ThemeService
 from src.services.updater_service import UpdaterService
+from src.theme import ThemeEngine, ThemeModeType
 from src.views.settings_dialog import show_settings_dialog
 from src.views.update_dialog import show_update_dialog
 
@@ -88,6 +89,7 @@ class HomeView:
         antigo_hino_repo: HinoRepository | None = None,
         antigo_fav_repo: FavoritoRepository | None = None,
         antigo_hist_repo: HistoricoRepository | None = None,
+        theme_engine: ThemeEngine | None = None,
     ):
         self.hino_repository = hino_repository
         self.favorito_repository = favorito_repository
@@ -95,6 +97,11 @@ class HomeView:
         self.updater_service = updater_service or UpdaterService()
         self.theme_service = theme_service or ThemeService(
             hino_repository.db_connection
+        )
+        self.theme_engine = (
+            theme_engine
+            or getattr(self.theme_service, "theme_engine", None)
+            or ThemeEngine()
         )
         self.edition: str = edition
 
@@ -608,9 +615,9 @@ class HomeView:
     ) -> ft.Container:
         chips: list[ft.Control] = [
             ft.Chip(
-                label=ft.Text(item, size=12),
+                label=ft.Text(item, size=12, color=ft.Colors.ON_SURFACE),
                 leading=ft.Icon(icon, size=16, color=icon_color),
-                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+                bgcolor=ft.Colors.SURFACE_CONTAINER,
                 on_click=lambda e=None, val=item: asyncio.create_task(
                     on_item_click(val)
                 ),
@@ -620,7 +627,7 @@ class HomeView:
         return ft.Container(
             content=ft.Column(
                 controls=[
-                    ft.Text(title, weight=ft.FontWeight.BOLD, size=16),
+                    ft.Text(title, weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.ON_SURFACE),
                     ft.Row(controls=chips, wrap=True, spacing=6, run_spacing=6),
                 ],
                 spacing=8,
@@ -776,13 +783,13 @@ class HomeView:
         clear_tooltip: str,
     ) -> ft.Container:
         return ft.Container(
-            bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+            bgcolor=ft.Colors.SURFACE_CONTAINER,
             border_radius=8,
             padding=ft.Padding.symmetric(horizontal=12, vertical=6),
             content=ft.Row(
                 controls=[
                     ft.Icon(icon, size=18, color=color),
-                    ft.Text(text, weight=ft.FontWeight.W_500, size=13, expand=True),
+                    ft.Text(text, weight=ft.FontWeight.W_500, size=13, color=ft.Colors.ON_SURFACE, expand=True),
                     ft.TextButton(
                         content=ft.Text(btn_label),
                         icon=ft.Icons.ARROW_BACK,

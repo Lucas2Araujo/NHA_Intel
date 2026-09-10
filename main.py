@@ -23,6 +23,8 @@ from src.services.content_manager import ContentManager
 from src.services.media_service import MediaService
 from src.services.theme_service import EDITION_ANTIGO, EDITION_NOVO, ThemeService
 from src.services.updater_service import UpdaterService
+from src.theme import ThemeEngine
+from src.utils.font_manager import DEFAULT_FONT_FAMILY, FontManager
 from src.views.agente_view import AgenteView
 from src.views.biblia_view import BibliaView
 from src.views.download_manager_view import DownloadManagerView
@@ -88,28 +90,21 @@ def _setup_assets_and_theme(
     asset_icon = root_dir / "assets" / "icon.ico"
     _set_window_icon_if_exists(page, asset_icon)
 
+    FontManager.register_fonts(page)
+
     if theme_service:
         theme_service.apply_theme(page)
     else:
-        page.fonts = {
-            "AppSans": "fonts/AppSans-Regular.ttf",
-            "AppSans-Bold": "fonts/AppSans-SemiBold.ttf",
-            "HymnSerif": "fonts/HymnSerif-Regular.ttf",
-            "HymnSerif-Bold": "fonts/HymnSerif-Bold.ttf",
-            "OpenDyslexic": "fonts/OpenDyslexic-Regular.otf",
-            "Times New Roman": "Times New Roman, serif",
-            "Helvetica": "fonts/Helvetica-World-Regular.ttf",
-            "Montserrat": "fonts/Montserrat-Regular.ttf",
-        }
         page.theme_mode = ft.ThemeMode.SYSTEM
         page.theme = ft.Theme(
+            font_family=DEFAULT_FONT_FAMILY,
             page_transitions=ft.PageTransitionsTheme(
                 android=ft.PageTransitionTheme.CUPERTINO,
                 ios=ft.PageTransitionTheme.CUPERTINO,
                 linux=ft.PageTransitionTheme.CUPERTINO,
                 macos=ft.PageTransitionTheme.CUPERTINO,
                 windows=ft.PageTransitionTheme.CUPERTINO,
-            )
+            ),
         )
 
 
@@ -544,6 +539,7 @@ async def main(page: ft.Page):
     )
 
     theme_service = ThemeService(db_connection)
+    await theme_service.theme_engine.load_preferences(page)
     _setup_assets_and_theme(page, theme_service)
 
     # 1. Renderiza IMEDIATAMENTE a tela de loading minimalista

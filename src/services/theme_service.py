@@ -11,6 +11,9 @@ import json
 import flet as ft
 
 from src.database.connection import DatabaseConnection
+from src.theme.palette import ThemeModeType, ThemePalette
+from src.theme.theme_engine import ThemeEngine
+from src.utils.font_manager import DEFAULT_FONT_FAMILY, FontManager
 
 PREF_THEME_KEY = "theme_prefs"
 
@@ -27,8 +30,8 @@ COLOR_SEEDS: dict[str, dict[str, str]] = {
 
 # --- Catálogo de Fontes Tipográficas Globais ---
 FONT_FAMILIES: list[str] = [
-    "Roboto",
     "Montserrat",
+    "Roboto",
     "Inter",
     "Merriweather",
     "OpenDyslexic",
@@ -86,12 +89,31 @@ class ThemeService:
 
     def __init__(self, db_connection: DatabaseConnection):
         self.db_connection = db_connection
+        self.theme_engine = ThemeEngine(db_connection)
+        self.theme_style: ThemeModeType = ThemeModeType.MATERIAL_YOU
         self.is_amoled: bool = False
         self.current_edition: str = EDITION_NOVO
         self.current_seed: str = "purple"
         self.theme_mode: str = "system"
         self.font_family: str = "Roboto"
         self._loaded: bool = False
+
+    def _sync_to_engine(self) -> None:
+        self.theme_engine.theme_style = self.theme_style
+        self.theme_engine.theme_mode = self.theme_mode
+        self.theme_engine.is_amoled = self.is_amoled
+        self.theme_engine.current_seed = self.current_seed
+        self.theme_engine.font_family = self.font_family
+        self.theme_engine.current_edition = self.current_edition
+        self.theme_engine.is_dark = (
+            self.theme_mode == "dark"
+            or (self.theme_mode == "system" and self.is_amoled)
+        )
+
+    def get_current_palette(self) -> ThemePalette:
+        """Retorna a paleta de cores correspondente ao tema ativo."""
+        self._sync_to_engine()
+        return self.theme_engine.get_current_palette()
 
     async def load_preferences(self) -> bool:
         """Carrega as preferências de tema do banco de dados SQLite."""
@@ -105,6 +127,12 @@ class ThemeService:
                 row = await cursor.fetchone()
             if row and row[0]:
                 data = json.loads(row[0])
+                style_str = data.get("theme_style")
+                if style_str:
+                    try:
+                        self.theme_style = ThemeModeType(style_str)
+                    except ValueError:
+                        pass
                 self.is_amoled = bool(data.get("is_amoled", False))
                 self.current_edition = str(data.get("edition", EDITION_NOVO))
                 seed = str(data.get("seed", "purple"))
@@ -113,14 +141,15 @@ class ThemeService:
                 self.theme_mode = (
                     mode if mode in ("system", "light", "dark") else "system"
                 )
-                font = str(data.get("font_family", "Roboto"))
-                self.font_family = font if font in FONT_FAMILIES else "Roboto"
+                font = str(data.get("font_family", DEFAULT_FONT_FAMILY))
+                self.font_family = font if font in FONT_FAMILIES else DEFAULT_FONT_FAMILY
         except Exception:
             self.is_amoled = False
             self.current_edition = EDITION_NOVO
             self.current_seed = "purple"
             self.theme_mode = "system"
-            self.font_family = "Roboto"
+            self.font_family = DEFAULT_FONT_FAMILY
+        self._sync_to_engine()
         self._loaded = True
         return self.is_amoled
 
@@ -131,6 +160,7 @@ class ThemeService:
         seed: str | None = None,
         theme_mode: str | None = None,
         font_family: str | None = None,
+        theme_style: ThemeModeType | str | None = None,
     ) -> None:
         """Salva as preferências de tema no banco de dados SQLite."""
         if is_amoled is not None:
@@ -143,11 +173,22 @@ class ThemeService:
             self.theme_mode = theme_mode.lower()
         if font_family is not None and font_family in FONT_FAMILIES:
             self.font_family = font_family
+        if theme_style is not None:
+            if isinstance(theme_style, str):
+                try:
+                    self.theme_style = ThemeModeType(theme_style.lower())
+                except ValueError:
+                    pass
+            else:
+                self.theme_style = theme_style
+
+        self._sync_to_engine()
 
         try:
             conn = await self.db_connection.get_connection()
             prefs_json = json.dumps(
                 {
+                    "theme_style": self.theme_style.value,
                     "is_amoled": self.is_amoled,
                     "edition": self.current_edition,
                     "seed": self.current_seed,
@@ -166,6 +207,23 @@ class ThemeService:
                 await conn.rollback()
             except Exception:
                 pass
+
+    async def set_theme_style(
+        self, style: ThemeModeType | str, page: ft.Page | None = None
+    ) -> None:
+        """Define o estilo de tema (Material You, Liquid Glass, Classic Book) e atualiza."""
+        if isinstance(style, str):
+            try:
+                self.theme_style = ThemeModeType(style.lower())
+            except ValueError:
+                return
+        else:
+            self.theme_style = style
+
+        await self.save_preferences(theme_style=self.theme_style)
+        if page:
+            self.apply_theme(page)
+            page.update()
 
     async def set_seed(self, seed_key: str, page: ft.Page | None = None) -> None:
         """Define a cor seed M3 ativa, persiste e atualiza o tema."""
@@ -207,6 +265,12 @@ class ThemeService:
         await self.save_preferences(is_amoled=enabled, edition=edition)
         self.apply_theme(page, edition=edition)
         page.update()
+
+    async def set_glass_blur_enabled(
+        self, enabled: bool, page: Optional[ft.Page] = None
+    ) -> None:
+        """Ativa ou desativa o desfoque de fundo (Backdrop Blur) do Liquid Glass."""
+        await self.theme_engine.set_glass_blur_enabled(enabled, page)
 
     def get_accent_color(self, edition: str = EDITION_NOVO) -> str:
         """Retorna a cor de destaque principal de acordo com a edição e a seed M3 ativa."""
@@ -380,6 +444,11 @@ class ThemeService:
         Configura fontes globais, seed M3, tema claro/escuro e suporte a AMOLED.
         """
         if not page:
+            return
+
+        self._sync_to_engine()
+        if self.theme_style != ThemeModeType.MATERIAL_YOU:
+            self.theme_engine.apply_theme(page, edition=edition)
             return
 
         active_edition = edition or self.current_edition
