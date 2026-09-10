@@ -5,7 +5,7 @@
 [![CI Test Suite](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/ci.yml/badge.svg)](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/ci.yml)
 [![CD Android Split APKs](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/cd.yml/badge.svg)](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/cd.yml)
 [![GitHub Release](https://img.shields.io/github/v/release/Lucas2Araujo/NHA_Intel?color=blue&label=Vers%C3%A3o&style=flat-square)](https://github.com/Lucas2Araujo/NHA_Intel/releases/latest)
-[![Testes Automatizados](https://img.shields.io/badge/Testes-165%20passando-brightgreen?style=flat-square&logo=pytest&logoColor=white)](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/ci.yml)
+[![Testes Automatizados](https://img.shields.io/badge/Testes-172%20passando-brightgreen?style=flat-square&logo=pytest&logoColor=white)](https://github.com/Lucas2Araujo/NHA_Intel/actions/workflows/ci.yml)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%20%7C%203.14-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![Flet 0.85+](https://img.shields.io/badge/Flet-0.85%2B-5c2d91?style=flat-square&logo=flutter&logoColor=white)](https://flet.dev/)
 [![SQLite FTS5](https://img.shields.io/badge/SQLite-FTS5%20Inside-003B57?style=flat-square&logo=sqlite&logoColor=white)](https://www.sqlite.org/)
@@ -45,7 +45,7 @@ Escolha o pacote APK correspondente à arquitetura do seu dispositivo:
 
 O **Hinário Inteligente** foi concebido com foco em **alta performance**, **arquitetura assíncrona não-bloqueante**, **design responsivo**, **acessibilidade universal** e **experiência litúrgica completa**.
 
-A aplicação integra **Busca Full-Text FTS5** insensível a acentos, **Hinário Novo (601 hinos)** e **Hinário Antigo (614 hinos)**, **Comparador Inteligente de Hinos** com visualização de diferenças verso a verso, **Bíblia Sagrada (ARA)** com parser de referências cruzadas, **Modo Escuro / Tema AMOLED**, **Agente Litúrgico de Cultos** com sugestões inteligentes e um **Sistema de Atualização Automática Integrado (OTA)** via GitHub Releases.
+A aplicação integra **Busca Full-Text FTS5** insensível a acentos, **Hinário Novo (601 hinos)** e **Hinário Antigo (614 hinos)**, **Comparador Inteligente de Hinos** com visualização de diferenças verso a verso, **Bíblia Sagrada (ARA)** com parser de referências cruzadas, **Modo Escuro / Tema AMOLED**, **Agente Litúrgico de Cultos com Recomendação Heurística Explicável (`HinoRecommender`)** e um **Sistema de Atualização Automática Integrado (OTA)** via GitHub Releases.
 
 ---
 
@@ -59,7 +59,7 @@ A aplicação integra **Busca Full-Text FTS5** insensível a acentos, **Hinário
 | **Bíblia Integrada** | SQLite (ARA) | Base bíblica Almeida Revista e Atualizada para consulta imediata de versículos |
 | **Comparador** | SQLite + Diff Engine | Base comparativa com mapeamento entre versões do hinário |
 | **Temas & Visual** | ThemeService | Gestão de temas (Sistema, Claro, Escuro e AMOLED puro) |
-| **Testes** | `pytest` & `pytest-asyncio` | 165 testes unitários e de integração com banco em memória (`:memory:`) |
+| **Testes** | `pytest` & `pytest-asyncio` | 172 testes unitários e de integração com banco em memória (`:memory:`) |
 | **CI/CD** | GitHub Actions | Esteira de testes contínuos e compilação automatizada de APKs Split por ABI |
 
 ---
@@ -82,12 +82,10 @@ A aplicação integra **Busca Full-Text FTS5** insensível a acentos, **Hinário
 - Reconhecimento automático e parser inteligente de referências bíblicas (ex: `"Sl 23:1"`, `"Jo 3:16-18"`, `"1Co 13:4-7"`).
 - Modal interativo e bottom sheet para leitura imediata da passagem bíblica sem sair da tela do hino.
 
-### 4. 🤖 Agente Litúrgico & Organizador de Cultos
-- Motor semântico local que sugere playlists harmônicas estruturadas em **4 blocos litúrgicos**:
-  - *Abertura & Adoração*
-  - *Oração & Comunhão*
-  - *Mensagem & Edificação*
-  - *Encerramento & Gratidão*
+### 4. 🤖 Agente Litúrgico & Recomendação Heurística Explicável
+- Motor inteligente desacoplado (`HinoRecommender`) com pesos nomeados e normalização determinística (sem acentos/stopwords).
+- Sugere playlists harmônicas estruturadas em blocos litúrgicos de culto com **justificativa legível para humanos** (ex: *"Recomendado por correspondência em Tema: 'Gratidão'; Título: 'Graça Divina'"*).
+- Desempate determinístico rigoroso por relevância, número e título.
 - Criação, salvamento, consulta e exclusão de cultos personalizados diretamente no banco de dados.
 
 ### 5. 🌓 Tema AMOLED & Dark Mode

@@ -240,7 +240,19 @@ async def test_biblia_view_marcador_and_copy():
     assert len(inner_row.controls) == 2
     assert isinstance(inner_row.controls[1], ft.Text)
 
+    # Finaliza e cancela eventuais tasks em background da view antes de fechar a conexão
+    for v in (view_instance, new_view):
+        if getattr(v, "_load_task", None) and not v._load_task.done():
+            v._load_task.cancel()
+            try:
+                await v._load_task
+            except asyncio.CancelledError:
+                pass
+    await asyncio.sleep(0.05)
+
     await repo.close()
+    await db_conn.close()
+    await asyncio.sleep(0.05)
 
 
 def test_format_verse_numbers_and_citation():
@@ -661,7 +673,18 @@ async def test_biblia_view_pesquisa_flow():
     view_instance._back_to_leitor()
     assert view_instance.active_screen == "leitor"
 
+    # Finaliza e cancela eventuais tasks em background da view antes de fechar a conexão
+    if view_instance._load_task and not view_instance._load_task.done():
+        view_instance._load_task.cancel()
+        try:
+            await view_instance._load_task
+        except asyncio.CancelledError:
+            pass
+    await asyncio.sleep(0.05)
+
     await repo.close()
+    await db_conn.close()
+    await asyncio.sleep(0.05)
 
 
 @pytest.mark.asyncio
@@ -721,9 +744,18 @@ async def test_biblia_view_comparador_versoes_flow():
         if isinstance(act, ft.IconButton) and act.icon == ft.Icons.COMPARE_ARROWS:
             compare_btn = act
             break
-    assert compare_btn is not None
+    # Finaliza e cancela eventuais tasks em background da view antes de fechar a conexão
+    if view_instance._load_task and not view_instance._load_task.done():
+        view_instance._load_task.cancel()
+        try:
+            await view_instance._load_task
+        except asyncio.CancelledError:
+            pass
+    await asyncio.sleep(0.05)
 
     await repo.close()
+    await db_conn.close()
+    await asyncio.sleep(0.05)
 
 
 @pytest.mark.asyncio
@@ -828,7 +860,18 @@ async def test_biblia_view_with_hino_origem_id_and_jump():
     assert view_instance.current_chapter == 3
     assert view_instance.versiculo_foco == 16
 
+    # Finaliza e cancela eventuais tasks em background da view antes de fechar a conexão
+    if view_instance._load_task and not view_instance._load_task.done():
+        view_instance._load_task.cancel()
+        try:
+            await view_instance._load_task
+        except asyncio.CancelledError:
+            pass
+    await asyncio.sleep(0.05)
+
     await biblia_repo.close()
+    await db_conn.close()
+    await asyncio.sleep(0.05)
 
 
 def test_main_parse_bible_route_query():

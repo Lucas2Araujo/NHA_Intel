@@ -115,10 +115,15 @@ O sistema adota os princípios da **Clean Architecture** e o padrão **Repositor
 - Cópia canônica estruturada de passagens com referência para área de transferência.
 - Busca bíblica por palavras ou expressões em todo o cânon.
 
-### 3.5 Agente Organizador de Cultos (`AgenteView` — Rota `/agente`)
+### 3.5 Agente Organizador de Cultos (`AgenteView` & `HinoRecommender` — Rota `/agente`)
 - Interface para auxílio a pastores, líderes de louvor e anciãos.
 - O usuário insere um tema pastoral (ex: *"Graça e Salvação"* ou *"Esperança na Adversidade"*) e seleciona a quantidade de hinos (4 a 10).
-- O motor de relevância heurística seleciona os hinos mais apropriados e organiza em blocos litúrgicos:
+- **Motor Heurístico Explicável (`HinoRecommender`)**:
+  - Normalização textual determinística (remoção de acentos via NFKD, case folding e stopwords em português).
+  - Pesos explícitos e nomeados por campo: `PESO_TITULO_EXATO` (10 pts), `PESO_TITULO_PARCIAL` (5 pts), `PESO_TEMA` (4 pts), `PESO_CATEGORIA` (3 pts), `PESO_SUBCATEGORIA` (3 pts), `PESO_TEXTO_BASE` (2 pts), `PESO_LETRA` (1 pt).
+  - **Justificativa Humana Legível**: Cada sugestão gera uma explicação em linguagem natural (ex: *"Recomendado por correspondência em Tema: 'Gratidão'; Título: 'Graça Divina'"*).
+  - Critério determinístico de desempate: `(score DESC, CAST(numero AS INTEGER) ASC, titulo ASC)`.
+- Organiza a playlist em blocos litúrgicos:
   1. *Abertura & Adoração*
   2. *Oração & Comunhão*
   3. *Louvor & Gratidão*

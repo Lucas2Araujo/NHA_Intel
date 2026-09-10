@@ -50,15 +50,25 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Inject Version into src/version.py
+      - name: Inject Version into src/version.py and pyproject.toml
         run: |
           echo "Injetando versão calculada: ${{ steps.tag_version.outputs.new_version }}"
           python -c "
+          import re
+          v = '${{ steps.tag_version.outputs.new_version }}'
           with open('src/version.py', 'w', encoding='utf-8') as f:
-              f.write('\"\"\"Módulo gerado automaticamente pelo pipeline de CD.\"\"\"\n\n__version__ = \"${{ steps.tag_version.outputs.new_version }}\"\n')
+              f.write(f'\"\"\"Módulo gerado automaticamente pelo pipeline de CD.\"\"\"\n\n__version__ = \"{v}\"\n')
+
+          with open('pyproject.toml', 'r', encoding='utf-8') as f:
+              content = f.read()
+          content = re.sub(r'version\s*=\s*\"[^\"]+\"', f'version = \"{v}\"', content, count=1)
+          with open('pyproject.toml', 'w', encoding='utf-8') as f:
+              f.write(content)
           "
           echo "Conteúdo de src/version.py:"
           cat src/version.py
+          echo "Versão em pyproject.toml:"
+          grep -m 1 "^version =" pyproject.toml
 
       - name: Install Python Dependencies
         run: |

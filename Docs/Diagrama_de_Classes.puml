@@ -122,10 +122,31 @@ package "Camada de Serviços / Services" #FEFCBF {
     + list_downloads(): List[Dict]
   }
 
+  class HinoRecommender {
+    + {static} PESO_TITULO_EXATO: int
+    + {static} PESO_TITULO_PARCIAL: int
+    + {static} PESO_TEMA: int
+    + {static} PESO_CATEGORIA: int
+    + {static} PESO_SUBCATEGORIA: int
+    + {static} PESO_TEXTO_BASE: int
+    + {static} PESO_LETRA: int
+    + normalize_text(text: str): str
+    + tokenize(text: str): List[str]
+    + score_hino(hino: Hino, temas: List[str], tokens: List[str]): ScoredHino
+    + rank(candidatos: List[Hino], temas_map: Dict, query: str, limit: int): List[ScoredHino]
+  }
+
+  class ScoredHino << (D,#A9DCDF) @dataclass >> {
+    + hino: Hino
+    + score_total: int
+    + reasons: List[MatchReason]
+    + justificativa_legivel: str
+  }
+
   class AgenteService {
     - hino_repo: HinoRepository
+    - recommender: HinoRecommender
     + sugerir_playlist_culto(tema_prompt: str, qtd: int): Dict
-    - _calcular_score_hino(hino: Hino, termos: List[str]): int
   }
 
   class UpdaterService {

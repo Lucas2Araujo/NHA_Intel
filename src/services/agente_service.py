@@ -1,8 +1,8 @@
-import re
 from typing import Any
 
 from src.models.hino import Hino
 from src.repositories.hino_repository import HinoRepository
+from src.services.hino_recommender import HinoRecommender, ScoredHino
 
 NOMES_BLOCOS_LITURGICOS = [
     "1. Abertura & Adoração",
@@ -22,11 +22,16 @@ class AgenteService:
     """
     Serviço assíncrono do Agente Organizador de Cultos.
     Realiza busca semântica e pontuação temática sobre os 601 hinos para gerar
-    playlists de culto estruturadas por blocos litúrgicos.
+    playlists de culto estruturadas por blocos litúrgicos com justificativa explicável.
     """
 
-    def __init__(self, hino_repository: HinoRepository):
+    def __init__(
+        self,
+        hino_repository: HinoRepository,
+        recommender: HinoRecommender | None = None,
+    ):
         self.hino_repository = hino_repository
+        self.recommender = recommender or HinoRecommender()
         # Cache in-memory de hinos completos para scoring (carregado lazy)
         self._hinos_completos_cache: dict[int, Hino] | None = None
 
@@ -59,10 +64,8 @@ class AgenteService:
         return metadados.get("temas", [])
 
     def _extrair_palavras_chave(self, prompt: str) -> list[str]:
-        """Extrai palavras-chave relevantes (>2 caracteres) do prompt."""
-        prompt_clean = prompt.strip().lower()
-        palavras = re.findall(r"\w+", prompt_clean)
-        return [p for p in palavras if len(p) > 2]
+        """Extrai palavras-chave relevantes utilizando o HinoRecommender."""
+        return self.recommender.tokenize(prompt)
 
     async def _gerar_playlist_padrao(self, num_hinos: int) -> dict[str, Any]:
         """Gera uma playlist padrão de adoração quando o prompt estiver vazio."""
@@ -72,7 +75,15 @@ class AgenteService:
             if len(hinos) >= num_hinos
             else await self.hino_repository.get_all()
         )
-        return self._estruturar_blocos("Culto Geral", hinos_selecionados[:num_hinos])
+        scored_padrao = [
+            ScoredHino(
+                hino=h,
+                score_total=0,
+                reasons=[],
+            )
+            for h in hinos_selecionados[:num_hinos]
+        ]
+        return self._estruturar_blocos_scored("Culto Geral", scored_padrao)
 
     def _add_candidate_ids(
         self,
@@ -112,69 +123,16 @@ class AgenteService:
     ) -> dict[int, list[str]]:
         """Carrega os temas dos hinos candidatos."""
         temas_por_hino: dict[int, list[str]] = {}
-        for hino_id in candidatos_ids[:30]:
+        for hino_id in candidatos_ids[:40]:
             temas_por_hino[hino_id] = await self._get_temas_por_hino(hino_id)
         return temas_por_hino
-
-    def _calcular_score_hino(
-        self,
-        hino: Hino | None,
-        temas_hino: list[str],
-        palavras_relevantes: list[str],
-    ) -> int:
-        """Calcula a pontuação semântica de relevância de um hino."""
-        if not hino:
-            return 0
-
-        campos = [
-            (hino.titulo.lower(), 5),
-            ((hino.categoria or "").lower(), 3),
-            ((hino.subcategoria or "").lower(), 3),
-            ((hino.texto_base or "").lower(), 2),
-            (" ".join(t.lower() for t in temas_hino), 4),
-        ]
-
-        score = 0
-        for kw in palavras_relevantes:
-            for texto_campo, peso in campos:
-                if kw in texto_campo:
-                    score += peso
-
-        return score
-
-    def _selecionar_melhores_candidatos(
-        self,
-        candidatos_ids: list[int],
-        hinos_completos: dict[int, Hino],
-        temas_por_hino: dict[int, list[str]],
-        palavras_relevantes: list[str],
-        num_hinos: int,
-    ) -> list[Hino]:
-        """Ranqueia e retorna os N melhores hinos de acordo com o score."""
-
-        def get_score(hid: int) -> int:
-            return self._calcular_score_hino(
-                hinos_completos.get(hid),
-                temas_por_hino.get(hid, []),
-                palavras_relevantes,
-            )
-
-        candidatos_ordenados = sorted(candidatos_ids, key=get_score, reverse=True)
-        hinos_finais_ids = candidatos_ordenados[:num_hinos]
-
-        hinos_finais = []
-        for hid in hinos_finais_ids:
-            hino = hinos_completos.get(hid)
-            if hino:
-                hinos_finais.append(hino)
-        return hinos_finais
 
     async def sugerir_playlist_culto(
         self, tema_prompt: str, num_hinos: int = 6
     ) -> dict[str, Any]:
         """
         Analisa a intenção pastoral do usuário e sugere uma lista de hinos harmoniosa
-        organizada por blocos litúrgicos de um culto.
+        organizada por blocos litúrgicos de um culto com justificativas explicáveis.
 
         Args:
             tema_prompt: Tema pastoral descrito pelo usuário.
@@ -192,29 +150,42 @@ class AgenteService:
         hinos_completos = await self._get_hinos_completos()
         temas_por_hino = await self._carregar_temas_candidatos(candidatos_ids)
 
-        hinos_finais = self._selecionar_melhores_candidatos(
-            candidatos_ids,
-            hinos_completos,
-            temas_por_hino,
-            palavras_relevantes,
-            num_hinos,
+        candidatos = [
+            hinos_completos[hid]
+            for hid in candidatos_ids
+            if hid in hinos_completos
+        ]
+
+        # Utiliza o HinoRecommender desacoplado para ranking e justificativas
+        ranked_scored = self.recommender.rank(
+            candidatos=candidatos,
+            temas_map=temas_por_hino,
+            query=tema_prompt,
+            limit=num_hinos,
         )
 
-        return self._estruturar_blocos(tema_prompt.strip(), hinos_finais)
+        return self._estruturar_blocos_scored(tema_prompt.strip(), ranked_scored)
 
-    def _estruturar_blocos(self, tema: str, hinos: list[Hino]) -> dict[str, Any]:
-        """Estrutura a lista de hinos selecionados em blocos litúrgicos de um culto."""
+    def _estruturar_blocos_scored(
+        self, tema: str, scored_hinos: list[ScoredHino]
+    ) -> dict[str, Any]:
+        """Estrutura a lista de hinos recomendados em blocos litúrgicos com justificativas."""
         blocos = []
-        for i, hino in enumerate(hinos):
+        hinos = []
+        for i, scored in enumerate(scored_hinos):
             nome_bloco = (
                 NOMES_BLOCOS_LITURGICOS[i]
                 if i < len(NOMES_BLOCOS_LITURGICOS)
                 else f"{i+1}. Momento Especial"
             )
+            hinos.append(scored.hino)
             blocos.append(
                 {
                     "bloco": nome_bloco,
-                    "hino": hino,
+                    "hino": scored.hino,
+                    "score": scored.score_total,
+                    "justificativa": scored.justificativa_legivel,
+                    "scored_hino": scored,
                 }
             )
 

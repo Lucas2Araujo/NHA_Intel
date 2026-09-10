@@ -397,6 +397,18 @@ class AgenteView:
                             title=ft.Text(
                                 hino.titulo, weight=ft.FontWeight.W_500, size=16
                             ),
+                            subtitle=(
+                                ft.Text(
+                                    item["justificativa"],
+                                    size=11,
+                                    italic=True,
+                                    color=ft.Colors.GREY_400,
+                                    max_lines=2,
+                                    overflow=ft.TextOverflow.ELLIPSIS,
+                                )
+                                if item.get("justificativa")
+                                else None
+                            ),
                             on_click=lambda ev, h_id=hino.id: page.run_task(
                                 page.push_route, f"/hino/{h_id}"
                             ),
